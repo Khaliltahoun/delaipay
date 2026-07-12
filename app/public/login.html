@@ -1,0 +1,50 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>DelaiPay — Connexion</title>
+<link rel="stylesheet" href="/css/app.css">
+<style>body{background:var(--bg)}</style>
+</head>
+<body>
+<div class="login-wrap">
+  <aside class="login-aside">
+    <div class="brand2">
+      <div class="mark"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 2l1.6 6.4L20 10l-6.4 1.6L12 18l-1.6-6.4L4 10l6.4-1.6z"/></svg></div>
+      <b>DelaiPay</b>
+    </div>
+    <h2>Le pilotage des délais de paiement, automatisé.</h2>
+    <p>Conformité loi 69-21 pour les cabinets d'expertise comptable : import, calcul des amendes, déclaration DGI et visa — en quelques clics.</p>
+    <div class="login-feats">
+      <div class="f"><span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 3v12m0 0l-4-4m4 4l4-4M4 19h16"/></svg></span>Import Excel des journaux d'achats</div>
+      <div class="f"><span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 4h16v4H4zM4 12h10v8H4zM17 12h3v8h-3z"/></svg></span>Calcul des retards & amendes (69-21)</div>
+      <div class="f"><span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M9 12l2 2 4-4"/><circle cx="12" cy="12" r="9"/></svg></span>Déclaration DGI & visa générés</div>
+    </div>
+    <div class="foot">© 2026 DelaiPay · Confidentiel · Données hébergées conformément à la loi 09-08</div>
+  </aside>
+
+  <main class="login-main">
+    <form class="login-card" id="loginForm" autocomplete="on">
+      <h1>Connexion</h1>
+      <p class="lead">Accédez à votre espace cabinet.</p>
+      <div id="err" class="login-err hidden"></div>
+      <div class="fld">
+        <label class="fld-lbl" for="email">Adresse e-mail</label>
+        <input class="input-fld" id="email" name="email" type="email" required placeholder="vous@cabinet.ma" autofocus>
+      </div>
+      <div class="fld">
+        <label class="fld-lbl" for="password">Mot de passe</label>
+        <input class="input-fld" id="password" name="password" type="password" required placeholder="••••••••">
+      </div>
+      <button class="btn btn-primary" id="submitBtn" type="submit" style="width:100%;justify-content:center;padding:11px">Se connecter</button>
+      <div class="login-hint">
+        <b>Compte de démonstration</b><br>
+        e-mail : <b>zahra@hlz.ma</b> · mot de passe : <b>DelaiPay2026!</b>
+      </div>
+    </form>
+  </main>
+</div>
+<script src="/js/login.js"></script>
+</body>
+</html>

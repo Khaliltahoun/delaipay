@@ -1,0 +1,88 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>DelaiPay</title>
+<link rel="stylesheet" href="/css/app.css">
+</head>
+<body>
+<div class="app" data-theme="light" id="app">
+  <aside class="side">
+    <div class="brand">
+      <div class="mark"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 2l1.6 6.4L20 10l-6.4 1.6L12 18l-1.6-6.4L4 10l6.4-1.6z"/></svg></div>
+      <div><b>DelaiPay</b><span>Suivi loi 69-21</span></div>
+    </div>
+    <div class="nav-lbl">Pilotage</div>
+    <button class="nav-item" data-view="dash">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="3" width="7" height="9" rx="1.5"/><rect x="14" y="3" width="7" height="5" rx="1.5"/><rect x="14" y="12" width="7" height="9" rx="1.5"/><rect x="3" y="16" width="7" height="5" rx="1.5"/></svg>Tableau de bord</button>
+    <button class="nav-item" data-view="clients">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="9" cy="8" r="3.2"/><path d="M3.5 20a5.5 5.5 0 0111 0"/><path d="M16 5.2a3 3 0 010 5.6M17 20a5.5 5.5 0 00-3-4.9"/></svg>Portefeuille clients</button>
+    <div class="nav-lbl">Conformité</div>
+    <button class="nav-item" data-view="import">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 3v12m0 0l-4-4m4 4l4-4M4 19h16"/></svg>Import de fichiers</button>
+    <button class="nav-item" data-view="delais">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="4" y="3" width="16" height="18" rx="2"/><path d="M8 3v18M4 9h16M4 15h16"/></svg>Feuille de calcul des délais</button>
+    <button class="nav-item" data-view="conv">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M6 2h9l5 5v13a2 2 0 01-2 2H6a2 2 0 01-2-2V4a2 2 0 012-2z"/><path d="M14 2v6h6M9 14l2 2 4-4"/></svg>Conventions &amp; OCR</button>
+    <button class="nav-item" data-view="decl">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M6 2h9l5 5v13a2 2 0 01-2 2H6a2 2 0 01-2-2V4a2 2 0 012-2z"/><path d="M14 2v6h6M8 13h8M8 17h5"/></svg>Déclaration DGI</button>
+    <button class="nav-item" data-view="visa">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M9 12l2 2 4-4"/><circle cx="12" cy="12" r="9"/></svg>Générateur de visa</button>
+    <div class="nav-lbl">Surveillance</div>
+    <button class="nav-item" data-view="alerts">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M6 9a6 6 0 1112 0c0 5 2 6 2 6H4s2-1 2-6z"/><path d="M10 20a2 2 0 004 0"/></svg>Centre d'alertes<span class="badge hidden" id="alertBadge">0</span></button>
+    <button class="nav-item" data-view="taux">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>Taux &amp; paramètres</button>
+    <button class="nav-item" data-view="audit">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 5h16M4 12h16M4 19h10"/></svg>Journal d'audit</button>
+    <div class="side-foot">
+      <div class="av" id="sideAv">··</div>
+      <div><b style="color:#fff;display:block;font-size:12.5px" id="sideName">—</b><span id="sideTitle">—</span></div>
+    </div>
+  </aside>
+
+  <div class="main">
+    <header class="topbar">
+      <div class="crumb"><b id="cabName">Cabinet</b>
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 6l6 6-6 6"/></svg>
+        <span id="crumbView">Tableau de bord</span></div>
+
+      <div class="clientsw-wrap">
+        <button class="clientsw" id="clientSwBtn" aria-haspopup="listbox" aria-expanded="false" title="Changer de client">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3 21h18M5 21V7l7-4 7 4v14M9 9h.01M15 9h.01M9 13h.01M15 13h.01M9 17h6"/></svg>
+          <span class="csw-name" id="cswName">Tous les clients</span>
+          <svg class="chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 9l6 6 6-6"/></svg>
+        </button>
+        <div class="csw-panel hidden" id="cswPanel">
+          <div class="csw-head">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4-4"/></svg>
+            <input id="cswSearch" placeholder="Rechercher un client, un ICE…" autocomplete="off">
+          </div>
+          <div class="csw-list" id="cswList"></div>
+        </div>
+      </div>
+
+      <div class="search">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4-4"/></svg>
+        <input placeholder="Rechercher un client, un ICE…" id="globalSearch" aria-label="Recherche globale" autocomplete="off"/>
+        <div class="searchres hidden" id="searchRes"></div>
+      </div>
+      <div class="top-right">
+        <button class="iconbtn" id="themeBtn" aria-label="Basculer le thème" title="Clair / sombre">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M21 12.8A9 9 0 1111.2 3 7 7 0 0021 12.8z"/></svg></button>
+        <button class="iconbtn" data-view="alerts" aria-label="Notifications"><span class="ndot hidden" id="notifDot"></span>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M6 9a6 6 0 1112 0c0 5 2 6 2 6H4s2-1 2-6z"/><path d="M10 20a2 2 0 004 0"/></svg></button>
+        <button class="iconbtn" id="logoutBtn" aria-label="Se déconnecter" title="Se déconnecter">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M15 12H3m0 0l4-4m-4 4l4 4M11 4h6a2 2 0 012 2v12a2 2 0 01-2 2h-6"/></svg></button>
+        <div class="avatar" id="topAv" title="Profil">··</div>
+      </div>
+    </header>
+    <main class="content" id="view"></main>
+  </div>
+</div>
+<div id="overlay"></div>
+<div class="toasts" id="toasts"></div>
+<script src="/js/app.js"></script>
+</body>
+</html>

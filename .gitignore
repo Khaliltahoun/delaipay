@@ -1,0 +1,21 @@
+# Dépendances & runtime
+**/node_modules/
+app/data/
+app/uploads/
+**/.secret
+**/.env
+.env
+*.log
+
+# OS / éditeur / local
+.DS_Store
+.claude/
+.playwright-mcp/
+back.jpg
+*.tmp
+
+# --- Fichiers clients & données réelles : NON publiés ---
+docs/
+app/screenshots/
+*.pdf
+CAHIER_DES_CHARGES_DelaiPay.md
