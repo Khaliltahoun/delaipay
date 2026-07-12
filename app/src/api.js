@@ -399,21 +399,66 @@ router.post('/clients/:id/factures', (req, res) => {
 });
 
 /* ============================================================ IMPORT (upload) */
-router.post('/clients/:id/import', upload.single('file'), (req, res) => {
+router.post('/clients/:id/import', upload.array('files', 30), (req, res) => {
   const e = ownedEntreprise(req, req.params.id);
   if (!e) return res.status(404).json({ error: 'Introuvable.' });
-  if (!req.file) return res.status(400).json({ error: 'Aucun fichier reçu.' });
-  try {
-    const buf = fs.readFileSync(req.file.path);
-    const periode = req.body.annee ? { annee: +req.body.annee, trimestre: +req.body.trimestre } : null;
-    const result = importWorkbook(buf, { cabinetId: req.cabinetId, entrepriseId: e.id, sourceName: req.file.originalname, periode });
-    db.prepare(`INSERT INTO document (id,cabinet_id,entreprise_id,type,nom,chemin,taille,mime) VALUES (?,?,?,?,?,?,?,?)`)
-      .run(uid('doc'), req.cabinetId, e.id, 'import', req.file.originalname, req.file.filename, req.file.size, req.file.mimetype);
-    audit(req.cabinetId, req.user.id, 'import', 'facture', { file: req.file.originalname, ...result.totals }, req.ip);
-    res.json({ ok: true, ...result });
-  } catch (err) {
-    res.status(400).json({ error: 'Import impossible : ' + err.message });
-  } finally { fs.unlink(req.file.path, () => {}); }
+  const files = req.files || (req.file ? [req.file] : []);
+  if (!files.length) return res.status(400).json({ error: 'Aucun fichier reçu.' });
+  const periode = req.body.annee ? { annee: +req.body.annee, trimestre: +req.body.trimestre } : null;
+  const out = [];
+  for (const file of files) {
+    try {
+      const buf = fs.readFileSync(file.path);
+      const r = importWorkbook(buf, { cabinetId: req.cabinetId, entrepriseId: e.id, sourceName: file.originalname, periode });
+      const stored = r.importId + '__' + (file.originalname || 'fichier').replace(/[^\w.\-]/g, '_');
+      try { fs.renameSync(file.path, path.join(UP_DIR, stored)); } catch (_) { fs.copyFileSync(file.path, path.join(UP_DIR, stored)); fs.unlink(file.path, () => {}); }
+      db.prepare(`INSERT INTO document (id,cabinet_id,entreprise_id,type,nom,chemin,taille,mime,import_id,nb_factures) VALUES (?,?,?,?,?,?,?,?,?,?)`)
+        .run(uid('doc'), req.cabinetId, e.id, 'import', file.originalname, stored, file.size, file.mimetype, r.importId, r.imported);
+      audit(req.cabinetId, req.user.id, 'import', 'facture', { file: file.originalname, imported: r.imported }, req.ip);
+      out.push({ file: file.originalname, ok: true, format: r.format, imported: r.imported, duplicates: r.duplicates, fournisseursCreated: r.fournisseursCreated, anomalies: r.anomalies, totals: r.totals });
+    } catch (err) {
+      try { fs.unlinkSync(file.path); } catch (_) {}
+      out.push({ file: file.originalname, ok: false, error: err.message });
+    }
+  }
+  const agg = out.reduce((a, r) => r.ok ? { imported: a.imported + r.imported, duplicates: a.duplicates + r.duplicates, fournisseursCreated: a.fournisseursCreated + r.fournisseursCreated, anomalies: a.anomalies + r.anomalies.length, amende: round2(a.amende + r.totals.amende), aDeclarer: a.aDeclarer + r.totals.aDeclarer } : a,
+    { imported: 0, duplicates: 0, fournisseursCreated: 0, anomalies: 0, amende: 0, aDeclarer: 0 });
+  res.json({ ok: true, files: out, agg });
+});
+router.get('/clients/:id/documents', (req, res) => {
+  const e = ownedEntreprise(req, req.params.id); if (!e) return res.status(404).json({ error: 'Introuvable.' });
+  res.json(db.prepare(`SELECT id, type, nom, taille, mime, import_id, nb_factures, created_at FROM document WHERE entreprise_id=? AND type='import' ORDER BY created_at DESC`).all(e.id));
+});
+router.get('/clients/:id/documents/:docId/download', (req, res) => {
+  const e = ownedEntreprise(req, req.params.id); if (!e) return res.status(404).send('Introuvable');
+  const doc = db.prepare('SELECT * FROM document WHERE id=? AND entreprise_id=?').get(req.params.docId, e.id);
+  if (!doc || !doc.chemin) return res.status(404).send('Fichier introuvable');
+  res.download(path.join(UP_DIR, doc.chemin), doc.nom || 'fichier');
+});
+router.delete('/clients/:id/documents/:docId', (req, res) => {
+  const e = ownedEntreprise(req, req.params.id); if (!e) return res.status(404).json({ error: 'Introuvable.' });
+  const doc = db.prepare('SELECT * FROM document WHERE id=? AND entreprise_id=?').get(req.params.docId, e.id);
+  if (!doc) return res.status(404).json({ error: 'Introuvable.' });
+  let removed = 0;
+  if (doc.import_id) removed = db.prepare('DELETE FROM facture WHERE entreprise_id=? AND import_id=?').run(e.id, doc.import_id).changes;
+  db.prepare('DELETE FROM document WHERE id=?').run(doc.id);
+  if (doc.chemin) try { fs.unlinkSync(path.join(UP_DIR, doc.chemin)); } catch (_) {}
+  audit(req.cabinetId, req.user.id, 'delete', 'document', { nom: doc.nom, factures: removed }, req.ip);
+  res.json({ ok: true, facturesSupprimees: removed });
+});
+router.delete('/clients/:id/conventions/:convId', (req, res) => {
+  const e = ownedEntreprise(req, req.params.id); if (!e) return res.status(404).json({ error: 'Introuvable.' });
+  const c = db.prepare('SELECT * FROM convention WHERE id=? AND entreprise_id=?').get(req.params.convId, e.id);
+  if (!c) return res.status(404).json({ error: 'Introuvable.' });
+  db.prepare('DELETE FROM convention WHERE id=?').run(c.id);
+  if (c.fichier) try { fs.unlinkSync(path.join(UP_DIR, c.fichier)); } catch (_) {}
+  if (c.fournisseur_id) {
+    const rest = db.prepare(`SELECT COUNT(*) n FROM convention WHERE fournisseur_id=? AND statut='valide'`).get(c.fournisseur_id).n;
+    if (!rest) db.prepare('UPDATE fournisseur SET delai_applicable=60 WHERE id=?').run(c.fournisseur_id);
+  }
+  const p = latestPeriod(e.id); recomputePeriod(req.cabinetId, e.id, p.annee, p.trimestre);
+  audit(req.cabinetId, req.user.id, 'delete', 'convention', { id: c.id }, req.ip);
+  res.json({ ok: true });
 });
 
 /* ============================================================ DECLARATIONS */

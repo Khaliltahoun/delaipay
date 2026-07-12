@@ -106,6 +106,8 @@ CREATE INDEX IF NOT EXISTS ix_audit_cab ON audit_log(cabinet_id, created_at);
 
 /* -------------------------------------------------- fournisseur delai column patch (idempotent) */
 try { db.exec('ALTER TABLE fournisseur ADD COLUMN delai_applicable INTEGER DEFAULT 60'); } catch (_) {}
+try { db.exec('ALTER TABLE document ADD COLUMN import_id TEXT'); } catch (_) {}
+try { db.exec('ALTER TABLE document ADD COLUMN nb_factures INTEGER DEFAULT 0'); } catch (_) {}
 
 /* ------------------------------------------------------------- taux BAM provider */
 function tauxAt(y, m, cabinetId) {

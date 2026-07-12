@@ -491,8 +491,8 @@ async function renderImport() {
   <div class="grid-2-3">
     <div>
       <div class="dropzone" id="dz"><div class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M12 16V4m0 0l-4 4m4-4l4 4M5 20h14"/></svg></div>
-        <b>Glissez votre fichier ici</b><div style="margin-top:6px">ou cliquez pour parcourir · .xlsx, .xls, .csv (max 25 Mo)</div></div>
-      <input type="file" id="file" accept=".xlsx,.xls,.csv" class="hidden">
+        <b>Glissez vos fichiers ici</b><div style="margin-top:6px">ou cliquez pour parcourir · <b>plusieurs fichiers</b> acceptés · .xlsx, .xls, .csv</div></div>
+      <input type="file" id="file" accept=".xlsx,.xls,.csv" class="hidden" multiple>
       <div id="importResult" style="margin-top:18px"></div>
     </div>
     <div class="card"><div class="card-h"><h3>Colonnes reconnues</h3></div><div class="card-b" style="font-size:12.5px;line-height:1.9;color:var(--muted)">
@@ -500,36 +500,57 @@ async function renderImport() {
       <b style="color:var(--ink)">Format DELAI</b><br>… + colonne <b>convention</b> (60/120) utilisée comme délai applicable.<br><br>
       Contrôles automatiques : dates incohérentes, ICE (15 chiffres), TTC = HT+TVA, doublons.
     </div></div>
-  </div>`;
+  </div>
+  <div id="docsList" style="margin-top:22px"></div>`;
   wireClientBar(renderImport);
   const dz = $('#dz'), fi = $('#file');
   dz.onclick = () => fi.click();
   dz.ondragover = e => { e.preventDefault(); dz.classList.add('drag'); };
   dz.ondragleave = () => dz.classList.remove('drag');
-  dz.ondrop = e => { e.preventDefault(); dz.classList.remove('drag'); if (e.dataTransfer.files[0]) doImport(e.dataTransfer.files[0]); };
-  fi.onchange = () => { if (fi.files[0]) doImport(fi.files[0]); };
+  dz.ondrop = e => { e.preventDefault(); dz.classList.remove('drag'); if (e.dataTransfer.files.length) doImport(e.dataTransfer.files); };
+  fi.onchange = () => { if (fi.files.length) doImport(fi.files); };
+  renderDocs();
 }
-async function doImport(file) {
+async function renderDocs() {
+  const wrap = $('#docsList'); if (!wrap) return;
+  const docs = await api(`/clients/${state.clientId}/documents`);
+  wrap.innerHTML = `<div class="card"><div class="card-h"><div><h3>Fichiers importés</h3><div class="sub">${docs.length} fichier(s) · ${esc(currentClient().name)}</div></div></div>
+    ${docs.length ? `<div class="table-wrap" style="box-shadow:none;border:0"><table style="min-width:640px"><thead><tr><th>Fichier</th><th class="num">Factures</th><th>Importé le</th><th></th></tr></thead>
+      <tbody>${docs.map(d => `<tr><td><b>${esc(d.nom)}</b></td><td class="num">${d.nb_factures || 0}</td><td class="mono dh">${esc((d.created_at || '').replace('T', ' ').slice(0, 16))}</td>
+        <td style="text-align:right;white-space:nowrap"><a class="btn btn-ghost btn-sm" href="/api/clients/${state.clientId}/documents/${d.id}/download">Télécharger</a>
+          <button class="btn btn-ghost btn-sm" style="color:var(--r-red);border-color:rgba(210,69,47,.35)" data-del="${d.id}" data-nb="${d.nb_factures || 0}" data-nom="${esc(d.nom)}">Supprimer</button></td></tr>`).join('')}</tbody></table></div>`
+    : '<div class="card-b dh">Aucun fichier importé pour ce client.</div>'}</div>`;
+  $$('#docsList [data-del]').forEach(b => b.onclick = () => {
+    if (!confirm(`Supprimer « ${b.dataset.nom} » ?\nCela retirera aussi les ${b.dataset.nb} facture(s) importée(s) depuis ce fichier.`)) return;
+    api(`/clients/${state.clientId}/documents/${b.dataset.del}`, { method: 'DELETE' })
+      .then(r => { toast(`Fichier supprimé (${r.facturesSupprimees} facture(s) retirée(s)).`, 'ok'); renderDocs(); refreshAlertsBadge(); })
+      .catch(e => toast(e.message, 'err'));
+  });
+}
+async function doImport(fileList) {
+  const files = [...fileList];
   const box = $('#importResult');
-  box.innerHTML = `<div class="card"><div class="card-b" style="display:flex;gap:10px;align-items:center"><span class="spin" style="border-color:rgba(14,77,100,.25);border-top-color:var(--primary)"></span>Import de <b>${esc(file.name)}</b> en cours…</div></div>`;
-  const fd = new FormData(); fd.append('file', file);
+  box.innerHTML = `<div class="card"><div class="card-b" style="display:flex;gap:10px;align-items:center"><span class="spin" style="border-color:rgba(14,77,100,.25);border-top-color:var(--primary)"></span>Import de ${files.length} fichier(s) en cours…</div></div>`;
+  const fd = new FormData();
+  files.forEach(f => fd.append('files', f));
   if (state.period) { fd.append('annee', state.period.annee); fd.append('trimestre', state.period.trimestre); }
   try {
     const r = await api(`/clients/${state.clientId}/import`, { method: 'POST', body: fd });
-    toast(`${r.imported} facture(s) importée(s).`, 'ok', 'Import réussi');
-    box.innerHTML = `<div class="card"><div class="card-h"><h3>Résultat de l'import</h3><span class="badge b120">${esc(r.format)}</span></div>
-      <div class="card-b">
-        <div class="kpi-grid" style="margin-bottom:6px">
-          <div class="kpi"><div class="lbl">Importées</div><div class="val">${r.imported}</div></div>
-          <div class="kpi"><div class="lbl">En retard</div><div class="val" style="color:var(--r-red)">${r.totals.aDeclarer}</div></div>
-          <div class="kpi"><div class="lbl">Fournisseurs créés</div><div class="val">${r.fournisseursCreated}</div></div>
-          <div class="kpi accent"><div class="lbl">Amende estimée</div><div class="val">${money(r.totals.amende)} <small>DH</small></div></div>
+    const a = r.agg;
+    toast(`${a.imported} facture(s) importée(s) depuis ${files.length} fichier(s).`, 'ok', 'Import terminé');
+    box.innerHTML = `<div class="card"><div class="card-h"><h3>Résultat de l'import</h3></div><div class="card-b">
+        <div class="kpi-grid" style="margin-bottom:10px">
+          <div class="kpi"><div class="lbl">Importées</div><div class="val">${a.imported}</div></div>
+          <div class="kpi"><div class="lbl">En retard</div><div class="val" style="color:var(--r-red)">${a.aDeclarer}</div></div>
+          <div class="kpi"><div class="lbl">Fournisseurs créés</div><div class="val">${a.fournisseursCreated}</div></div>
+          <div class="kpi accent"><div class="lbl">Amende estimée</div><div class="val">${money(a.amende)} <small>DH</small></div></div>
         </div>
-        ${r.duplicates ? `<div class="dh" style="margin:8px 0">${r.duplicates} doublon(s) ignoré(s).</div>` : ''}
-        ${r.anomalies.length ? `<h4 style="margin:14px 0 8px;font-size:13px">Anomalies détectées (${r.anomalies.length})</h4>${r.anomalies.slice(0, 12).map(a => `<div class="alert-row" style="padding:10px 0;border:0"><div class="al-ic ${a.gravite === 'haute' ? 'red' : 'yellow'}"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 9v4m0 4h.01M10.3 3.9L2 18a2 2 0 001.7 3h16.6a2 2 0 001.7-3L13.7 3.9a2 2 0 00-3.4 0z"/></svg></div><div class="al-body"><div class="m">${esc(a.details)}</div></div></div>`).join('')}` : '<div class="tag-yes" style="margin-top:10px">Aucune anomalie détectée ✓</div>'}
-        <div style="margin-top:16px;display:flex;gap:10px"><button class="btn btn-primary" onclick="setView('delais')">Voir la feuille de calcul →</button></div>
+        ${r.files.map(f => `<div class="list-row"><div style="flex:1"><b>${esc(f.file)}</b> ${f.ok ? `<span class="badge b120">${esc(f.format)}</span>` : '<span class="pill pill-red"><span class="dot"></span>Échec</span>'}
+          <div class="dh" style="font-size:12px">${f.ok ? `${f.imported} importée(s) · ${f.duplicates} doublon(s) · ${f.anomalies.length} anomalie(s)` : esc(f.error)}</div></div></div>`).join('')}
+        ${a.duplicates ? `<div class="dh" style="margin-top:8px">${a.duplicates} doublon(s) ignoré(s) au total · ${a.anomalies} anomalie(s) détectée(s).</div>` : ''}
+        <div style="margin-top:16px;display:flex;gap:10px"><button class="btn btn-primary" onclick="setView('delais')">Voir la feuille de calcul →</button>${a.anomalies ? `<button class="btn btn-ghost" onclick="setView('anomalies')">Voir les anomalies</button>` : ''}</div>
       </div></div>`;
-    refreshAlertsBadge();
+    renderDocs(); refreshAlertsBadge();
   } catch (e) { box.innerHTML = `<div class="card"><div class="card-b" style="color:var(--r-red)">${esc(e.message)}</div></div>`; toast(e.message, 'err'); }
 }
 
@@ -542,15 +563,22 @@ async function renderConv() {
   ${clientPeriodBar(null, false)}
   <div class="page-head headrow"><div><h1>Conventions &amp; OCR</h1><p>Registre des conventions de délai fournisseurs de ${esc(currentClient().name)}. Le délai de 120 j est appliqué automatiquement aux fournisseurs conventionnés.</p></div>
     <button class="btn btn-primary" id="newConv"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 5v14M5 12h14"/></svg>Nouvelle convention</button></div>
-  ${rows.length ? `<div class="table-wrap"><table style="min-width:860px"><thead><tr><th>Fournisseur (ICE)</th><th>Objet</th><th class="num">Délai</th><th>Début</th><th>Fin</th><th>Statut</th><th>Document</th></tr></thead>
+  ${rows.length ? `<div class="table-wrap"><table style="min-width:900px"><thead><tr><th>Fournisseur (ICE)</th><th>Objet</th><th class="num">Délai</th><th>Début</th><th>Fin</th><th>Statut</th><th>Document</th><th></th></tr></thead>
     <tbody>${rows.map(c => `<tr><td><div class="fournisseur"><b>${esc(c.fournisseur || '—')}</b><small>${esc(c.four_ice || c.four_if || '')}</small></div></td>
       <td class="dh">${esc(c.objet || '—')}</td><td class="num"><span class="badge b120">${c.delai} j</span></td>
       <td class="mono dh">${dateFr(c.date_debut)}</td><td class="mono dh">${c.date_fin ? dateFr(c.date_fin) : 'Indéterminée'}</td>
       <td><span class="pill ${S[c.statut] || 'pill-ok'}"><span class="dot"></span>${esc(c.statut)}</span></td>
-      <td>${c.fichier ? `<a href="/api/conventions/${c.fichier}/file" target="_blank">Ouvrir</a>` : '<span class="tag-no">—</span>'}</td></tr>`).join('')}</tbody></table></div>`
+      <td>${c.fichier ? `<a href="/api/conventions/${c.fichier}/file" target="_blank">Ouvrir</a>` : '<span class="tag-no">—</span>'}</td>
+      <td style="text-align:right"><button class="btn btn-ghost btn-sm" style="color:var(--r-red);border-color:rgba(210,69,47,.35)" data-delc="${c.id}" data-four="${esc(c.fournisseur || '')}">Supprimer</button></td></tr>`).join('')}</tbody></table></div>`
     : emptyBox('Aucune convention', 'Ajoutez les conventions de délai (120 j) signées avec les fournisseurs.', null)}`;
   wireClientBar(renderConv);
   $('#newConv').onclick = convModal;
+  $$('#view [data-delc]').forEach(b => b.onclick = () => {
+    if (!confirm(`Supprimer la convention de « ${b.dataset.four} » ?\nLe délai applicable repassera à 60 j pour ce fournisseur (recalcul automatique des retards).`)) return;
+    api(`/clients/${state.clientId}/conventions/${b.dataset.delc}`, { method: 'DELETE' })
+      .then(() => { toast('Convention supprimée.', 'ok'); renderConv(); refreshAlertsBadge(); })
+      .catch(e => toast(e.message, 'err'));
+  });
 }
 async function convModal() {
   const fours = await api(`/clients/${state.clientId}/fournisseurs`);

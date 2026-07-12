@@ -89,7 +89,7 @@ function importWorkbook(buffer, { cabinetId, entrepriseId, sourceName, periode }
   const format = idx.delai_conv !== undefined ? 'DELAI' : 'TVA';
   const importId = uid('imp');
   const today = new Date();
-  const result = { imported: 0, duplicates: 0, fournisseursCreated: 0, anomalies: [], format,
+  const result = { importId, imported: 0, duplicates: 0, fournisseursCreated: 0, anomalies: [], format,
     totals: { ttc: 0, aDeclarer: 0, montantTtcRetard: 0, amende: 0 } };
 
   const addAnomalie = (type, gravite, details, entiteId) => {
