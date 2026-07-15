@@ -100,6 +100,8 @@ CREATE INDEX IF NOT EXISTS ix_ent_cab   ON entreprise(cabinet_id);
 CREATE INDEX IF NOT EXISTS ix_four_ent  ON fournisseur(entreprise_id);
 CREATE INDEX IF NOT EXISTS ix_fac_ent   ON facture(entreprise_id);
 CREATE INDEX IF NOT EXISTS ix_fac_period ON facture(entreprise_id, annee, trimestre);
+CREATE INDEX IF NOT EXISTS ix_fac_cab    ON facture(cabinet_id, annee, trimestre);
+CREATE INDEX IF NOT EXISTS ix_fac_four   ON facture(fournisseur_id);
 CREATE INDEX IF NOT EXISTS ix_conv_four ON convention(fournisseur_id);
 CREATE INDEX IF NOT EXISTS ix_audit_cab ON audit_log(cabinet_id, created_at);
 `);

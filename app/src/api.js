@@ -30,8 +30,10 @@ function ownedEntreprise(req, id) {
   return e || null;
 }
 function latestPeriod(entrepriseId) {
-  const r = db.prepare(`SELECT annee, trimestre FROM facture WHERE entreprise_id=? AND annee IS NOT NULL
-                        ORDER BY annee DESC, trimestre DESC LIMIT 1`).get(entrepriseId);
+  // Période par défaut = celle qui contient le PLUS de factures (représentative),
+  // et non la plus récente : évite qu'une facture isolée mal datée (ex. 2031) vide la vue.
+  const r = db.prepare(`SELECT annee, trimestre, COUNT(*) n FROM facture WHERE entreprise_id=? AND annee IS NOT NULL
+                        GROUP BY annee, trimestre ORDER BY n DESC, annee DESC, trimestre DESC LIMIT 1`).get(entrepriseId);
   if (r) return { annee: r.annee, trimestre: r.trimestre };
   const d = new Date(); return { annee: d.getFullYear(), trimestre: Math.floor(d.getMonth() / 3) + 1 };
 }
@@ -82,8 +84,8 @@ router.use(auth.requireAuth);
 router.get('/dashboard', (req, res) => {
   const cid = req.cabinetId;
   const clients = db.prepare('SELECT COUNT(*) n FROM entreprise WHERE cabinet_id=?').get(cid).n;
-  const per = db.prepare(`SELECT annee, trimestre FROM facture WHERE cabinet_id=? AND annee IS NOT NULL
-                          ORDER BY annee DESC, trimestre DESC LIMIT 1`).get(cid)
+  const per = db.prepare(`SELECT annee, trimestre, COUNT(*) n FROM facture WHERE cabinet_id=? AND annee IS NOT NULL
+                          GROUP BY annee, trimestre ORDER BY n DESC, annee DESC, trimestre DESC LIMIT 1`).get(cid)
              || { annee: new Date().getFullYear(), trimestre: Math.floor(new Date().getMonth() / 3) + 1 };
   const facturesTrim = db.prepare('SELECT COUNT(*) n FROM facture WHERE cabinet_id=? AND annee=? AND trimestre=?').get(cid, per.annee, per.trimestre).n;
   const agg = db.prepare(`SELECT COUNT(*) nRet, COALESCE(SUM(ttc),0) mttc, COALESCE(SUM(montant_amende),0) amende

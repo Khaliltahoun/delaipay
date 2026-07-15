@@ -1,5 +1,6 @@
 'use strict';
 const XLSX = require('xlsx');
+const xmljs = require('xml-js');
 const { db, tauxAt } = require('./db');
 const calc = require('./calc');
 const { uid, normalizeIce } = require('./util');
@@ -21,19 +22,19 @@ const CONCEPTS = [
   ['retard', { short: ['retard'], sub: ['joursderetard', 'nbjoursretard', 'joursretard', 'nombredejoursretard'] }],
   ['mht', { short: ['mht', 'ht'], sub: ['montantht', 'montanthorstaxe', 'baseht', 'totalht', 'montantht'] }],
   ['tva', { short: ['tva'], sub: ['montanttva', 'montantdelatva', 'tvamontant'] }],
-  ['ttc', { short: ['ttc', 'montant', 'total'], sub: ['montantttc', 'totalttc', 'montanttoutestaxe', 'montanttoutetaxe', 'montanttotal', 'totaltoutestaxes', 'montantfacturettc', 'montantfacture'] }],
+  ['ttc', { short: ['ttc', 'montant', 'total'], sub: ['montantttc', 'totalttc', 'montanttoutestaxe', 'montanttoutetaxe', 'montanttotal', 'totaltoutestaxes', 'montantfacturettc', 'montantfacture', 'montantdelafacture', 'montantdela facture', 'montantfact'] }],
   ['four_ice', { short: ['ice'], sub: ['icefournisseur', 'iceclient', 'identifiantcommun', 'numeroice', 'icetiers'] }],
   ['four_if', { short: ['if', 'nif', 'numif'], sub: ['iffournisseur', 'iffour', 'numeroif', 'identifiantfiscalfournisseur', 'identifiantfiscaltiers'] }],
   ['four_nom', { short: ['nom', 'tiers', 'raisonsociale'], sub: ['raisonsociale', 'nomfournisseur', 'fournisseur', 'beneficiaire', 'denomination', 'nomdufournisseur', 'nomraisonsociale', 'nometprenom'] }],
   ['taux_tva', { short: ['tx', 'taux'], sub: ['tauxtva', 'tauxdetva', 'tauxdetaxe', 'txtva'] }],
   ['mode_reglement', { short: ['id', 'mode'], sub: ['modereglement', 'modepaiement', 'moyenpaiement', 'modedereglement', 'moyendepaiement', 'modedepaiement'] }],
   ['designation', { short: ['des', 'nature', 'objet', 'libelle'], sub: ['designation', 'naturedesmarchandises', 'naturemarchandise', 'libelle', 'description', 'prestation', 'naturecharge', 'marchandise'] }],
-  ['numero', { short: ['num', 'numero', 'facture', 'ref', 'piece', 'nfacture', 'reference'], sub: ['numerofacture', 'numfacture', 'nfacture', 'nofacture', 'referencefacture', 'numerodefacture', 'ndefacture', 'numdefacture', 'numfact', 'referencedelafacture', 'nfact', 'numpiece', 'reference'] }],
+  ['numero', { short: ['num', 'numero', 'facture', 'facturen', 'ref', 'piece', 'nfacture', 'nfact', 'factn', 'nofacture', 'ndefacture', 'reference', 'n', 'no', 'ndf'], sub: ['numerofacture', 'numfacture', 'nfacture', 'nofacture', 'referencefacture', 'numerodefacture', 'ndefacture', 'numdefacture', 'numfact', 'facturen', 'referencedelafacture', 'nfact', 'numpiece', 'reference'] }],
 ];
 function conceptOf(h) {
   if (!h) return null;
   for (const [f, kw] of CONCEPTS) if (kw.short && kw.short.includes(h)) return f;
-  for (const [f, kw] of CONCEPTS) if (kw.sub && h.length >= 3 && kw.sub.some(k => h.includes(k) || (k.length >= 6 && k.includes(h)))) return f;
+  for (const [f, kw] of CONCEPTS) if (kw.sub && h.length >= 3 && kw.sub.some(k => h.includes(k) || (h.length >= 6 && k.length > h.length && k.startsWith(h)))) return f;
   return null;
 }
 function mapRow(row) {
@@ -83,9 +84,13 @@ function analyzeColumn(grid, startRow, c) {
     const nv = num(v);
     const hasDec = /[.,]\d/.test(s) || (typeof v === 'number' && !Number.isInteger(v));
     if (hasDec) anyDecimal = true;
-    if (pureDigits && digits.length >= 13) ice++;
-    else if (pureDigits && digits.length >= 4 && digits.length <= 11 && !hasDec) { idn++; lens.push(digits.length); if (nv) { magSum += nv; magN++; } }
-    else if (typeof v === 'number' || /^[\d\s .,\-]+$/.test(s)) { if (nv) { amount++; magSum += Math.abs(nv); magN++; } }
+    if (pureDigits && !hasDec && digits.length >= 13) ice++;
+    else if (pureDigits && !hasDec && digits.length >= 10) ice++;                    // identifiant long (compte / ICE tronqué) — jamais un montant
+    else if (pureDigits && !hasDec && digits.length >= 4 && digits.length <= 9) { idn++; lens.push(digits.length); }
+    else if ((typeof v === 'number' || /^[\d\s .,\-]+$/.test(s)) && nv) {
+      if (Math.abs(nv) < 5e8) { amount++; magSum += Math.abs(nv); magN++; }         // montant plausible
+      else ice++;                                                                    // trop grand pour un montant → identifiant
+    }
     else if (/[a-z]/i.test(s) && (/\d/.test(s) || /[\/\-]/.test(s)) && s.length <= 26) numero++;
     else text++;
   }
@@ -95,10 +100,10 @@ function analyzeColumn(grid, startRow, c) {
   if (f(date) >= 0.6) return { type: 'date', avgDate, avgMag };
   if (f(ice) >= 0.5) return { type: 'ice', avgDate, avgMag };
   if (!anyDecimal && f(idn) >= 0.6 && avgLen >= 5 && avgLen <= 9 && f(amount) < 0.2) return { type: 'if', avgDate, avgMag };
-  if (f(amount) + f(idn) >= 0.6 && (anyDecimal || avgMag > 1000)) return { type: 'amount', avgDate, avgMag };
+  if (f(amount) >= 0.5 && (anyDecimal || avgMag > 100)) return { type: 'amount', avgDate, avgMag };
   if (f(numero) >= 0.4) return { type: 'numero', avgDate, avgMag };
   if (f(text) >= 0.5) return { type: 'text', avgDate, avgMag };
-  if (f(amount) + f(idn) >= 0.5) return { type: 'amount', avgDate, avgMag };
+  if (f(amount) >= 0.4 && avgMag > 0) return { type: 'amount', avgDate, avgMag };
   return { type: 'text', avgDate, avgMag };
 }
 // Complète `idx` par l'analyse du contenu, uniquement pour les concepts non déjà repérés par titre.
@@ -163,18 +168,9 @@ function upsertFournisseur(cabinetId, entrepriseId, { nom, ice, iff }) {
 }
 
 /* ------------------------------------------------------------------ import */
-function importWorkbook(buffer, { cabinetId, entrepriseId, sourceName, periode }) {
-  const wb = XLSX.read(buffer, { cellDates: true });
-  // Choisit la feuille et la ligne d'en-tête offrant la meilleure détection.
-  let chosen = null;
-  for (const name of wb.SheetNames) {
-    const grid = XLSX.utils.sheet_to_json(wb.Sheets[name], { header: 1, blankrows: false, raw: true });
-    if (!grid.length) continue;
-    const det = detectHeader(grid);
-    if (!chosen || det.score > chosen.det.score) chosen = { name, grid, det };
-  }
-  if (!chosen) throw new Error("Fichier vide ou illisible.");
-  const { grid, det } = chosen;
+// Résout, pour une grille, la ligne d'en-tête + l'index des colonnes (titre puis contenu).
+function resolveSheet(grid) {
+  const det = detectHeader(grid);
   let idx = det.idx, startRow = det.row + 1;
   if (det.score < 2) {
     // En-tête non fiable → décider s'il y a un en-tête, puis inférer depuis le contenu.
@@ -184,16 +180,100 @@ function importWorkbook(buffer, { cabinetId, entrepriseId, sourceName, periode }
     idx = looksData ? {} : mapRow(grid[0]);
   }
   inferByContent(grid, startRow, idx); // complète les colonnes sans titre
-  if (idx.ttc === undefined && idx.mht === undefined && idx.date_facture === undefined && idx.date_paiement === undefined && idx.delai_paiement === undefined)
-    throw new Error("Colonnes non reconnues : ni montant ni dates détectés (même par analyse du contenu).");
-  const cell = (row, field) => (idx[field] !== undefined ? row[idx[field]] : undefined);
-  const format = idx.delai_conv !== undefined ? 'DELAI' : 'TVA';
+  const importable = idx.ttc !== undefined || idx.mht !== undefined || idx.date_facture !== undefined || idx.date_paiement !== undefined || idx.delai_paiement !== undefined;
+  return { idx, startRow, score: det.score, ligneEntete: det.row + 1, importable };
+}
+
+function importWorkbook(buffer, opts) {
+  // Relevé de déductions SIMPL au format XML officiel (<DeclarationReleveDeduction>) → parseur dédié.
+  const head = buffer.slice(0, 400).toString('utf8');
+  if (/^﻿?\s*<\?xml/.test(head) && /DeclarationReleveDeduction|releveDeductions/.test(buffer.toString('utf8', 0, 2000)))
+    return importReleveXml(buffer, opts);
+  return importExcel(buffer, opts);
+}
+
+/* Relevé de déductions TVA (SIMPL) — 1 <rd> = 1 facture. Données propres et normalisées. */
+function importReleveXml(buffer, { cabinetId, entrepriseId, sourceName, periode }) {
+  const root = (xmljs.xml2js(buffer.toString('utf8'), { compact: true }) || {}).DeclarationReleveDeduction;
+  if (!root) throw new Error('XML non reconnu (DeclarationReleveDeduction attendu).');
+  const T = x => (x && x._text !== undefined ? String(x._text).trim() : null);
+  let rd = root.releveDeductions && root.releveDeductions.rd;
+  rd = !rd ? [] : (Array.isArray(rd) ? rd : [rd]);
   const importId = uid('imp');
   const today = new Date();
-
   const result = {
-    importId, imported: 0, duplicates: 0, fournisseursCreated: 0, anomalies: [], format,
-    colonnes: Object.keys(idx), feuille: chosen.name, ligneEntete: det.row + 1,
+    importId, imported: 0, duplicates: 0, fournisseursCreated: 0, anomalies: [], format: 'RELEVE_XML',
+    colonnes: ['numero', 'designation', 'mht', 'tva', 'ttc', 'four_if', 'four_nom', 'four_ice', 'date_facture', 'date_paiement'],
+    feuilles: ['releveDeductions'], feuille: 'releveDeductions', ligneEntete: 0,
+    totals: { ttc: 0, aDeclarer: 0, montantTtcRetard: 0, amende: 0, convAbsente: 0 },
+  };
+  const insertFacture = db.prepare(`INSERT INTO facture
+    (id, cabinet_id, entreprise_id, fournisseur_id, numero, designation, mht, tva, ttc, taux_tva, mode_reglement,
+     date_facture, date_paiement, annee, periode, trimestre, source_import, import_id,
+     delai_applicable, delai_ecoule, date_limite, retard_jours, n_mois, a_declarer,
+     taux_bam, taux_total, base_amende, montant_amende, couleur_risque)
+    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`);
+  for (const x of rd) {
+    const ref = x.refF || {};
+    const nom = T(ref.nom), ice = T(ref.ice), iff = T(ref.if);
+    let ttc = num(T(x.ttc)); const mht = num(T(x.mht)), tva = num(T(x.tva));
+    if (!ttc && (mht || tva)) ttc = round2(mht + tva);
+    if (Math.abs(ttc) >= 5e8) continue;
+    if (!nom && !ice && !iff) continue;
+    const sane = d => (d && d.getFullYear() >= 2000 && d.getFullYear() <= 2035) ? d : null;
+    const dfac = sane(calc.parseDate(T(x.dfac)));
+    const dpai = sane(calc.parseDate(T(x.dpai)));
+    if (!(ttc || dfac || dpai)) continue;
+    const four = upsertFournisseur(cabinetId, entrepriseId, { nom, ice, iff });
+    if (four.created) result.fournisseursCreated++;
+    const delai = lookupDelai(entrepriseId, four.id);
+    const numero = T(x.num);
+    const dup = db.prepare(`SELECT id FROM facture WHERE entreprise_id=? AND fournisseur_id=? AND numero IS ? AND ttc=? AND date_facture IS ?`)
+      .get(entrepriseId, four.id, numero, ttc, iso(dfac));
+    if (dup) { result.duplicates++; continue; }
+    const per = periode || (dpai ? { annee: dpai.getFullYear(), trimestre: calc.trimestreOf(dpai) } : (dfac ? { annee: dfac.getFullYear(), trimestre: calc.trimestreOf(dfac) } : null));
+    const c = calc.computeFacture({ dateFacture: dfac, datePaiement: dpai, ttc, delaiApplicable: delai, periode: per, today, tauxProvider: (y, m) => tauxAt(y, m, cabinetId) });
+    if (c.delaiEcoule != null && c.delaiEcoule > 60 && !hasValidConvention(entrepriseId, four.id)) {
+      result.totals.convAbsente++;
+      db.prepare(`INSERT INTO anomalie (id, cabinet_id, entreprise_id, type, gravite, details, entite, entite_id) VALUES (?,?,?,?,?,?,?,?)`)
+        .run(uid('ano'), cabinetId, entrepriseId, 'convention_absente', 'moyenne', `Facture ${numero || '?'} : délai de ${c.delaiEcoule} j (> 60 j) SANS convention pour ${nom || four.id}.`, 'facture', four.id);
+    }
+    insertFacture.run(uid('fac'), cabinetId, entrepriseId, four.id, numero,
+      T(x.des), mht || null, tva || null, ttc || null, num(T(x.tx)) || null, T(x.mp && x.mp.id),
+      iso(dfac), iso(dpai), per ? per.annee : null, per ? per.trimestre : null, per ? per.trimestre : null,
+      sourceName || 'RELEVE_XML', importId,
+      delai, c.delaiEcoule, c.dateLimite, c.retardJours, c.nMois, c.aDeclarer ? 1 : 0,
+      c.tauxBam, c.tauxTotal, c.baseAmende, c.montantAmende, c.couleurRisque);
+    result.imported++;
+    result.totals.ttc = round2(result.totals.ttc + (ttc || 0));
+    if (c.aDeclarer) { result.totals.aDeclarer++; result.totals.montantTtcRetard = round2(result.totals.montantTtcRetard + (ttc || 0)); result.totals.amende = round2(result.totals.amende + (c.montantAmende || 0)); }
+  }
+  if (result.imported === 0 && result.duplicates === 0) throw new Error('Relevé XML sans ligne exploitable.');
+  return result;
+}
+
+function importExcel(buffer, { cabinetId, entrepriseId, sourceName, periode }) {
+  const wb = XLSX.read(buffer, { cellDates: true });
+  // On traite TOUTES les feuilles ressemblant à un tableau de factures (pas seulement la meilleure),
+  // mais on écarte les feuilles de type grand-livre / journal / balance (numéros de compte pris pour des montants).
+  const SHEET_SKIP = /grand.?livre|journal|balance|brouillard|lettrage|^gl\b|\bg\.?l\b|grd livre/i;
+  const sheets = [];
+  for (const name of wb.SheetNames) {
+    if (SHEET_SKIP.test(name)) continue;
+    const grid = XLSX.utils.sheet_to_json(wb.Sheets[name], { header: 1, blankrows: false, raw: true });
+    if (!grid.length) continue;
+    const r = resolveSheet(grid);
+    if (r.importable) sheets.push({ name, grid, ...r });
+  }
+  if (!sheets.length) throw new Error("Colonnes non reconnues : ni montant ni dates détectés (même par analyse du contenu).");
+
+  const importId = uid('imp');
+  const today = new Date();
+  const fileFormat = sheets.some(s => s.idx.delai_conv !== undefined) ? 'DELAI' : 'TVA';
+  const result = {
+    importId, imported: 0, duplicates: 0, fournisseursCreated: 0, anomalies: [], format: fileFormat,
+    colonnes: [...new Set(sheets.flatMap(s => Object.keys(s.idx)))],
+    feuilles: sheets.map(s => `${s.name} (L${s.ligneEntete})`), feuille: sheets[0].name, ligneEntete: sheets[0].ligneEntete,
     totals: { ttc: 0, aDeclarer: 0, montantTtcRetard: 0, amende: 0, convAbsente: 0 },
   };
   const addAnomalie = (type, gravite, details, entiteId) => {
@@ -208,69 +288,82 @@ function importWorkbook(buffer, { cabinetId, entrepriseId, sourceName, periode }
      taux_bam, taux_total, base_amende, montant_amende, couleur_risque)
     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`);
 
-  for (let r = startRow; r < grid.length; r++) {
-    const row = grid[r];
-    if (!row || row.every(c => c === undefined || c === '')) continue;
-
-    const numero = cell(row, 'numero');
-    const mht = num(cell(row, 'mht'));
-    const tva = num(cell(row, 'tva'));
-    let ttc = num(cell(row, 'ttc'));
-    if (!ttc && (mht || tva)) ttc = round2(mht + tva);
-    if (!ttc && !numero) continue;
-    const notEmpty = v => v != null && String(v).trim() !== '';
-    const hasSupplier = notEmpty(cell(row, 'four_ice')) || notEmpty(cell(row, 'four_if')) || notEmpty(cell(row, 'four_nom'));
-    if (!hasSupplier) continue; // ligne de total / parasite
-
-    const dfac = calc.parseDate(cell(row, 'date_facture'));
-    let dpai = calc.parseDate(cell(row, 'date_paiement'));
-    const delaiPaie = num(cell(row, 'delai_paiement'));
-    // Fichier « délais de paiement » sans date de paiement mais avec un délai en jours → on dérive la date.
-    if (!dpai && dfac && delaiPaie > 0) dpai = calc.addDays(dfac, Math.round(delaiPaie));
-
-    const four = upsertFournisseur(cabinetId, entrepriseId, { nom: cell(row, 'four_nom'), ice: cell(row, 'four_ice'), iff: cell(row, 'four_if') });
-    if (four.created) result.fournisseursCreated++;
-
-    let delai;
-    const convVal = num(cell(row, 'delai_conv'));
-    if (format === 'DELAI' && convVal) { delai = convVal; db.prepare('UPDATE fournisseur SET delai_applicable=? WHERE id=?').run(convVal, four.id); }
-    else delai = lookupDelai(entrepriseId, four.id);
-
-    // contrôles
-    const nfx = numero != null ? String(numero) : '?';
-    if (!dfac) addAnomalie('date_manquante', 'haute', `Facture ${nfx} : date de facture manquante ou illisible.`);
-    if (dfac && dpai && dpai < dfac) addAnomalie('date_incoherente', 'haute', `Facture ${nfx} : date de paiement (${iso(dpai)}) antérieure à la date de facture (${iso(dfac)}).`);
-    if (dfac && dfac > today) addAnomalie('date_future', 'haute', `Facture ${nfx} : date de facture dans le futur (${iso(dfac)}).`);
-    if (mht && tva && ttc && Math.abs(ttc - (mht + tva)) > 0.5) addAnomalie('montant_incoherent', 'moyenne', `Facture ${nfx} : TTC (${ttc}) ≠ HT+TVA (${round2(mht + tva)}).`);
-
-    const dup = db.prepare(`SELECT id FROM facture WHERE entreprise_id=? AND fournisseur_id=? AND numero IS ? AND ttc=? AND date_facture IS ?`)
-      .get(entrepriseId, four.id, numero != null ? String(numero) : null, ttc, iso(dfac));
-    if (dup) { result.duplicates++; addAnomalie('doublon', 'moyenne', `Facture ${nfx} (${ttc}) déjà présente — ignorée.`, dup.id); continue; }
-
-    const per = periode || (dpai ? { annee: dpai.getFullYear(), trimestre: calc.trimestreOf(dpai) } : (dfac ? { annee: dfac.getFullYear(), trimestre: calc.trimestreOf(dfac) } : null));
-    const c = calc.computeFacture({ dateFacture: dfac, datePaiement: dpai, ttc, delaiApplicable: delai, periode: per, today, tauxProvider: (y, m) => tauxAt(y, m, cabinetId) });
-
-    // Question métier : délai > 60 j → convention disponible avec le fournisseur ?
-    if (c.delaiEcoule != null && c.delaiEcoule > 60 && !hasValidConvention(entrepriseId, four.id)) {
-      result.totals.convAbsente++;
-      addAnomalie('convention_absente', 'moyenne', `Facture ${nfx} : délai de ${c.delaiEcoule} j (> 60 j) SANS convention enregistrée pour le fournisseur ${cell(row, 'four_nom') || four.id}.`, four.id);
-    }
-
-    insertFacture.run(uid('fac'), cabinetId, entrepriseId, four.id, numero != null ? String(numero) : null,
-      cell(row, 'designation') != null ? String(cell(row, 'designation')) : null,
-      mht || null, tva || null, ttc || null, num(cell(row, 'taux_tva')) || null,
-      cell(row, 'mode_reglement') != null ? String(cell(row, 'mode_reglement')) : null,
-      iso(dfac), iso(dpai), per ? per.annee : null, per ? per.trimestre : null, per ? per.trimestre : null,
-      sourceName || format, importId,
-      delai, c.delaiEcoule, c.dateLimite, c.retardJours, c.nMois, c.aDeclarer ? 1 : 0,
-      c.tauxBam, c.tauxTotal, c.baseAmende, c.montantAmende, c.couleurRisque);
-    result.imported++;
-    result.totals.ttc = round2(result.totals.ttc + (ttc || 0));
-    if (c.aDeclarer) { result.totals.aDeclarer++; result.totals.montantTtcRetard = round2(result.totals.montantTtcRetard + (ttc || 0)); result.totals.amende = round2(result.totals.amende + (c.montantAmende || 0)); }
-  }
+  for (const sheet of sheets) processSheet(sheet);
   if (result.imported === 0 && result.duplicates === 0)
     throw new Error("Aucune ligne de facture exploitable détectée (vérifiez que le fichier contient des fournisseurs et des montants).");
   return result;
+
+  function processSheet({ grid, idx, startRow }) {
+    const format = idx.delai_conv !== undefined ? 'DELAI' : 'TVA';
+    const cell = (row, field) => (idx[field] !== undefined ? row[idx[field]] : undefined);
+    for (let r = startRow; r < grid.length; r++) {
+      const row = grid[r];
+      if (!row || row.every(c => c === undefined || c === '')) continue;
+
+      const numero = cell(row, 'numero');
+      const mht = num(cell(row, 'mht'));
+      const tva = num(cell(row, 'tva'));
+      let ttc = num(cell(row, 'ttc'));
+      if (!ttc && (mht || tva)) ttc = round2(mht + tva);
+      if (!ttc && !numero) continue;
+      // Garde-fou montant : au-delà de 500 M DH c'est une valeur parasite (n° de compte, série, cellule concaténée).
+      if (Math.abs(ttc) >= 5e8 || Math.abs(mht) >= 5e8 || Math.abs(tva) >= 5e8) continue;
+      const notEmpty = v => v != null && String(v).trim() !== '';
+      const hasSupplier = notEmpty(cell(row, 'four_ice')) || notEmpty(cell(row, 'four_if')) || notEmpty(cell(row, 'four_nom'));
+      if (!hasSupplier) continue; // ligne de total / parasite
+
+      // Garde-fou date : on rejette les années aberrantes (séries Excel prises pour des dates → 1899, 2536…).
+      const sane = d => (d && d.getFullYear() >= 2000 && d.getFullYear() <= 2035) ? d : null;
+      const dfac = sane(calc.parseDate(cell(row, 'date_facture')));
+      let dpai = sane(calc.parseDate(cell(row, 'date_paiement')));
+      const delaiPaie = num(cell(row, 'delai_paiement'));
+      // Fichier « délais de paiement » sans date de paiement mais avec un délai en jours → on dérive la date.
+      if (!dpai && dfac && delaiPaie > 0) dpai = calc.addDays(dfac, Math.round(delaiPaie));
+
+      // Rejet des lignes d'en-tête / libellés qui fuient comme données : une vraie facture a un montant OU une date.
+      if (!(ttc > 0 || mht !== 0 || tva !== 0 || dfac || dpai || delaiPaie > 0)) continue;
+
+      const four = upsertFournisseur(cabinetId, entrepriseId, { nom: cell(row, 'four_nom'), ice: cell(row, 'four_ice'), iff: cell(row, 'four_if') });
+      if (four.created) result.fournisseursCreated++;
+
+      let delai;
+      const convVal = num(cell(row, 'delai_conv'));
+      if (format === 'DELAI' && convVal) { delai = convVal; db.prepare('UPDATE fournisseur SET delai_applicable=? WHERE id=?').run(convVal, four.id); }
+      else delai = lookupDelai(entrepriseId, four.id);
+
+      // contrôles
+      const nfx = numero != null ? String(numero) : '?';
+      if (!dfac) addAnomalie('date_manquante', 'haute', `Facture ${nfx} : date de facture manquante ou illisible.`);
+      if (dfac && dpai && dpai < dfac) addAnomalie('date_incoherente', 'haute', `Facture ${nfx} : date de paiement (${iso(dpai)}) antérieure à la date de facture (${iso(dfac)}).`);
+      if (dfac && dfac > today) addAnomalie('date_future', 'haute', `Facture ${nfx} : date de facture dans le futur (${iso(dfac)}).`);
+      if (mht && tva && ttc && Math.abs(ttc - (mht + tva)) > 0.5) addAnomalie('montant_incoherent', 'moyenne', `Facture ${nfx} : TTC (${ttc}) ≠ HT+TVA (${round2(mht + tva)}).`);
+
+      const dup = db.prepare(`SELECT id FROM facture WHERE entreprise_id=? AND fournisseur_id=? AND numero IS ? AND ttc=? AND date_facture IS ?`)
+        .get(entrepriseId, four.id, numero != null ? String(numero) : null, ttc, iso(dfac));
+      if (dup) { result.duplicates++; addAnomalie('doublon', 'moyenne', `Facture ${nfx} (${ttc}) déjà présente — ignorée.`, dup.id); continue; }
+
+      const per = periode || (dpai ? { annee: dpai.getFullYear(), trimestre: calc.trimestreOf(dpai) } : (dfac ? { annee: dfac.getFullYear(), trimestre: calc.trimestreOf(dfac) } : null));
+      const c = calc.computeFacture({ dateFacture: dfac, datePaiement: dpai, ttc, delaiApplicable: delai, periode: per, today, tauxProvider: (y, m) => tauxAt(y, m, cabinetId) });
+
+      // Question métier : délai > 60 j → convention disponible avec le fournisseur ?
+      if (c.delaiEcoule != null && c.delaiEcoule > 60 && !hasValidConvention(entrepriseId, four.id)) {
+        result.totals.convAbsente++;
+        addAnomalie('convention_absente', 'moyenne', `Facture ${nfx} : délai de ${c.delaiEcoule} j (> 60 j) SANS convention enregistrée pour le fournisseur ${cell(row, 'four_nom') || four.id}.`, four.id);
+      }
+
+      insertFacture.run(uid('fac'), cabinetId, entrepriseId, four.id, numero != null ? String(numero) : null,
+        cell(row, 'designation') != null ? String(cell(row, 'designation')) : null,
+        mht || null, tva || null, ttc || null, num(cell(row, 'taux_tva')) || null,
+        cell(row, 'mode_reglement') != null ? String(cell(row, 'mode_reglement')) : null,
+        iso(dfac), iso(dpai), per ? per.annee : null, per ? per.trimestre : null, per ? per.trimestre : null,
+        sourceName || format, importId,
+        delai, c.delaiEcoule, c.dateLimite, c.retardJours, c.nMois, c.aDeclarer ? 1 : 0,
+        c.tauxBam, c.tauxTotal, c.baseAmende, c.montantAmende, c.couleurRisque);
+      result.imported++;
+      result.totals.ttc = round2(result.totals.ttc + (ttc || 0));
+      if (c.aDeclarer) { result.totals.aDeclarer++; result.totals.montantTtcRetard = round2(result.totals.montantTtcRetard + (ttc || 0)); result.totals.amende = round2(result.totals.amende + (c.montantAmende || 0)); }
+    }
+  }
 }
 
 function num(v) { if (v == null || v === '') return 0; const n = Number(String(v).replace(/[\s ]/g, '').replace(',', '.').replace(/[^0-9.\-]/g, '')); return isNaN(n) ? 0 : n; }
