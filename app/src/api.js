@@ -587,7 +587,7 @@ router.get('/alerts', (req, res) => {
   for (const d of nextDeadlines().slice(0, 2)) out.push({ type: 'echeance', severite: d.days <= 15 ? 'h' : 'm', icon: d.days <= 15 ? 'dred' : 'orange', titre: 'Échéance de déclaration', message: `${d.label} — dépôt SIMPL le ${d.day}/${monNum(d.mon)}.`, date: d.cd });
   res.json({ count: out.length, alerts: out });
 });
-function anomalieLabel(t) { return ({ date_incoherente: 'Date incohérente', date_future: 'Date dans le futur', date_manquante: 'Date manquante', montant_incoherent: 'Montant incohérent', doublon: 'Doublon détecté' })[t] || 'Anomalie'; }
+function anomalieLabel(t) { return ({ date_incoherente: 'Date incohérente', date_future: 'Date dans le futur', date_manquante: 'Date manquante', montant_incoherent: 'Montant incohérent', doublon: 'Doublon détecté', convention_absente: 'Convention absente (délai > 60 j)' })[t] || 'Anomalie'; }
 function monNum(m) { return ({ Avr: '04', Jul: '07', Oct: '10', Jan: '01' })[m] || m; }
 
 /* ============================================================ TAUX BAM */

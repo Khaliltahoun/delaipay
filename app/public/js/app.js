@@ -444,7 +444,7 @@ async function renderDelais() {
       <td class="mono dh">${dateFr(f.date_facture)}</td>
       <td class="mono dh">${dateFr(f.date_paiement)}</td>
       <td class="num">${f.delai_ecoule != null ? f.delai_ecoule + ' j' : '—'}</td>
-      <td><span class="badge ${f.delai_applicable >= 120 ? 'b120' : 'b60'}">${f.delai_applicable} j</span></td>
+      <td><span class="badge ${f.delai_applicable >= 120 ? 'b120' : 'b60'}">${f.delai_applicable} j</span>${f.delai_ecoule > 60 ? (f.has_conv ? ' <span class="pill pill-ok" style="font-size:10px;padding:1px 7px" title="Convention disponible">conv.</span>' : ' <span class="pill pill-red" style="font-size:10px;padding:1px 7px" title="Aucune convention pour ce fournisseur">sans conv.</span>') : ''}</td>
       <td class="retard ${f.retard > 0 ? 'pos' : 'neg'}">${f.retard > 0 ? '+' + f.retard : f.retard}</td>
       <td>${f.a_declarer ? '<span class="pill pill-red" style="font-size:11px"><span class="dot"></span>Oui</span>' : '<span class="tag-no">—</span>'}</td>
       <td class="num" style="font-weight:700">${f.amende ? money(f.amende) : '—'}</td>
@@ -748,7 +748,7 @@ async function renderCabConv() {
 
 async function renderAnomalies() {
   const rows = await api('/anomalies');
-  const LBL = { date_incoherente: 'Date incohérente', date_future: 'Date dans le futur', date_manquante: 'Date manquante', montant_incoherent: 'Montant incohérent', doublon: 'Doublon' };
+  const LBL = { date_incoherente: 'Date incohérente', date_future: 'Date dans le futur', date_manquante: 'Date manquante', montant_incoherent: 'Montant incohérent', doublon: 'Doublon', convention_absente: 'Convention absente (délai > 60 j)' };
   const ouvertes = rows.filter(r => r.statut === 'ouverte').length;
   $('#view').innerHTML = `
   <div class="page-head"><h1>Anomalies</h1><p>${ouvertes} anomalie(s) ouverte(s) sur ${rows.length} détectée(s) — contrôles automatiques à l'import (dates, ICE, TTC, doublons).</p></div>
