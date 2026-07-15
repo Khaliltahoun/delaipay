@@ -19,3 +19,8 @@ docs/
 app/screenshots/
 *.pdf
 CAHIER_DES_CHARGES_DelaiPay.md
+
+# Fichiers clients supplémentaires (non publiés)
+DELAI DE PAIEMENT/
+*.xlsx
+*.docx
