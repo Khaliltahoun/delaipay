@@ -29,6 +29,9 @@ async function ensureSeed() {
   if (existing > 0) return { seeded: false };
 
   const email = (process.env.ADMIN_EMAIL || 'zahra@hlz.ma').toLowerCase();
+  // En production, refuser un mot de passe par défaut : ADMIN_PASSWORD est obligatoire.
+  if (process.env.NODE_ENV === 'production' && !process.env.ADMIN_PASSWORD)
+    throw new Error('ADMIN_PASSWORD requis en production pour créer le compte initial.');
   const password = process.env.ADMIN_PASSWORD || 'DelaiPay2026!';
 
   const cabinetId = uid('cab');

@@ -3,6 +3,7 @@
 const state = { me: null, cabinet: null, clients: [], clientId: null, period: null, view: 'dash' };
 const $ = (s, r = document) => r.querySelector(s);
 const $$ = (s, r = document) => [...r.querySelectorAll(s)];
+const debounce = (fn, ms = 140) => { let t; return function (...a) { clearTimeout(t); t = setTimeout(() => fn.apply(this, a), ms); }; };
 const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 function money(n, dec = 2) {
   if (n == null || isNaN(n)) return '—';
@@ -14,15 +15,70 @@ function money(n, dec = 2) {
 function dateFr(iso) { if (!iso) return '—'; const m = String(iso).match(/^(\d{4})-(\d{2})-(\d{2})/); return m ? `${m[3]}/${m[2]}/${m[1]}` : iso; }
 function pct(x) { return x == null ? '—' : (x * 100).toFixed(2).replace('.', ',') + ' %'; }
 
+/* Cache lecture (GET) : navigation entre vues instantanée, dédoublonnage des
+ * requêtes en vol. Toute mutation (POST/PUT/DELETE) purge le cache. */
+const _cache = new Map();     // path -> { t, data }
+const _inflight = new Map();  // path -> Promise
+const CACHE_TTL = 15000;      // 15 s de fraîcheur
+function invalidateCache() { _cache.clear(); }
+// Les données renvoyées sont traitées en lecture seule par les vues (aucune mutation),
+// on peut donc partager la référence — pas de clonage (coûteux sur les gros tableaux).
+
 async function api(path, opts = {}) {
+  const method = (opts.method || 'GET').toUpperCase();
+  const cacheable = method === 'GET' && !opts.noCache && typeof path === 'string';
+  if (method !== 'GET') invalidateCache(); // une écriture invalide les lectures
+
+  if (cacheable && !opts.fresh) {
+    const hit = _cache.get(path);
+    if (hit && (Date.now() - hit.t) < CACHE_TTL) return hit.data;
+    if (_inflight.has(path)) return await _inflight.get(path);
+  }
+
   const o = { credentials: 'same-origin', headers: {}, ...opts };
   if (o.body && !(o.body instanceof FormData)) { o.headers['Content-Type'] = 'application/json'; o.body = JSON.stringify(o.body); }
-  const res = await fetch('/api' + path, o);
-  if (res.status === 401) { window.location.href = '/login'; throw new Error('401'); }
-  const ct = res.headers.get('content-type') || '';
-  const data = ct.includes('json') ? await res.json() : await res.text();
-  if (!res.ok) throw new Error((data && data.error) || 'Erreur serveur');
-  return data;
+
+  const run = (async () => {
+    const res = await fetch('/api' + path, o);
+    if (res.status === 401) { window.location.href = '/login'; throw new Error('401'); }
+    const ct = res.headers.get('content-type') || '';
+    const data = ct.includes('json') ? await res.json() : await res.text();
+    if (!res.ok) throw new Error((data && data.error) || 'Erreur serveur');
+    return data;
+  })();
+
+  if (!cacheable) return run;
+  _inflight.set(path, run);
+  try {
+    const data = await run;
+    _cache.set(path, { t: Date.now(), data });
+    return data;
+  } finally { _inflight.delete(path); }
+}
+
+/* Rendu paginé pour les grands tableaux : n'injecte qu'une tranche de lignes à la fois
+   (évite de figer l'onglet sur des milliers de <tr>). La vue doit contenir un
+   <tbody id="pgBody"> et un conteneur <div id="pgMore">. Clic délégué sur le <tbody>. */
+function mountPaged(rows, rowFn, opts = {}) {
+  const pageSize = opts.pageSize || 200;
+  const tbody = $('#pgBody'), bar = $('#pgMore');
+  if (!tbody) return;
+  let shown = 0;
+  function more() {
+    tbody.insertAdjacentHTML('beforeend', rows.slice(shown, shown + pageSize).map(rowFn).join(''));
+    shown = Math.min(shown + pageSize, rows.length);
+    if (bar) {
+      bar.innerHTML = shown < rows.length
+        ? `<button class="btn btn-ghost" id="pgBtn">Afficher plus — ${shown} / ${rows.length}</button>`
+        : (rows.length > pageSize ? `<span style="color:var(--muted);font-size:12px">${rows.length} ligne(s) affichée(s)</span>` : '');
+      const b = $('#pgBtn'); if (b) b.onclick = more;
+    }
+  }
+  more();
+  if (opts.onRow) tbody.onclick = e => {
+    if (e.target.closest('a')) return;          // laisser les liens (ex. « Ouvrir ») fonctionner
+    const tr = e.target.closest('tr'); if (tr && tbody.contains(tr)) opts.onRow(tr);
+  };
 }
 function toast(msg, type = 'ok', title = '') {
   const t = document.createElement('div'); t.className = 'toast ' + type;
@@ -146,7 +202,7 @@ function openSwitcher() { $('#cswPanel').classList.remove('hidden'); $('#clientS
 function closeSwitcher() { const p = $('#cswPanel'); if (p) p.classList.add('hidden'); const b = $('#clientSwBtn'); if (b) b.setAttribute('aria-expanded', 'false'); }
 function wireSwitcher() {
   $('#clientSwBtn').onclick = e => { e.stopPropagation(); $('#cswPanel').classList.contains('hidden') ? openSwitcher() : closeSwitcher(); };
-  $('#cswSearch').oninput = e => buildSwitcherList(e.target.value);
+  $('#cswSearch').oninput = debounce(e => buildSwitcherList(e.target.value), 120);
   $('#cswPanel').onclick = e => e.stopPropagation();
   document.addEventListener('click', closeSwitcher);
 }
@@ -164,7 +220,7 @@ function wireGlobalSearch() {
     box.classList.remove('hidden');
     $$('#searchRes .sr[data-id]').forEach(d => d.onclick = () => { inp.value = ''; box.classList.add('hidden'); setClient(d.dataset.id); });
   };
-  inp.oninput = run;
+  inp.oninput = debounce(run, 120);
   inp.onfocus = () => { if (inp.value.trim()) run(); };
   inp.onblur = () => setTimeout(() => box.classList.add('hidden'), 180);
 }
@@ -294,7 +350,7 @@ async function renderClients() {
     $$('#clRows tr[data-id]').forEach(tr => tr.onclick = () => setClient(tr.dataset.id));
   };
   $('#newClient').onclick = clientModal;
-  $('#clSearch').oninput = e => { state._cq = e.target.value; draw(); };
+  $('#clSearch').oninput = debounce(e => { state._cq = e.target.value; draw(); }, 120);
   $$('.fpill[data-r]').forEach(b => b.onclick = () => { state._crisk = b.dataset.r; $$('.fpill[data-r]').forEach(x => x.setAttribute('aria-pressed', x.dataset.r === state._crisk)); draw(); });
   draw();
 }
@@ -436,7 +492,13 @@ async function renderDelais() {
   ${rows.length ? `<div class="table-wrap"><table style="min-width:1040px"><thead><tr>
     <th>N° facture</th><th>Fournisseur (IF)</th><th>Nature</th><th class="num">TTC</th><th>Date facture</th><th>Date paiement</th>
     <th class="num">Délai</th><th>Convention</th><th class="num">Retard</th><th>À déclarer</th><th class="num">Amende</th><th>Statut</th></tr></thead>
-    <tbody>${rows.map(f => `<tr class="clickable" data-id="${f.id}">
+    <tbody id="pgBody"></tbody>
+    <tfoot><tr><td colspan="3">Total — ${rows.length} facture(s)</td><td class="num">${money(rows.reduce((s, x) => s + (x.ttc || 0), 0))}</td><td colspan="4"></td><td></td><td></td><td class="num" style="color:var(--r-red)">${money(rows.reduce((s, x) => s + (x.amende || 0), 0))}</td><td></td></tr></tfoot>
+  </table></div><div id="pgMore" style="text-align:center;margin:14px 0"></div>` : emptyBox('Aucune facture', 'Importez un journal d\'achats (Excel) pour ce client et cette période.', 'import')}`;
+  $$('.fpill').forEach(b => b.onclick = () => { state._filter = b.dataset.f; renderDelais(); });
+  wireClientBar(renderDelais);
+  $('#recompute').onclick = async () => { await api(`/clients/${state.clientId}/recompute${perQuery()}`, { method: 'POST' }); toast('Recalcul effectué.', 'ok'); renderDelais(); };
+  if (rows.length) mountPaged(rows, f => `<tr class="clickable" data-id="${f.id}">
       <td class="mono"><b>${esc(f.numero || '—')}</b></td>
       <td><div class="fournisseur"><b>${esc(f.four || '—')}</b><small>IF ${esc(f.four_if || '—')}</small></div></td>
       <td class="dh">${esc(f.nature || '—')}</td>
@@ -448,13 +510,8 @@ async function renderDelais() {
       <td class="retard ${f.retard > 0 ? 'pos' : 'neg'}">${f.retard > 0 ? '+' + f.retard : f.retard}</td>
       <td>${f.a_declarer ? '<span class="pill pill-red" style="font-size:11px"><span class="dot"></span>Oui</span>' : '<span class="tag-no">—</span>'}</td>
       <td class="num" style="font-weight:700">${f.amende ? money(f.amende) : '—'}</td>
-      <td>${riskPill(f.risk)}</td></tr>`).join('')}</tbody>
-    <tfoot><tr><td colspan="3">Total — ${rows.length} facture(s)</td><td class="num">${money(rows.reduce((s, x) => s + (x.ttc || 0), 0))}</td><td colspan="4"></td><td></td><td></td><td class="num" style="color:var(--r-red)">${money(rows.reduce((s, x) => s + (x.amende || 0), 0))}</td><td></td></tr></tfoot>
-  </table></div>` : emptyBox('Aucune facture', 'Importez un journal d\'achats (Excel) pour ce client et cette période.', 'import')}`;
-  $$('.fpill').forEach(b => b.onclick = () => { state._filter = b.dataset.f; renderDelais(); });
-  wireClientBar(renderDelais);
-  $('#recompute').onclick = async () => { await api(`/clients/${state.clientId}/recompute${perQuery()}`, { method: 'POST' }); toast('Recalcul effectué.', 'ok'); renderDelais(); };
-  $$('#view tbody tr[data-id]').forEach(tr => tr.onclick = () => factureDrawer(data.rows.find(x => x.id === tr.dataset.id)));
+      <td>${riskPill(f.risk)}</td></tr>`,
+    { onRow: tr => factureDrawer(data.rows.find(x => x.id === tr.dataset.id)) });
 }
 function factureDrawer(f) {
   if (!f) return;
@@ -709,15 +766,17 @@ async function renderRetards() {
   <div class="page-head"><h1>Factures en retard — portefeuille</h1><p>${rows.length} facture(s) à déclarer sur l'ensemble des clients · TTC concerné <b>${money(ttc)} DH</b> · amende <b>${money(tot)} DH</b>.</p></div>
   ${rows.length ? `<div class="table-wrap"><table style="min-width:1000px"><thead><tr>
     <th>Client</th><th>Fournisseur (IF)</th><th>N° facture</th><th class="num">TTC</th><th>Date facture</th><th>Date paiement</th><th>Conv.</th><th class="num">Retard</th><th class="num">Amende</th><th>Risque</th></tr></thead>
-    <tbody>${rows.map(f => `<tr class="clickable" data-ent="${f.ent_id}">
+    <tbody id="pgBody"></tbody>
+    <tfoot><tr><td colspan="3">Total</td><td class="num">${money(ttc)}</td><td colspan="4"></td><td class="num" style="color:var(--r-red)">${money(tot)}</td><td></td></tr></tfoot></table></div>
+    <div id="pgMore" style="text-align:center;margin:14px 0"></div>`
+    : emptyBox('Aucune facture en retard', 'Toutes les factures du portefeuille sont dans les délais.', 'dash')}`;
+  if (rows.length) mountPaged(rows, f => `<tr class="clickable" data-ent="${f.ent_id}">
       <td><b>${esc(f.ent)}</b></td><td><div class="fournisseur"><b>${esc(f.four || '—')}</b><small>IF ${esc(f.four_if || '—')}</small></div></td>
       <td class="mono">${esc(f.numero || '—')}</td><td class="num">${money(f.ttc)}</td>
       <td class="mono dh">${dateFr(f.date_facture)}</td><td class="mono dh">${dateFr(f.date_paiement)}</td>
       <td><span class="badge ${f.delai_applicable >= 120 ? 'b120' : 'b60'}">${f.delai_applicable} j</span></td>
-      <td class="retard pos">+${f.retard_jours}</td><td class="num" style="font-weight:700">${money(f.montant_amende)}</td><td>${riskPill(f.couleur_risque)}</td></tr>`).join('')}</tbody>
-    <tfoot><tr><td colspan="3">Total</td><td class="num">${money(ttc)}</td><td colspan="4"></td><td class="num" style="color:var(--r-red)">${money(tot)}</td><td></td></tr></tfoot></table></div>`
-    : emptyBox('Aucune facture en retard', 'Toutes les factures du portefeuille sont dans les délais.', 'dash')}`;
-  $$('#view tbody tr[data-ent]').forEach(tr => tr.onclick = () => goClient(tr.dataset.ent, 'delais'));
+      <td class="retard pos">+${f.retard_jours}</td><td class="num" style="font-weight:700">${money(f.montant_amende)}</td><td>${riskPill(f.couleur_risque)}</td></tr>`,
+    { onRow: tr => goClient(tr.dataset.ent, 'delais') });
 }
 
 async function renderConvMiss() {
@@ -738,12 +797,13 @@ async function renderCabConv() {
   $('#view').innerHTML = `
   <div class="page-head"><h1>Conventions du portefeuille</h1><p>${rows.length} convention(s) valide(s) enregistrée(s) sur l'ensemble des clients.</p></div>
   ${rows.length ? `<div class="table-wrap"><table style="min-width:820px"><thead><tr><th>Client</th><th>Fournisseur (ICE)</th><th class="num">Délai</th><th>Fin</th><th>Statut</th><th>Document</th></tr></thead>
-    <tbody>${rows.map(c => `<tr class="clickable" data-ent="${c.ent_id}"><td><b>${esc(c.ent)}</b></td><td><div class="fournisseur"><b>${esc(c.four || '—')}</b><small>${esc(c.four_ice || '')}</small></div></td>
+    <tbody id="pgBody"></tbody></table></div><div id="pgMore" style="text-align:center;margin:14px 0"></div>`
+    : emptyBox('Aucune convention', 'Aucune convention enregistrée dans le portefeuille.', 'dash')}`;
+  if (rows.length) mountPaged(rows, c => `<tr class="clickable" data-ent="${c.ent_id}"><td><b>${esc(c.ent)}</b></td><td><div class="fournisseur"><b>${esc(c.four || '—')}</b><small>${esc(c.four_ice || '')}</small></div></td>
       <td class="num"><span class="badge b120">${c.delai} j</span></td><td class="mono dh">${c.date_fin ? dateFr(c.date_fin) : 'Indéterminée'}</td>
       <td><span class="pill ${S[c.statut] || 'pill-ok'}"><span class="dot"></span>${esc(c.statut)}</span></td>
-      <td>${c.fichier ? `<a href="/api/conventions/${c.fichier}/file" target="_blank" onclick="event.stopPropagation()">Ouvrir</a>` : '<span class="tag-no">—</span>'}</td></tr>`).join('')}</tbody></table></div>`
-    : emptyBox('Aucune convention', 'Aucune convention enregistrée dans le portefeuille.', 'dash')}`;
-  $$('#view tbody tr[data-ent]').forEach(tr => tr.onclick = () => goClient(tr.dataset.ent, 'conv'));
+      <td>${c.fichier ? `<a href="/api/conventions/${c.fichier}/file" target="_blank" onclick="event.stopPropagation()">Ouvrir</a>` : '<span class="tag-no">—</span>'}</td></tr>`,
+    { onRow: tr => goClient(tr.dataset.ent, 'conv') });
 }
 
 async function renderAnomalies() {

@@ -112,6 +112,7 @@ function toPdf(blocks, stream) {
     doc.moveDown(0.32);
   }
   doc.end();
+  return doc;
 }
 
 module.exports = { buildData, toDocx, toPdf, periodeDates };
