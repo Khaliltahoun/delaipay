@@ -9,11 +9,33 @@ const periode = require('./periode');
 const { importWorkbook } = require('./importer');
 const auth = require('./auth');
 const visa = require('./visa');
+const { rateLimit } = require('./security');
 const { uid, normalizeIce, fmtMoney, slugify } = require('./util');
+
+// Anti brute-force : max 10 tentatives de connexion / 15 min / IP.
+const loginLimiter = rateLimit({ windowMs: 15 * 60 * 1000, max: 10,
+  message: 'Trop de tentatives de connexion. Réessayez dans quelques minutes.' });
+
+// Limiteur pour les routes coûteuses (import de gros classeurs, exports) :
+// le parsing/génération est synchrone et bloque la boucle d'événements — on
+// empêche un utilisateur de saturer le processus partagé par tous les cabinets.
+const heavyLimiter = rateLimit({ windowMs: 60 * 1000, max: 20,
+  message: 'Trop de requêtes. Patientez quelques secondes.' });
+
+// Express 4 ne capture pas les rejets de promesses des handlers async : on les
+// relaie explicitement au middleware d'erreur (sinon la requête reste suspendue).
+const asyncHandler = fn => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
 
 const UP_DIR = path.join(__dirname, '..', 'uploads');
 fs.mkdirSync(UP_DIR, { recursive: true });
 const upload = multer({ dest: UP_DIR, limits: { fileSize: 25 * 1024 * 1024 } });
+
+// Supprime les fichiers temporaires écrits par multer si le handler s'arrête tôt
+// (évite d'accumuler des fichiers orphelins → saturation disque).
+function cleanupUploads(req) {
+  const files = req.files || (req.file ? [req.file] : []);
+  for (const f of files) { if (f && f.path) try { fs.unlinkSync(f.path); } catch (_) {} }
+}
 
 const router = express.Router();
 
@@ -110,11 +132,14 @@ function recomputePeriod(cabinetId, entrepriseId, annee, trimestre) {
 }
 
 /* ============================================================ AUTH */
-router.post('/auth/login', (req, res) => {
+router.post('/auth/login', loginLimiter, (req, res) => {
   const { email, password } = req.body || {};
   if (!email || !password) return res.status(400).json({ error: 'Email et mot de passe requis.' });
   const u = db.prepare('SELECT * FROM utilisateur WHERE email=? AND actif=1').get(String(email).toLowerCase().trim());
-  if (!u || !auth.verifyPassword(password, u.password_hash))
+  // Comparaison systématique (hash factice si l'utilisateur n'existe pas) pour
+  // ne pas révéler l'existence d'un compte par le temps de réponse.
+  const ok = auth.verifyPassword(password, u ? u.password_hash : auth.DUMMY_HASH);
+  if (!u || !ok)
     return res.status(401).json({ error: 'Identifiants incorrects.' });
   const token = auth.signToken(u);
   auth.setAuthCookie(res, token);
@@ -422,9 +447,14 @@ function computeConvStatut(c) {
   return 'Trouvée';
 }
 router.post('/clients/:id/conventions', upload.single('file'), (req, res) => {
-  const e = ownedEntreprise(req, req.params.id); if (!e) return res.status(404).json({ error: 'Introuvable.' });
+  const e = ownedEntreprise(req, req.params.id);
+  if (!e) { cleanupUploads(req); return res.status(404).json({ error: 'Introuvable.' }); }
   const b = req.body || {};
   let fournisseurId = b.fournisseur_id;
+  // Un fournisseur fourni explicitement DOIT appartenir à cette entreprise (anti-IDOR).
+  if (fournisseurId && !db.prepare('SELECT 1 FROM fournisseur WHERE id=? AND entreprise_id=?').get(fournisseurId, e.id)) {
+    cleanupUploads(req); return res.status(400).json({ error: 'Fournisseur invalide.' });
+  }
   // upsert fournisseur si nécessaire
   if (!fournisseurId && (b.four_ice || b.four_if || b.fournisseur)) {
     const iceN = normalizeIce(b.four_ice);
@@ -531,6 +561,9 @@ router.post('/clients/:id/factures', (req, res) => {
   const b = req.body || {};
   const iceN = normalizeIce(b.four_ice);
   let fId = b.fournisseur_id;
+  // Un fournisseur fourni explicitement DOIT appartenir à cette entreprise (anti-IDOR).
+  if (fId && !db.prepare('SELECT 1 FROM fournisseur WHERE id=? AND entreprise_id=?').get(fId, e.id))
+    return res.status(400).json({ error: 'Fournisseur invalide.' });
   if (!fId) {
     let f = iceN ? db.prepare('SELECT id FROM fournisseur WHERE entreprise_id=? AND ice=?').get(e.id, iceN) : null;
     if (f) fId = f.id;
@@ -556,9 +589,9 @@ router.post('/clients/:id/factures', (req, res) => {
 });
 
 /* ============================================================ IMPORT (upload) */
-router.post('/clients/:id/import', upload.array('files', 30), (req, res) => {
+router.post('/clients/:id/import', heavyLimiter, upload.array('files', 30), (req, res) => {
   const e = ownedEntreprise(req, req.params.id);
-  if (!e) return res.status(404).json({ error: 'Introuvable.' });
+  if (!e) { cleanupUploads(req); return res.status(404).json({ error: 'Introuvable.' }); }
   const files = req.files || (req.file ? [req.file] : []);
   if (!files.length) return res.status(400).json({ error: 'Aucun fichier reçu.' });
   // Contexte période OBLIGATOIRE et validé serveur (isolation stricte par trimestre).
@@ -851,7 +884,7 @@ router.get('/clients/:id/declaration/export.csv', (req, res) => {
   const p = req.query.annee ? { annee: +req.query.annee, trimestre: +req.query.trimestre } : latestPeriod(e.id);
   const { lignes } = buildDeclaration(req.cabinetId, e, p.annee, p.trimestre);
   let csv = 'IF fournisseur;Raison sociale;Montant TTC;Non payees;Paye hors delai;Retard (j);Amende\n';
-  for (const l of lignes) csv += `${l.if || ''};${(l.nom || '').replace(/;/g, ',')};${l.ttc};${l.non_paye};${l.hors_delai};${l.retard};${l.amende}\n`;
+  for (const l of lignes) csv += `${csvCell(l.if)};${csvCell(l.nom)};${l.ttc};${l.non_paye};${l.hors_delai};${l.retard};${l.amende}\n`;
   res.setHeader('Content-Type', 'text/csv; charset=utf-8');
   res.setHeader('Content-Disposition', `attachment; filename="declaration_${p.annee}_T${p.trimestre}.csv"`);
   res.send('﻿' + csv);
@@ -889,7 +922,7 @@ router.get('/clients/:id/visa', (req, res) => {
     lieu: data.lieu, date: data.date, debut: data.debut, fin: data.fin, blocks: data.blocks,
   });
 });
-router.get('/clients/:id/visa/export.docx', async (req, res) => {
+router.get('/clients/:id/visa/export.docx', asyncHandler(async (req, res) => {
   const e = ownedEntreprise(req, req.params.id); if (!e) return res.status(404).send('Introuvable');
   const { p, data } = visaData(req, e);
   const buf = await visa.toDocx(data.blocks);
@@ -897,14 +930,17 @@ router.get('/clients/:id/visa/export.docx', async (req, res) => {
   res.setHeader('Content-Disposition', `attachment; filename="Visa_${slugify(e.raison_sociale)}_T${p.trimestre}_${p.annee}.docx"`);
   audit(req.cabinetId, req.user.id, 'export', 'visa', { format: 'docx', entreprise: e.id }, req.ip);
   res.send(buf);
-});
-router.get('/clients/:id/visa/export.pdf', (req, res) => {
+}));
+router.get('/clients/:id/visa/export.pdf', (req, res, next) => {
   const e = ownedEntreprise(req, req.params.id); if (!e) return res.status(404).send('Introuvable');
   const { p, data } = visaData(req, e);
   res.setHeader('Content-Type', 'application/pdf');
   res.setHeader('Content-Disposition', `attachment; filename="Visa_${slugify(e.raison_sociale)}_T${p.trimestre}_${p.annee}.pdf"`);
   audit(req.cabinetId, req.user.id, 'export', 'visa', { format: 'pdf', entreprise: e.id }, req.ip);
-  visa.toPdf(data.blocks, res);
+  try {
+    const doc = visa.toPdf(data.blocks, res);
+    if (doc && doc.on) doc.on('error', next);
+  } catch (err) { next(err); }
 });
 
 /* ============================================================ ALERTES / ANOMALIES */
@@ -990,4 +1026,12 @@ router.post('/anomalies/:id/resolve', (req, res) => {
 });
 
 function round2(n) { return Math.round((n + Number.EPSILON) * 100) / 100; }
+// Cellule CSV sûre : neutralise l'injection de formule (= + - @ tab CR) en
+// préfixant par une apostrophe, et échappe délimiteur/guillemet/saut de ligne.
+function csvCell(v) {
+  let s = String(v == null ? '' : v);
+  if (/^[=+\-@\t\r]/.test(s)) s = "'" + s;
+  if (/[";\n\r]/.test(s)) s = '"' + s.replace(/"/g, '""') + '"';
+  return s;
+}
 module.exports = router;
