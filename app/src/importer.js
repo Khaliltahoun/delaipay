@@ -252,11 +252,12 @@ function importReleveXml(buffer, { cabinetId, entrepriseId, sourceName, periode 
   return result;
 }
 
+// Feuilles écartées : grand-livre / journal / balance (numéros de compte pris pour des montants).
+const SHEET_SKIP = /grand.?livre|journal|balance|brouillard|lettrage|^gl\b|\bg\.?l\b|grd livre/i;
+
 function importExcel(buffer, { cabinetId, entrepriseId, sourceName, periode }) {
   const wb = XLSX.read(buffer, { cellDates: true });
-  // On traite TOUTES les feuilles ressemblant à un tableau de factures (pas seulement la meilleure),
-  // mais on écarte les feuilles de type grand-livre / journal / balance (numéros de compte pris pour des montants).
-  const SHEET_SKIP = /grand.?livre|journal|balance|brouillard|lettrage|^gl\b|\bg\.?l\b|grd livre/i;
+  // On traite TOUTES les feuilles ressemblant à un tableau de factures (pas seulement la meilleure).
   const sheets = [];
   for (const name of wb.SheetNames) {
     if (SHEET_SKIP.test(name)) continue;
@@ -370,4 +371,230 @@ function num(v) { if (v == null || v === '') return 0; const n = Number(String(v
 function round2(n) { return Math.round((n + Number.EPSILON) * 100) / 100; }
 function iso(d) { return calc.iso(d); }
 
-module.exports = { importWorkbook, detectHeader, normHead };
+/* ================================================================================
+ * ASSISTANT D'IMPORT — analyse, mapping, prévisualisation, confirmation
+ * ================================================================================ */
+
+// Champs canoniques DelaiPay (clé, libellé, requis).
+const FIELDS = [
+  ['numero', 'N° de facture', false],
+  ['date_facture', 'Date de facture', true],
+  ['four_nom', 'Fournisseur', true],
+  ['four_ice', 'ICE fournisseur', false],
+  ['four_if', 'IF fournisseur', false],
+  ['ttc', 'Montant TTC', true],
+  ['mht', 'Montant HT', false],
+  ['tva', 'Montant TVA', false],
+  ['taux_tva', 'Taux TVA', false],
+  ['date_paiement', 'Date de paiement', false],
+  ['mode_reglement', 'Mode de paiement', false],
+  ['designation', 'Nature / désignation', false],
+  ['delai_conv', 'Délai convenu', false],
+];
+const FIELD_KEYS = FIELDS.map(f => f[0]);
+
+// Lignes à ignorer : total, sous-total, report, cumul, solde… (insensible casse/accents/espaces).
+const IGNORE_WORDS = new Set(['total', 'totalgeneral', 'totaux', 'soustotal', 'sstotal', 'stotal', 'report', 'areporter', 'reporter', 'cumul', 'cumule', 'solde', 'balance', 'arrete', 'arretes', 'sommetotale', 'grandtotal', 'montanttotal']);
+function normCell(v) { return String(v == null ? '' : v).toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[^a-z0-9]/g, ''); }
+function isFormulaTotal(v) { const s = String(v == null ? '' : v); return /^=/.test(s) || /\b(sum|subtotal)\b/i.test(s) || /sous.?total/i.test(s); }
+// Examine PLUSIEURS cellules de la ligne, pas seulement la première.
+function classifyIgnorable(cells, headerNorms) {
+  const nonEmpty = cells.filter(c => c != null && String(c).trim() !== '');
+  if (!nonEmpty.length) return { ignore: true, motif: 'ligne vide' };
+  for (const c of cells) if (isFormulaTotal(c)) return { ignore: true, motif: 'formule de total (SUM/SOUS-TOTAL)' };
+  for (const c of nonEmpty) { const n = normCell(c); if (n && IGNORE_WORDS.has(n)) return { ignore: true, motif: `ligne de total/sous-total ("${String(c).trim()}")` }; }
+  if (headerNorms && headerNorms.length) {
+    const norms = cells.map(normCell).filter(Boolean);
+    const match = norms.filter(n => headerNorms.includes(n)).length;
+    if (norms.length && match >= Math.max(2, Math.ceil(norms.length * 0.6))) return { ignore: true, motif: 'répétition de l\'en-tête' };
+  }
+  return { ignore: false };
+}
+
+// Mapping automatique (titre prioritaire, puis contenu) avec niveau de confiance.
+function autoMapGrid(grid) {
+  const det = detectHeader(grid);
+  const headerRow = det.row;
+  const titleIdx = mapRow(grid[headerRow] || []);
+  const resolved = resolveSheet(grid);
+  const mapping = {};
+  for (const [f, col] of Object.entries(resolved.idx)) {
+    if (!FIELD_KEYS.includes(f)) continue;
+    const fromTitle = titleIdx[f] !== undefined;
+    mapping[f] = { col, confidence: fromTitle ? 0.92 : 0.6, source: fromTitle ? 'titre' : 'contenu' };
+  }
+  return { headerRow, startRow: resolved.startRow, mapping };
+}
+function sampleValues(grid, startRow, col, n = 8) {
+  const out = [];
+  for (let r = startRow; r < grid.length && out.length < n; r++) {
+    const v = grid[r] && grid[r][col];
+    if (v !== undefined && v !== null && String(v).trim() !== '') out.push(v instanceof Date ? calc.iso(v) : String(v).slice(0, 30));
+  }
+  return out;
+}
+
+// Analyse d'un classeur : feuilles, colonnes, échantillon, mapping proposé, feuille suggérée.
+function analyzeWorkbook(buffer) {
+  const head = buffer.slice(0, 400).toString('utf8');
+  if (/^﻿?\s*<\?xml/.test(head) && /DeclarationReleveDeduction|releveDeductions/.test(buffer.toString('utf8', 0, 2000))) {
+    return { type: 'RELEVE_XML', feuilles: [], suggestion: null, xml: true, champs: FIELDS.map(([k, l, r]) => ({ key: k, label: l, requis: r })) };
+  }
+  const wb = XLSX.read(buffer, { cellDates: true });
+  const feuilles = [];
+  for (const name of wb.SheetNames) {
+    const grid = XLSX.utils.sheet_to_json(wb.Sheets[name], { header: 1, blankrows: false, raw: true });
+    if (!grid.length) continue;
+    const am = autoMapGrid(grid);
+    const cols = (grid[am.headerRow] || []).map((c, i) => ({ index: i, label: String(c == null ? '' : c).replace(/\s+/g, ' ').trim() || `Colonne ${i + 1}` }));
+    const maxCol = grid.reduce((m, r) => Math.max(m, r ? r.length : 0), 0);
+    for (let i = cols.length; i < maxCol; i++) cols.push({ index: i, label: `Colonne ${i + 1}` });
+    const mapping = {};
+    for (const [f, m] of Object.entries(am.mapping)) mapping[f] = { ...m, colLabel: (cols[m.col] || {}).label || '', apercu: sampleValues(grid, am.startRow, m.col) };
+    feuilles.push({
+      nom: name, nbLignes: grid.length, ligneEntete: am.headerRow, startRow: am.startRow,
+      ignoree: SHEET_SKIP.test(name), colonnes: cols,
+      echantillon: grid.slice(am.startRow, am.startRow + 6).map(r => cols.map(c => { const v = r ? r[c.index] : ''; return v instanceof Date ? calc.iso(v) : (v == null ? '' : String(v).slice(0, 24)); })),
+      mapping,
+    });
+  }
+  const candidates = feuilles.filter(f => !f.ignoree);
+  const suggestion = (candidates.length ? candidates : feuilles).map(f => ({ f, s: Object.keys(f.mapping).length + (f.mapping.ttc ? 2 : 0) + (f.mapping.date_facture ? 1 : 0) })).sort((a, b) => b.s - a.s)[0];
+  return { type: 'EXCEL', feuilles, suggestion: suggestion ? suggestion.f.nom : (feuilles[0] && feuilles[0].nom), champs: FIELDS.map(([k, l, r]) => ({ key: k, label: l, requis: r })) };
+}
+
+function fingerprint(entrepriseId, nom, numero, dfacIso, ttc) {
+  const fnom = normCell(nom);
+  const fnum = String(numero == null ? '' : numero).toLowerCase().replace(/^0+/, '').replace(/[^a-z0-9]/g, '');
+  return [entrepriseId, fnom, fnum, dfacIso || '', Math.round((Number(ttc) || 0) * 100)].join('|');
+}
+
+/** Classe les lignes selon un mapping explicite, SANS écrire en base. */
+function classifyGrid(grid, { headerRow, mapping, entrepriseId, annee, trimestre, requireNumero = false }) {
+  const col = f => (mapping[f] != null && mapping[f] !== '' ? Number(mapping[f]) : undefined);
+  const cell = (row, f) => { const c = col(f); return c != null ? row[c] : undefined; };
+  const headerNorms = (grid[headerRow] || []).map(normCell).filter(Boolean);
+  const sane = d => (d && d.getFullYear() >= 2000 && d.getFullYear() <= 2035) ? d : null;
+  const notEmpty = v => v != null && String(v).trim() !== '';
+  const seen = new Set();
+  const lignes = [];
+  const stats = { total: 0, valides: 0, ignorees: 0, rejetees: 0, doublons: 0, totalTtc: 0, avertissements: 0, memePeriode: 0, autrePeriode: 0 };
+  for (let r = headerRow + 1; r < grid.length; r++) {
+    const row = grid[r] || [];
+    stats.total++;
+    const brut = row.map(v => v instanceof Date ? calc.iso(v) : (v == null ? '' : String(v)));
+    const ig = classifyIgnorable(row, headerNorms);
+    if (ig.ignore) { stats.ignorees++; lignes.push({ ligne: r + 1, statut: 'ignoree', motif: ig.motif, brut }); continue; }
+
+    const nom = cell(row, 'four_nom'), ice = normalizeIce(cell(row, 'four_ice')), iff = cell(row, 'four_if');
+    const mht = num(cell(row, 'mht')), tva = num(cell(row, 'tva'));
+    let ttc = num(cell(row, 'ttc')); if (!ttc && (mht || tva)) ttc = round2(mht + tva);
+    const dfac = sane(calc.parseDate(cell(row, 'date_facture')));
+    const dpai = sane(calc.parseDate(cell(row, 'date_paiement')));
+    const numero = cell(row, 'numero');
+    const rejets = [], warns = [];
+    if (!notEmpty(nom) && !ice && !notEmpty(iff)) rejets.push({ champ: 'four_nom', motif: 'fournisseur manquant' });
+    if (!dfac) rejets.push({ champ: 'date_facture', motif: 'date de facture absente ou invalide' });
+    if (!(ttc > 0)) rejets.push({ champ: 'ttc', motif: ttc === 0 ? 'montant TTC nul' : 'montant TTC négatif/invalide' });
+    if (Math.abs(ttc) >= 5e8) rejets.push({ champ: 'ttc', motif: 'montant aberrant (probable n° de compte)' });
+    if (dfac && dpai && dpai < dfac) rejets.push({ champ: 'date_paiement', motif: 'date de paiement antérieure à la date de facture' });
+    if (mht && tva && ttc && Math.abs(ttc - (mht + tva)) > 0.5) warns.push('TTC ≠ HT + TVA');
+    if (requireNumero && !notEmpty(numero)) warns.push('numéro de facture absent (référence technique générée)');
+
+    if (rejets.length) { stats.rejetees++; lignes.push({ ligne: r + 1, statut: 'rejetee', motif: rejets.map(x => x.motif).join(' ; '), champ: rejets[0].champ, brut, valeur: brut[col(rejets[0].champ)] }); continue; }
+
+    const fp = fingerprint(entrepriseId, nom, numero, iso(dfac), ttc);
+    const dbDup = db.prepare(`SELECT id FROM facture WHERE entreprise_id=? AND numero IS ? AND ttc=? AND date_facture IS ?`).get(entrepriseId, numero != null ? String(numero) : null, ttc, iso(dfac));
+    if (seen.has(fp) || dbDup) { stats.doublons++; lignes.push({ ligne: r + 1, statut: 'doublon', motif: 'facture déjà présente (même fournisseur, n°, date, montant)', brut }); continue; }
+    seen.add(fp);
+
+    const qFac = dfac ? calc.trimestreOf(dfac) : null, yFac = dfac ? dfac.getFullYear() : null;
+    if (annee != null && trimestre != null) { if (yFac === +annee && qFac === +trimestre) stats.memePeriode++; else stats.autrePeriode++; }
+    if (warns.length) stats.avertissements++;
+    stats.valides++; stats.totalTtc = round2(stats.totalTtc + ttc);
+    lignes.push({ ligne: r + 1, statut: 'valide', avertissements: warns, brut,
+      data: { nom: notEmpty(nom) ? String(nom) : null, ice, iff: notEmpty(iff) ? String(iff) : null,
+        numero: notEmpty(numero) ? String(numero) : null, mht: mht || null, tva: tva || null, ttc,
+        taux_tva: num(cell(row, 'taux_tva')) || null, mode_reglement: notEmpty(cell(row, 'mode_reglement')) ? String(cell(row, 'mode_reglement')) : null,
+        designation: notEmpty(cell(row, 'designation')) ? String(cell(row, 'designation')) : null,
+        delai_conv: num(cell(row, 'delai_conv')) || null,
+        dfac: iso(dfac), dpai: iso(dpai), yFac, qFac } });
+  }
+  return { lignes, stats };
+}
+
+function gridOfSheet(buffer, sheetName) {
+  const wb = XLSX.read(buffer, { cellDates: true });
+  const name = sheetName && wb.SheetNames.includes(sheetName) ? sheetName : wb.SheetNames[0];
+  return { grid: XLSX.utils.sheet_to_json(wb.Sheets[name], { header: 1, blankrows: false, raw: true }), name };
+}
+
+// Prévisualisation (aucune écriture) : renvoie stats + échantillons de chaque catégorie.
+function previewImport(buffer, opts) {
+  const { grid, name } = gridOfSheet(buffer, opts.sheetName);
+  if (!grid.length) throw new Error('Feuille vide.');
+  const headerRow = opts.headerRow != null ? +opts.headerRow : detectHeader(grid).row;
+  const { lignes, stats } = classifyGrid(grid, { ...opts, headerRow });
+  const ech = st => lignes.filter(l => l.statut === st).slice(0, 12);
+  return { feuille: name, ligneEntete: headerRow, stats,
+    apercu: { valides: ech('valide'), ignorees: ech('ignoree'), rejetees: ech('rejetee'), doublons: ech('doublon') } };
+}
+
+/** Confirmation : écrit les factures valides EN TRANSACTION, stocke le détail des lignes, crée le lot. */
+function confirmImport(buffer, opts) {
+  const { cabinetId, entrepriseId, annee, trimestre, sourceName, userId, documentId, empreinte } = opts;
+  const { grid, name } = gridOfSheet(buffer, opts.sheetName);
+  if (!grid.length) throw new Error('Feuille vide.');
+  const headerRow = opts.headerRow != null ? +opts.headerRow : detectHeader(grid).row;
+  const { lignes, stats } = classifyGrid(grid, { ...opts, headerRow });
+  const importId = uid('imp');
+  const today = new Date();
+  const per = { annee: +annee, trimestre: +trimestre };
+  const insertFacture = db.prepare(`INSERT INTO facture
+    (id, cabinet_id, entreprise_id, fournisseur_id, numero, designation, mht, tva, ttc, taux_tva, mode_reglement,
+     date_facture, date_paiement, annee, periode, trimestre, source_import, import_id, import_lot_id,
+     annee_origine, trimestre_origine, delai_applicable, delai_ecoule, date_limite, retard_jours, n_mois, a_declarer,
+     taux_bam, taux_total, base_amende, montant_amende, couleur_risque)
+    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`);
+  const insLigne = db.prepare(`INSERT INTO import_ligne (id, import_lot_id, cabinet_id, entreprise_id, numero_ligne, feuille, donnees_brutes_json, donnees_normalisees_json, statut, motif, champ, facture_id) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`);
+  const insAno = db.prepare(`INSERT INTO anomalie (id, cabinet_id, entreprise_id, type, gravite, details, entite, entite_id, annee, trimestre, import_lot_id) VALUES (?,?,?,?,?,?,?,?,?,?,?)`);
+  const result = { importId, imported: 0, ignored: stats.ignorees, rejected: stats.rejetees, duplicates: stats.doublons, anomalies: 0, totalTtc: 0, amende: 0, aDeclarer: 0, convAbsente: 0, autrePeriode: stats.autrePeriode, stats };
+
+  db.exec('BEGIN');
+  try {
+    db.prepare(`INSERT INTO import_lot (id,cabinet_id,entreprise_id,document_id,annee,trimestre,source_nom,feuille,ligne_entete,mapping_json,statut,nb_lignes_total,nb_lignes_valides,nb_lignes_ignorees,nb_lignes_rejetees,nb_doublons,total_ttc,empreinte_fichier,utilisateur_id,confirmed_at)
+      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,datetime('now'))`)
+      .run(importId, cabinetId, entrepriseId, documentId || null, per.annee, per.trimestre, sourceName || name, name, headerRow, JSON.stringify(opts.mapping || {}), 'confirme',
+        stats.total, stats.valides, stats.ignorees, stats.rejetees, stats.doublons, stats.totalTtc, empreinte || null, userId || null);
+
+    for (const l of lignes) {
+      if (l.statut !== 'valide') { insLigne.run(uid('il'), importId, cabinetId, entrepriseId, l.ligne, name, JSON.stringify(l.brut || []), null, l.statut, l.motif || null, l.champ || null, null); continue; }
+      const d = l.data;
+      const four = upsertFournisseur(cabinetId, entrepriseId, { nom: d.nom, ice: d.ice, iff: d.iff });
+      let delai;
+      if (d.delai_conv) { delai = d.delai_conv; db.prepare('UPDATE fournisseur SET delai_applicable=? WHERE id=?').run(d.delai_conv, four.id); }
+      else delai = lookupDelai(entrepriseId, four.id);
+      const c = calc.computeFacture({ dateFacture: d.dfac, datePaiement: d.dpai, ttc: d.ttc, delaiApplicable: delai, periode: per, today, tauxProvider: (y, m) => tauxAt(y, m, cabinetId) });
+      const facId = uid('fac');
+      insertFacture.run(facId, cabinetId, entrepriseId, four.id, d.numero, d.designation,
+        d.mht, d.tva, d.ttc, d.taux_tva, d.mode_reglement, d.dfac, d.dpai,
+        per.annee, per.trimestre, per.trimestre, sourceName || name, importId, importId,
+        d.yFac || null, d.qFac || null,
+        delai, c.delaiEcoule, c.dateLimite, c.retardJours, c.nMois, c.aDeclarer ? 1 : 0,
+        c.tauxBam, c.tauxTotal, c.baseAmende, c.montantAmende, c.couleurRisque);
+      insLigne.run(uid('il'), importId, cabinetId, entrepriseId, l.ligne, name, JSON.stringify(l.brut || []), JSON.stringify(d), 'valide', (l.avertissements || []).join(' ; ') || null, null, facId);
+      if (c.delaiEcoule != null && c.delaiEcoule > 60 && !hasValidConvention(entrepriseId, four.id)) {
+        result.convAbsente++;
+        insAno.run(uid('ano'), cabinetId, entrepriseId, 'convention_absente', 'moyenne', `Facture ${d.numero || '?'} : délai ${c.delaiEcoule} j (> 60 j) sans convention pour ${d.nom || four.id}.`, 'facture', four.id, per.annee, per.trimestre, importId);
+        result.anomalies++;
+      }
+      result.imported++; result.totalTtc = round2(result.totalTtc + d.ttc);
+      if (c.aDeclarer) { result.aDeclarer++; result.amende = round2(result.amende + (c.montantAmende || 0)); }
+    }
+    db.prepare('UPDATE import_lot SET nb_lignes_valides=? WHERE id=?').run(result.imported, importId);
+    db.exec('COMMIT');
+  } catch (e) { db.exec('ROLLBACK'); throw new Error('Import annulé (aucune donnée enregistrée) : ' + e.message); }
+  return result;
+}
+
+module.exports = { importWorkbook, detectHeader, normHead, analyzeWorkbook, previewImport, confirmImport, FIELDS };

@@ -5,6 +5,7 @@ const path = require('path');
 const fs = require('fs');
 const { db, tauxAt, audit } = require('./db');
 const calc = require('./calc');
+const periode = require('./periode');
 const { importWorkbook } = require('./importer');
 const auth = require('./auth');
 const visa = require('./visa');
@@ -28,6 +29,61 @@ function visaOf(ca) { return ca >= 50_000_000 ? 'CAC' : 'EC'; }
 function ownedEntreprise(req, id) {
   const e = db.prepare('SELECT * FROM entreprise WHERE id=? AND cabinet_id=?').get(id, req.cabinetId);
   return e || null;
+}
+
+/* ---------------------------------------------------------------- contexte PÉRIODE (validé serveur) */
+// Récupère (annee, trimestre) depuis params d'URL ou query ; null si absents.
+function readPeriodParams(req) {
+  const a = req.params.annee ?? req.query.annee;
+  const t = req.params.trimestre ?? req.query.trimestre;
+  if (a == null || t == null || a === '' || t === '') return null;
+  return { annee: +a, trimestre: +t };
+}
+// Exige une période valide, sinon renvoie null après avoir répondu 400.
+function requirePeriod(req, res) {
+  const p = readPeriodParams(req);
+  if (!p || !periode.isValidPeriod(p.annee, p.trimestre)) {
+    res.status(400).json({ error: 'Période (année + trimestre) requise et valide.' });
+    return null;
+  }
+  return p;
+}
+// Retourne la ligne periode_declaration, en la CRÉANT paresseusement (défauts calendaires) si absente.
+function ensurePeriode(cabinetId, entrepriseId, annee, trimestre) {
+  let row = db.prepare('SELECT * FROM periode_declaration WHERE entreprise_id=? AND annee=? AND trimestre=?').get(entrepriseId, annee, trimestre);
+  if (row) return row;
+  const info = periode.periodInfo(annee, trimestre);
+  const id = uid('per');
+  db.prepare(`INSERT INTO periode_declaration
+    (id, cabinet_id, entreprise_id, annee, trimestre, date_debut, date_fin, mois_traitement, annee_traitement, statut)
+    VALUES (?,?,?,?,?,?,?,?,?,?)`)
+    .run(id, cabinetId, entrepriseId, annee, trimestre, info.date_debut, info.date_fin, info.mois_traitement, info.annee_traitement, periode.defaultStatut(annee, trimestre));
+  return db.prepare('SELECT * FROM periode_declaration WHERE id=?').get(id);
+}
+// Vérifie qu'une période est modifiable ; sinon répond 423 (verrouillée) et renvoie false.
+function assertWritable(res, cabinetId, entrepriseId, annee, trimestre) {
+  const row = ensurePeriode(cabinetId, entrepriseId, annee, trimestre);
+  if (periode.isLocked(row.statut)) {
+    res.status(423).json({ error: `Période ${periode.periodInfo(annee, trimestre).label} clôturée (${periode.STATUT_LABELS[row.statut]}). Données en lecture seule.`, statut: row.statut });
+    return false;
+  }
+  return true;
+}
+// Liste enrichie des périodes d'une entreprise (réelles + navigation + statut + compteurs).
+function buildPeriodsList(cabinetId, entrepriseId) {
+  const rows = db.prepare(`SELECT annee, trimestre, COUNT(*) n FROM facture
+    WHERE entreprise_id=? AND annee IS NOT NULL GROUP BY annee, trimestre
+    ORDER BY annee DESC, trimestre DESC`).all(entrepriseId);
+  const disponibles = rows.map(r => {
+    const info = periode.periodInfo(r.annee, r.trimestre);
+    const pr = ensurePeriode(cabinetId, entrepriseId, r.annee, r.trimestre);
+    return { annee: r.annee, trimestre: r.trimestre, label: info.label, nbFactures: r.n, statut: pr.statut,
+             statutLabel: periode.STATUT_LABELS[pr.statut], verrouillee: periode.isLocked(pr.statut),
+             mois_traitement: info.mois_traitement, annee_traitement: info.annee_traitement };
+  });
+  const travail = periode.workingPeriod();
+  const plusFournie = rows.length ? (() => { let best = rows[0]; for (const r of rows) if (r.n > best.n) best = r; return { annee: best.annee, trimestre: best.trimestre }; })() : null;
+  return { disponibles, travail, plusFournie, actuelle: travail };
 }
 function latestPeriod(entrepriseId) {
   // Période par défaut = celle qui contient le PLUS de factures (représentative),
@@ -84,9 +140,12 @@ router.use(auth.requireAuth);
 router.get('/dashboard', (req, res) => {
   const cid = req.cabinetId;
   const clients = db.prepare('SELECT COUNT(*) n FROM entreprise WHERE cabinet_id=?').get(cid).n;
-  const per = db.prepare(`SELECT annee, trimestre, COUNT(*) n FROM facture WHERE cabinet_id=? AND annee IS NOT NULL
-                          GROUP BY annee, trimestre ORDER BY n DESC, annee DESC, trimestre DESC LIMIT 1`).get(cid)
-             || { annee: new Date().getFullYear(), trimestre: Math.floor(new Date().getMonth() / 3) + 1 };
+  // Période : celle fournie par le contexte global ; sinon la plus fournie.
+  const per = (req.query.annee && req.query.trimestre)
+    ? { annee: +req.query.annee, trimestre: +req.query.trimestre }
+    : (db.prepare(`SELECT annee, trimestre, COUNT(*) n FROM facture WHERE cabinet_id=? AND annee IS NOT NULL
+                   GROUP BY annee, trimestre ORDER BY n DESC, annee DESC, trimestre DESC LIMIT 1`).get(cid)
+       || { annee: new Date().getFullYear(), trimestre: Math.floor(new Date().getMonth() / 3) + 1 });
   const facturesTrim = db.prepare('SELECT COUNT(*) n FROM facture WHERE cabinet_id=? AND annee=? AND trimestre=?').get(cid, per.annee, per.trimestre).n;
   const agg = db.prepare(`SELECT COUNT(*) nRet, COALESCE(SUM(ttc),0) mttc, COALESCE(SUM(montant_amende),0) amende
                           FROM facture WHERE cabinet_id=? AND annee=? AND trimestre=? AND a_declarer=1`).get(cid, per.annee, per.trimestre);
@@ -131,8 +190,15 @@ router.get('/dashboard', (req, res) => {
      FROM fournisseur fo JOIN facture f ON f.fournisseur_id=fo.id
      WHERE fo.cabinet_id=? AND f.a_declarer=1 GROUP BY fo.id ORDER BY amende DESC LIMIT 5`).all(cid);
 
+  const _info = periode.periodInfo(per.annee, per.trimestre);
+  const MOIS = ['', 'janvier', 'février', 'mars', 'avril', 'mai', 'juin', 'juillet', 'août', 'septembre', 'octobre', 'novembre', 'décembre'];
   res.json({
     periode: per,
+    calendrier: {
+      label: _info.label, date_debut: _info.date_debut, date_fin: _info.date_fin,
+      mois_traitement: MOIS[_info.mois_traitement], annee_traitement: _info.annee_traitement,
+      echeance: _info.date_cloture_prev, joursAvantEcheance: periode.joursAvantEcheance(per.annee, per.trimestre),
+    },
     kpis: {
       clients, assujettis, fournisseurs, facturesTrim, enRetard: agg.nRet, montantConcerne: agg.mttc,
       amendePotentielle: agg.amende, montantAVerser: agg.amende, conventionsManquantes: convManquantes,
@@ -261,9 +327,60 @@ router.get('/clients/:id/summary', (req, res) => {
 
 router.get('/clients/:id/periods', (req, res) => {
   const e = ownedEntreprise(req, req.params.id); if (!e) return res.status(404).json({ error: 'Introuvable.' });
-  const rows = db.prepare(`SELECT DISTINCT annee, trimestre FROM facture WHERE entreprise_id=? AND annee IS NOT NULL
-                           ORDER BY annee DESC, trimestre DESC`).all(e.id);
-  res.json({ periods: rows, latest: latestPeriod(e.id) });
+  const info = buildPeriodsList(req.cabinetId, e.id);
+  // `latest` conservé pour compat ; défaut = période de travail si elle contient des données, sinon la plus fournie.
+  const hasWork = info.disponibles.some(d => d.annee === info.travail.annee && d.trimestre === info.travail.trimestre);
+  const latest = hasWork ? info.travail : (info.plusFournie || latestPeriod(e.id));
+  res.json({ periods: info.disponibles, latest, travail: info.travail, plusFournie: info.plusFournie, disponibles: info.disponibles });
+});
+
+// Détail + calendrier + statut d'une période précise (crée la ligne si absente).
+router.get('/clients/:id/periods/:annee/:trimestre/summary', (req, res) => {
+  const e = ownedEntreprise(req, req.params.id); if (!e) return res.status(404).json({ error: 'Introuvable.' });
+  const p = requirePeriod(req, res); if (!p) return;
+  const pr = ensurePeriode(req.cabinetId, e.id, p.annee, p.trimestre);
+  const info = periode.periodInfo(p.annee, p.trimestre);
+  const agg = db.prepare(`SELECT COUNT(*) nb,
+      COALESCE(SUM(CASE WHEN a_declarer=1 THEN 1 ELSE 0 END),0) aDecl,
+      COALESCE(SUM(CASE WHEN a_declarer=1 THEN ttc ELSE 0 END),0) ttcRetard,
+      COALESCE(SUM(montant_amende),0) amende
+      FROM facture WHERE entreprise_id=? AND annee=? AND trimestre=?`).get(e.id, p.annee, p.trimestre);
+  const docs = db.prepare('SELECT COUNT(*) n FROM document WHERE entreprise_id=? AND annee=? AND trimestre=?').get(e.id, p.annee, p.trimestre).n;
+  const lots = db.prepare('SELECT COUNT(*) n FROM import_lot WHERE entreprise_id=? AND annee=? AND trimestre=? AND statut=?').get(e.id, p.annee, p.trimestre, 'confirme').n;
+  const anomalies = db.prepare(`SELECT COUNT(*) n FROM anomalie WHERE entreprise_id=? AND annee=? AND trimestre=? AND statut='ouverte'`).get(e.id, p.annee, p.trimestre).n;
+  res.json({
+    periode: { annee: p.annee, trimestre: p.trimestre, ...info,
+      statut: pr.statut, statutLabel: periode.STATUT_LABELS[pr.statut], verrouillee: periode.isLocked(pr.statut),
+      date_cloture: pr.date_cloture, joursAvantEcheance: periode.joursAvantEcheance(p.annee, p.trimestre) },
+    kpis: { documents: docs, lots, factures: agg.nb, aDeclarer: agg.aDecl, ttcRetard: agg.ttcRetard, amende: agg.amende, anomalies },
+  });
+});
+
+// Clôture d'une période (réservé admin) → lecture seule.
+router.post('/clients/:id/periods/:annee/:trimestre/close', (req, res) => {
+  const e = ownedEntreprise(req, req.params.id); if (!e) return res.status(404).json({ error: 'Introuvable.' });
+  if (req.user.role !== 'admin') return res.status(403).json({ error: 'Seul un administrateur peut clôturer une période.' });
+  const p = requirePeriod(req, res); if (!p) return;
+  const pr = ensurePeriode(req.cabinetId, e.id, p.annee, p.trimestre);
+  const statut = (req.body && req.body.statut === 'declaree') ? 'declaree' : 'cloturee';
+  db.prepare(`UPDATE periode_declaration SET statut=?, date_cloture=datetime('now'), cloturee_par=?, updated_at=datetime('now') WHERE id=?`)
+    .run(statut, req.user.id, pr.id);
+  audit(req.cabinetId, req.user.id, 'cloture_periode', 'periode', { entreprise: e.id, annee: p.annee, trimestre: p.trimestre, statut }, req.ip);
+  res.json({ ok: true, statut });
+});
+
+// Réouverture exceptionnelle (réservé admin, motif obligatoire) → audit.
+router.post('/clients/:id/periods/:annee/:trimestre/reopen', (req, res) => {
+  const e = ownedEntreprise(req, req.params.id); if (!e) return res.status(404).json({ error: 'Introuvable.' });
+  if (req.user.role !== 'admin') return res.status(403).json({ error: 'Seul un administrateur peut rouvrir une période.' });
+  const motif = (req.body && req.body.motif || '').trim();
+  if (!motif) return res.status(400).json({ error: 'Motif de réouverture obligatoire.' });
+  const p = requirePeriod(req, res); if (!p) return;
+  const pr = ensurePeriode(req.cabinetId, e.id, p.annee, p.trimestre);
+  db.prepare(`UPDATE periode_declaration SET statut='rouverte', date_reouverture=datetime('now'), motif_reouverture=?, cloturee_par=?, updated_at=datetime('now') WHERE id=?`)
+    .run(motif, req.user.id, pr.id);
+  audit(req.cabinetId, req.user.id, 'reouverture_periode', 'periode', { entreprise: e.id, annee: p.annee, trimestre: p.trimestre, motif }, req.ip);
+  res.json({ ok: true, statut: 'rouverte' });
 });
 
 router.get('/clients/:id/fournisseurs', (req, res) => {
@@ -339,6 +456,28 @@ router.get('/conventions/:id/file', (req, res) => {
 });
 
 /* ============================================================ DELAIS (calc table) */
+// Incidence reportée : factures d'un trimestre ANTÉRIEUR, non soldées avant Q, dont des mois de
+// retard tombent dans Q → recalculées POUR Q. Additif : ne modifie pas les lignes stockées (CADOZAT intact).
+function periodRank(a, t) { return (+a) * 4 + (+t); }
+function incidenceFactures(cabinetId, entrepriseId, annee, trimestre) {
+  const rank = periodRank(annee, trimestre);
+  const cands = db.prepare(`SELECT f.*, fo.raison_sociale four_nom, fo.ice four_ice, fo.if_fiscal four_if,
+      (SELECT COUNT(*) FROM convention c WHERE c.fournisseur_id=f.fournisseur_id AND c.statut='valide') has_conv
+      FROM facture f LEFT JOIN fournisseur fo ON fo.id=f.fournisseur_id
+      WHERE f.entreprise_id=? AND f.a_declarer=1 AND f.annee IS NOT NULL
+        AND (f.annee*4 + f.trimestre) < ?
+        AND (f.date_paiement IS NULL OR (CAST(substr(f.date_paiement,1,4) AS INTEGER)*4 + ((CAST(substr(f.date_paiement,6,2) AS INTEGER)-1)/3+1)) >= ?)`)
+    .all(entrepriseId, rank, rank);
+  const out = [];
+  for (const f of cands) {
+    const c = calc.computeFacture({ dateFacture: f.date_facture, datePaiement: f.date_paiement, ttc: f.ttc,
+      delaiApplicable: f.delai_applicable, periode: { annee: +annee, trimestre: +trimestre },
+      tauxProvider: (y, m) => tauxAt(y, m, cabinetId) });
+    if (c.montantAmende > 0) out.push({ f, c });
+  }
+  return out;
+}
+
 router.get('/clients/:id/delais', (req, res) => {
   const e = ownedEntreprise(req, req.params.id); if (!e) return res.status(404).json({ error: 'Introuvable.' });
   const p = req.query.annee ? { annee: +req.query.annee, trimestre: +req.query.trimestre } : latestPeriod(e.id);
@@ -353,22 +492,36 @@ router.get('/clients/:id/delais', (req, res) => {
     delai_ecoule: f.delai_ecoule, delai_applicable: f.delai_applicable, date_limite: f.date_limite,
     retard: f.retard_jours, n_mois: f.n_mois, a_declarer: !!f.a_declarer, has_conv: !!f.has_conv,
     taux_bam: f.taux_bam, taux_total: f.taux_total, amende: f.montant_amende, risk: f.couleur_risque,
+    incidence: false,
   }));
+  // Incidence reportée (factures d'un trimestre antérieur qui pèsent encore sur Q)
+  const inc = incidenceFactures(req.cabinetId, e.id, p.annee, p.trimestre).map(({ f, c }) => ({
+    id: f.id, numero: f.numero, four: f.four_nom, four_if: f.four_if, four_ice: f.four_ice, nature: f.designation,
+    ttc: f.ttc, mht: f.mht, tva: f.tva, date_facture: f.date_facture, date_paiement: f.date_paiement,
+    delai_ecoule: c.delaiEcoule, delai_applicable: f.delai_applicable, date_limite: c.dateLimite,
+    retard: c.retardJours, n_mois: c.nMois, a_declarer: true, has_conv: !!f.has_conv,
+    taux_bam: c.tauxBam, taux_total: c.tauxTotal, amende: c.montantAmende, risk: c.couleurRisque,
+    incidence: true, periode_origine: `T${f.trimestre} ${f.annee}`,
+  }));
+  const all = list.concat(inc);
   const totals = {
-    count: list.length,
+    count: all.length, incidences: inc.length,
     ttc: round2(list.reduce((s, x) => s + (x.ttc || 0), 0)),
-    aDeclarer: list.filter(x => x.a_declarer).length,
-    ttcRetard: round2(list.filter(x => x.a_declarer).reduce((s, x) => s + (x.ttc || 0), 0)),
-    amende: round2(list.reduce((s, x) => s + (x.amende || 0), 0)),
-    retardMoyen: (() => { const r = list.filter(x => x.a_declarer); return r.length ? Math.round(r.reduce((s, x) => s + x.retard, 0) / r.length) : 0; })(),
-    sansConvention: list.filter(x => !x.has_conv && x.delai_applicable >= 120).length,
+    aDeclarer: all.filter(x => x.a_declarer).length,
+    ttcRetard: round2(all.filter(x => x.a_declarer).reduce((s, x) => s + (x.ttc || 0), 0)),
+    amende: round2(all.reduce((s, x) => s + (x.amende || 0), 0)),
+    amendeIncidence: round2(inc.reduce((s, x) => s + (x.amende || 0), 0)),
+    retardMoyen: (() => { const r = all.filter(x => x.a_declarer); return r.length ? Math.round(r.reduce((s, x) => s + x.retard, 0) / r.length) : 0; })(),
+    sansConvention: all.filter(x => !x.has_conv && x.delai_applicable >= 120).length,
   };
-  res.json({ periode: p, rows: list, totals });
+  res.json({ periode: p, rows: all, totals });
 });
 router.post('/clients/:id/recompute', (req, res) => {
   const e = ownedEntreprise(req, req.params.id); if (!e) return res.status(404).json({ error: 'Introuvable.' });
   const p = req.query.annee ? { annee: +req.query.annee, trimestre: +req.query.trimestre } : latestPeriod(e.id);
+  if (!assertWritable(res, req.cabinetId, e.id, p.annee, p.trimestre)) return;
   recomputePeriod(req.cabinetId, e.id, p.annee, p.trimestre);
+  audit(req.cabinetId, req.user.id, 'recalcul', 'periode', { entreprise: e.id, annee: p.annee, trimestre: p.trimestre }, req.ip);
   res.json({ ok: true });
 });
 
@@ -387,7 +540,9 @@ router.post('/clients/:id/factures', (req, res) => {
   const conv = db.prepare(`SELECT delai_convenu FROM convention WHERE entreprise_id=? AND fournisseur_id=? AND statut='valide' LIMIT 1`).get(e.id, fId);
   const delai = conv ? conv.delai_convenu : 60;
   const dpai = b.date_paiement ? calc.parseDate(b.date_paiement) : null;
-  const per = dpai ? { annee: dpai.getFullYear(), trimestre: calc.trimestreOf(dpai) } : latestPeriod(e.id);
+  // Période cible = celle fournie (contexte), sinon dérivée du paiement, sinon la plus récente.
+  const per = (b.annee && b.trimestre) ? { annee: +b.annee, trimestre: +b.trimestre } : (dpai ? { annee: dpai.getFullYear(), trimestre: calc.trimestreOf(dpai) } : latestPeriod(e.id));
+  if (!assertWritable(res, req.cabinetId, e.id, per.annee, per.trimestre)) return;
   const c = calc.computeFacture({ dateFacture: b.date_facture, datePaiement: b.date_paiement, ttc, delaiApplicable: delai, periode: per, tauxProvider: (y, m) => tauxAt(y, m, req.cabinetId) });
   const id = uid('fac');
   db.prepare(`INSERT INTO facture (id,cabinet_id,entreprise_id,fournisseur_id,numero,designation,mht,tva,ttc,taux_tva,
@@ -406,18 +561,34 @@ router.post('/clients/:id/import', upload.array('files', 30), (req, res) => {
   if (!e) return res.status(404).json({ error: 'Introuvable.' });
   const files = req.files || (req.file ? [req.file] : []);
   if (!files.length) return res.status(400).json({ error: 'Aucun fichier reçu.' });
-  const periode = req.body.annee ? { annee: +req.body.annee, trimestre: +req.body.trimestre } : null;
+  // Contexte période OBLIGATOIRE et validé serveur (isolation stricte par trimestre).
+  const per = requirePeriod(req, res); if (!per) { files.forEach(f => { try { fs.unlinkSync(f.path); } catch (_) {} }); return; }
+  if (!assertWritable(res, req.cabinetId, e.id, per.annee, per.trimestre)) { files.forEach(f => { try { fs.unlinkSync(f.path); } catch (_) {} }); return; }
+  const crypto = require('crypto');
   const out = [];
   for (const file of files) {
     try {
       const buf = fs.readFileSync(file.path);
-      const r = importWorkbook(buf, { cabinetId: req.cabinetId, entrepriseId: e.id, sourceName: file.originalname, periode });
+      const empreinte = crypto.createHash('sha256').update(buf).digest('hex');
+      const r = importWorkbook(buf, { cabinetId: req.cabinetId, entrepriseId: e.id, sourceName: file.originalname, periode: per });
       const stored = r.importId + '__' + (file.originalname || 'fichier').replace(/[^\w.\-]/g, '_');
       try { fs.renameSync(file.path, path.join(UP_DIR, stored)); } catch (_) { fs.copyFileSync(file.path, path.join(UP_DIR, stored)); fs.unlink(file.path, () => {}); }
-      db.prepare(`INSERT INTO document (id,cabinet_id,entreprise_id,type,nom,chemin,taille,mime,import_id,nb_factures) VALUES (?,?,?,?,?,?,?,?,?,?)`)
-        .run(uid('doc'), req.cabinetId, e.id, 'import', file.originalname, stored, file.size, file.mimetype, r.importId, r.imported);
-      audit(req.cabinetId, req.user.id, 'import', 'facture', { file: file.originalname, imported: r.imported }, req.ip);
-      out.push({ file: file.originalname, ok: true, format: r.format, imported: r.imported, duplicates: r.duplicates, fournisseursCreated: r.fournisseursCreated, anomalies: r.anomalies, totals: r.totals });
+      // Lot d'import (id = importId, cohérent avec la migration) rattaché à la période.
+      db.prepare(`INSERT INTO import_lot (id,cabinet_id,entreprise_id,document_id,annee,trimestre,source_nom,statut,nb_lignes_valides,nb_doublons,total_ttc,empreinte_fichier,utilisateur_id,confirmed_at)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,datetime('now'))`)
+        .run(r.importId, req.cabinetId, e.id, null, per.annee, per.trimestre, file.originalname, 'confirme', r.imported, r.duplicates, r.totals.ttc, empreinte, req.user.id);
+      const docId = uid('doc');
+      db.prepare(`INSERT INTO document (id,cabinet_id,entreprise_id,type,nom,chemin,taille,mime,import_id,nb_factures,annee,trimestre,import_lot_id,empreinte,utilisateur_id,statut)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
+        .run(docId, req.cabinetId, e.id, 'import', file.originalname, stored, file.size, file.mimetype, r.importId, r.imported, per.annee, per.trimestre, r.importId, empreinte, req.user.id, 'traite');
+      db.prepare('UPDATE import_lot SET document_id=? WHERE id=?').run(docId, r.importId);
+      // Traçabilité période/origine sur les factures du lot.
+      db.prepare('UPDATE facture SET import_lot_id=? WHERE entreprise_id=? AND import_id=?').run(r.importId, e.id, r.importId);
+      db.prepare(`UPDATE facture SET annee_origine=CAST(substr(date_facture,1,4) AS INTEGER),
+                  trimestre_origine=((CAST(substr(date_facture,6,2) AS INTEGER)-1)/3)+1
+                  WHERE entreprise_id=? AND import_id=? AND date_facture IS NOT NULL AND annee_origine IS NULL`).run(e.id, r.importId);
+      audit(req.cabinetId, req.user.id, 'import', 'facture', { file: file.originalname, imported: r.imported, annee: per.annee, trimestre: per.trimestre }, req.ip);
+      out.push({ file: file.originalname, ok: true, format: r.format, imported: r.imported, duplicates: r.duplicates, fournisseursCreated: r.fournisseursCreated, anomalies: r.anomalies, totals: r.totals, importId: r.importId });
     } catch (err) {
       try { fs.unlinkSync(file.path); } catch (_) {}
       out.push({ file: file.originalname, ok: false, error: err.message });
@@ -425,11 +596,137 @@ router.post('/clients/:id/import', upload.array('files', 30), (req, res) => {
   }
   const agg = out.reduce((a, r) => r.ok ? { imported: a.imported + r.imported, duplicates: a.duplicates + r.duplicates, fournisseursCreated: a.fournisseursCreated + r.fournisseursCreated, anomalies: a.anomalies + r.anomalies.length, amende: round2(a.amende + r.totals.amende), aDeclarer: a.aDeclarer + r.totals.aDeclarer } : a,
     { imported: 0, duplicates: 0, fournisseursCreated: 0, anomalies: 0, amende: 0, aDeclarer: 0 });
-  res.json({ ok: true, files: out, agg });
+  res.json({ ok: true, files: out, agg, periode: per });
 });
+
+/* ============================================================ ASSISTANT D'IMPORT (wizard) */
+const importer = require('./importer');
+function safeUploadPath(token) {
+  const base = path.basename(String(token || ''));            // anti path-traversal
+  if (!base || base.includes('/') || base.includes('\\')) return null;
+  const p = path.join(UP_DIR, base);
+  return fs.existsSync(p) ? p : null;
+}
+// Étape 2 — analyse du fichier (stocke un fichier temporaire, renvoie un token).
+router.post('/clients/:id/import/analyze', upload.single('file'), (req, res) => {
+  const e = ownedEntreprise(req, req.params.id); if (!e) { if (req.file) try { fs.unlinkSync(req.file.path); } catch (_) {} return res.status(404).json({ error: 'Introuvable.' }); }
+  if (!req.file) return res.status(400).json({ error: 'Aucun fichier reçu.' });
+  try {
+    const buf = fs.readFileSync(req.file.path);
+    const token = 'tmp_' + path.basename(req.file.path);
+    fs.renameSync(req.file.path, path.join(UP_DIR, token));
+    const analyse = importer.analyzeWorkbook(buf);
+    audit(req.cabinetId, req.user.id, 'import_analyse', 'import', { file: req.file.originalname, entreprise: e.id }, req.ip);
+    res.json({ ...analyse, token, sourceName: req.file.originalname, taille: req.file.size });
+  } catch (err) { try { fs.unlinkSync(req.file.path); } catch (_) {} res.status(400).json({ error: err.message }); }
+});
+// Étape 4 — prévisualisation (aucune écriture).
+router.post('/clients/:id/import/preview', (req, res) => {
+  const e = ownedEntreprise(req, req.params.id); if (!e) return res.status(404).json({ error: 'Introuvable.' });
+  const b = req.body || {};
+  const p = requirePeriod(req, res); if (!p) return;
+  const tmp = safeUploadPath(b.token); if (!tmp) return res.status(400).json({ error: 'Fichier expiré ou introuvable — relancez l\'analyse.' });
+  try {
+    const out = importer.previewImport(fs.readFileSync(tmp), {
+      sheetName: b.sheetName, headerRow: b.headerRow, mapping: b.mapping || {},
+      cabinetId: req.cabinetId, entrepriseId: e.id, annee: p.annee, trimestre: p.trimestre, requireNumero: !!b.requireNumero,
+    });
+    res.json(out);
+  } catch (err) { res.status(400).json({ error: err.message }); }
+});
+// Étape 5 — confirmation (écrit en transaction).
+router.post('/clients/:id/import/confirm', (req, res) => {
+  const e = ownedEntreprise(req, req.params.id); if (!e) return res.status(404).json({ error: 'Introuvable.' });
+  const b = req.body || {};
+  const p = requirePeriod(req, res); if (!p) return;
+  if (!assertWritable(res, req.cabinetId, e.id, p.annee, p.trimestre)) return;
+  const tmp = safeUploadPath(b.token); if (!tmp) return res.status(400).json({ error: 'Fichier expiré ou introuvable — relancez l\'analyse.' });
+  try {
+    const buf = fs.readFileSync(tmp);
+    const crypto = require('crypto');
+    const empreinte = crypto.createHash('sha256').update(buf).digest('hex');
+    const sourceName = b.sourceName || 'import.xlsx';
+    const r = importer.confirmImport(buf, {
+      sheetName: b.sheetName, headerRow: b.headerRow, mapping: b.mapping || {},
+      cabinetId: req.cabinetId, entrepriseId: e.id, annee: p.annee, trimestre: p.trimestre,
+      requireNumero: !!b.requireNumero, sourceName, userId: req.user.id, empreinte,
+    });
+    // Déplace le fichier temporaire en permanent + crée le document rattaché à la période.
+    const stored = r.importId + '__' + sourceName.replace(/[^\w.\-]/g, '_');
+    try { fs.renameSync(tmp, path.join(UP_DIR, stored)); } catch (_) { try { fs.copyFileSync(tmp, path.join(UP_DIR, stored)); fs.unlinkSync(tmp); } catch (_) {} }
+    const docId = uid('doc');
+    db.prepare(`INSERT INTO document (id,cabinet_id,entreprise_id,type,nom,chemin,taille,mime,import_id,nb_factures,annee,trimestre,import_lot_id,empreinte,utilisateur_id,statut)
+      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
+      .run(docId, req.cabinetId, e.id, 'import', sourceName, stored, 0, null, r.importId, r.imported, p.annee, p.trimestre, r.importId, empreinte, req.user.id, 'traite');
+    db.prepare('UPDATE import_lot SET document_id=? WHERE id=?').run(docId, r.importId);
+    audit(req.cabinetId, req.user.id, 'import_confirme', 'import', { importId: r.importId, imported: r.imported, annee: p.annee, trimestre: p.trimestre, file: sourceName }, req.ip);
+    res.json({ ok: true, ...r });
+  } catch (err) { res.status(400).json({ error: err.message }); }
+});
+// Rapport des lignes (ignorées/rejetées/doublons/valides) d'un import.
+router.get('/imports/:importId/rejections', (req, res) => {
+  const lot = db.prepare('SELECT * FROM import_lot WHERE id=? AND cabinet_id=?').get(req.params.importId, req.cabinetId);
+  if (!lot) return res.status(404).json({ error: 'Import introuvable.' });
+  const rows = db.prepare(`SELECT numero_ligne, feuille, statut, motif, champ, donnees_brutes_json FROM import_ligne
+    WHERE import_lot_id=? AND statut IN ('ignoree','rejetee','doublon') ORDER BY numero_ligne`).all(lot.id);
+  res.json({ importId: lot.id, source: lot.source_nom, lignes: rows.map(r => ({ ...r, brut: JSON.parse(r.donnees_brutes_json || '[]') })) });
+});
+router.get('/imports/:importId/rejections.csv', (req, res) => {
+  const lot = db.prepare('SELECT * FROM import_lot WHERE id=? AND cabinet_id=?').get(req.params.importId, req.cabinetId);
+  if (!lot) return res.status(404).send('Introuvable');
+  const rows = db.prepare(`SELECT numero_ligne, feuille, statut, motif, champ, donnees_brutes_json FROM import_ligne
+    WHERE import_lot_id=? AND statut IN ('ignoree','rejetee','doublon') ORDER BY numero_ligne`).all(lot.id);
+  let csv = 'Ligne;Feuille;Statut;Motif;Champ;Donnees\n';
+  for (const r of rows) csv += `${r.numero_ligne};${r.feuille || ''};${r.statut};${(r.motif || '').replace(/;/g, ',')};${r.champ || ''};${(r.donnees_brutes_json || '').replace(/[;\n]/g, ' ').slice(0, 300)}\n`;
+  res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+  res.setHeader('Content-Disposition', `attachment; filename="rejets_${lot.id}.csv"`);
+  res.send('﻿' + csv);
+});
+
+/* ============================================================ MODÈLES DE MAPPING */
+router.get('/mapping-templates', (req, res) => {
+  const type = req.query.type;
+  const rows = type
+    ? db.prepare('SELECT * FROM modele_mapping WHERE cabinet_id=? AND type_fichier=? ORDER BY derniere_utilisation DESC, created_at DESC').all(req.cabinetId, type)
+    : db.prepare('SELECT * FROM modele_mapping WHERE cabinet_id=? ORDER BY derniere_utilisation DESC, created_at DESC').all(req.cabinetId);
+  res.json(rows.map(r => ({ ...r, mapping: JSON.parse(r.mapping_json || '{}'), transformations: JSON.parse(r.transformations_json || '{}') })));
+});
+router.post('/mapping-templates', (req, res) => {
+  const b = req.body || {};
+  if (!b.nom) return res.status(400).json({ error: 'Nom du modèle requis.' });
+  const id = uid('map');
+  db.prepare(`INSERT INTO modele_mapping (id,cabinet_id,nom,type_fichier,signature_colonnes,feuille,ligne_entete,mapping_json,transformations_json,created_by)
+    VALUES (?,?,?,?,?,?,?,?,?,?)`)
+    .run(id, req.cabinetId, b.nom, b.type_fichier || null, b.signature_colonnes || null, b.feuille || null, b.ligne_entete != null ? +b.ligne_entete : null,
+      JSON.stringify(b.mapping || {}), JSON.stringify(b.transformations || {}), req.user.id);
+  audit(req.cabinetId, req.user.id, 'create', 'modele_mapping', { id, nom: b.nom }, req.ip);
+  res.json({ ok: true, id });
+});
+router.put('/mapping-templates/:id', (req, res) => {
+  const m = db.prepare('SELECT * FROM modele_mapping WHERE id=? AND cabinet_id=?').get(req.params.id, req.cabinetId);
+  if (!m) return res.status(404).json({ error: 'Introuvable.' });
+  const b = req.body || {};
+  db.prepare(`UPDATE modele_mapping SET nom=?, type_fichier=?, signature_colonnes=?, feuille=?, ligne_entete=?, mapping_json=?, transformations_json=?, updated_at=datetime('now'), derniere_utilisation=datetime('now') WHERE id=?`)
+    .run(b.nom ?? m.nom, b.type_fichier ?? m.type_fichier, b.signature_colonnes ?? m.signature_colonnes, b.feuille ?? m.feuille,
+      b.ligne_entete != null ? +b.ligne_entete : m.ligne_entete, JSON.stringify(b.mapping || JSON.parse(m.mapping_json || '{}')),
+      JSON.stringify(b.transformations || JSON.parse(m.transformations_json || '{}')), m.id);
+  res.json({ ok: true });
+});
+router.delete('/mapping-templates/:id', (req, res) => {
+  const m = db.prepare('SELECT id FROM modele_mapping WHERE id=? AND cabinet_id=?').get(req.params.id, req.cabinetId);
+  if (!m) return res.status(404).json({ error: 'Introuvable.' });
+  db.prepare('DELETE FROM modele_mapping WHERE id=?').run(m.id);
+  res.json({ ok: true });
+});
+
 router.get('/clients/:id/documents', (req, res) => {
   const e = ownedEntreprise(req, req.params.id); if (!e) return res.status(404).json({ error: 'Introuvable.' });
-  res.json(db.prepare(`SELECT id, type, nom, taille, mime, import_id, nb_factures, created_at FROM document WHERE entreprise_id=? AND type='import' ORDER BY created_at DESC`).all(e.id));
+  // Isolation : si une période est fournie, ne renvoyer QUE ses fichiers.
+  const p = readPeriodParams(req);
+  const rows = p
+    ? db.prepare(`SELECT id, type, nom, taille, mime, import_id, import_lot_id, nb_factures, annee, trimestre, created_at FROM document WHERE entreprise_id=? AND type='import' AND annee=? AND trimestre=? ORDER BY created_at DESC`).all(e.id, p.annee, p.trimestre)
+    : db.prepare(`SELECT id, type, nom, taille, mime, import_id, import_lot_id, nb_factures, annee, trimestre, created_at FROM document WHERE entreprise_id=? AND type='import' ORDER BY created_at DESC`).all(e.id);
+  res.json(rows);
 });
 router.get('/clients/:id/documents/:docId/download', (req, res) => {
   const e = ownedEntreprise(req, req.params.id); if (!e) return res.status(404).send('Introuvable');
@@ -441,6 +738,8 @@ router.delete('/clients/:id/documents/:docId', (req, res) => {
   const e = ownedEntreprise(req, req.params.id); if (!e) return res.status(404).json({ error: 'Introuvable.' });
   const doc = db.prepare('SELECT * FROM document WHERE id=? AND entreprise_id=?').get(req.params.docId, e.id);
   if (!doc) return res.status(404).json({ error: 'Introuvable.' });
+  // Interdit si la période du document est clôturée/déclarée.
+  if (doc.annee && doc.trimestre && !assertWritable(res, req.cabinetId, e.id, doc.annee, doc.trimestre)) return;
   let removed = 0;
   if (doc.import_id) removed = db.prepare('DELETE FROM facture WHERE entreprise_id=? AND import_id=?').run(e.id, doc.import_id).changes;
   db.prepare('DELETE FROM document WHERE id=?').run(doc.id);
@@ -448,6 +747,44 @@ router.delete('/clients/:id/documents/:docId', (req, res) => {
   audit(req.cabinetId, req.user.id, 'delete', 'document', { nom: doc.nom, factures: removed }, req.ip);
   res.json({ ok: true, facturesSupprimees: removed });
 });
+// Détail d'un lot d'import (cloisonné cabinet).
+router.get('/imports/:importId', (req, res) => {
+  const lot = db.prepare('SELECT * FROM import_lot WHERE id=? AND cabinet_id=?').get(req.params.importId, req.cabinetId);
+  if (!lot) return res.status(404).json({ error: 'Import introuvable.' });
+  const nbFac = db.prepare('SELECT COUNT(*) n FROM facture WHERE import_id=?').get(lot.id).n;
+  res.json({ ...lot, factures_actuelles: nbFac });
+});
+// Aperçu des conséquences d'une annulation (avant confirmation).
+router.get('/clients/:id/import/:importId/impact', (req, res) => {
+  const e = ownedEntreprise(req, req.params.id); if (!e) return res.status(404).json({ error: 'Introuvable.' });
+  const lot = db.prepare('SELECT * FROM import_lot WHERE id=? AND cabinet_id=? AND entreprise_id=?').get(req.params.importId, req.cabinetId, e.id);
+  if (!lot) return res.status(404).json({ error: 'Import introuvable.' });
+  const agg = db.prepare('SELECT COUNT(*) n, COALESCE(SUM(ttc),0) ttc FROM facture WHERE entreprise_id=? AND import_id=?').get(e.id, lot.id);
+  const decl = db.prepare('SELECT COUNT(*) n FROM declaration WHERE entreprise_id=? AND annee=? AND trimestre=?').get(e.id, lot.annee, lot.trimestre).n;
+  const pr = ensurePeriode(req.cabinetId, e.id, lot.annee, lot.trimestre);
+  res.json({ importId: lot.id, annee: lot.annee, trimestre: lot.trimestre, factures: agg.n, total_ttc: round2(agg.ttc),
+    declarations_affectees: decl, periode_statut: pr.statut, verrouillee: periode.isLocked(pr.statut) });
+});
+// Annulation atomique d'un import : retire UNIQUEMENT ses factures + anomalies. Réversibilité.
+router.post('/clients/:id/import/:importId/cancel', (req, res) => {
+  const e = ownedEntreprise(req, req.params.id); if (!e) return res.status(404).json({ error: 'Introuvable.' });
+  const lot = db.prepare('SELECT * FROM import_lot WHERE id=? AND cabinet_id=? AND entreprise_id=?').get(req.params.importId, req.cabinetId, e.id);
+  if (!lot) return res.status(404).json({ error: 'Import introuvable.' });
+  if (lot.annee && lot.trimestre && !assertWritable(res, req.cabinetId, e.id, lot.annee, lot.trimestre)) return;
+  let removed = 0;
+  db.exec('BEGIN');
+  try {
+    removed = db.prepare('DELETE FROM facture WHERE entreprise_id=? AND import_id=?').run(e.id, lot.id).changes;
+    db.prepare('DELETE FROM anomalie WHERE entreprise_id=? AND import_lot_id=?').run(e.id, lot.id);
+    db.prepare('DELETE FROM import_ligne WHERE import_lot_id=?').run(lot.id);
+    db.prepare(`UPDATE import_lot SET statut='annule', cancelled_at=datetime('now') WHERE id=?`).run(lot.id);
+    db.prepare(`UPDATE document SET statut='annule' WHERE import_id=? AND entreprise_id=?`).run(lot.id, e.id);
+    db.exec('COMMIT');
+  } catch (err) { db.exec('ROLLBACK'); return res.status(500).json({ error: 'Annulation échouée : ' + err.message }); }
+  audit(req.cabinetId, req.user.id, 'annulation_import', 'import', { importId: lot.id, factures: removed, annee: lot.annee, trimestre: lot.trimestre }, req.ip);
+  res.json({ ok: true, facturesSupprimees: removed });
+});
+
 router.delete('/clients/:id/conventions/:convId', (req, res) => {
   const e = ownedEntreprise(req, req.params.id); if (!e) return res.status(404).json({ error: 'Introuvable.' });
   const c = db.prepare('SELECT * FROM convention WHERE id=? AND entreprise_id=?').get(req.params.convId, e.id);
@@ -598,11 +935,13 @@ router.get('/taux', (req, res) => {
   res.json(rows);
 });
 router.post('/taux', (req, res) => {
+  if (req.user.role !== 'admin') return res.status(403).json({ error: 'Seul un administrateur peut modifier les taux BAM.' });
   const b = req.body || {};
   if (!b.taux || !b.date_debut) return res.status(400).json({ error: 'Taux et date de début requis.' });
   const id = uid('tx');
   db.prepare(`INSERT INTO taux_bam (id, cabinet_id, taux, date_debut, date_fin, reference) VALUES (?,?,?,?,?,?)`)
     .run(id, req.cabinetId, Number(b.taux), b.date_debut, b.date_fin || null, b.reference || null);
+  audit(req.cabinetId, req.user.id, 'update', 'taux_bam', { taux: b.taux, date_debut: b.date_debut }, req.ip);
   res.json({ ok: true, id });
 });
 

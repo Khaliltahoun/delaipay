@@ -111,6 +111,77 @@ try { db.exec('ALTER TABLE fournisseur ADD COLUMN delai_applicable INTEGER DEFAU
 try { db.exec('ALTER TABLE document ADD COLUMN import_id TEXT'); } catch (_) {}
 try { db.exec('ALTER TABLE document ADD COLUMN nb_factures INTEGER DEFAULT 0'); } catch (_) {}
 
+/* ==================================================================================
+ * PÉRIODES TRIMESTRIELLES & IMPORTS CONTRÔLÉS (idempotent — sûr à relancer)
+ * ================================================================================== */
+db.exec(`
+CREATE TABLE IF NOT EXISTS periode_declaration (
+  id TEXT PRIMARY KEY, cabinet_id TEXT NOT NULL, entreprise_id TEXT NOT NULL,
+  annee INTEGER NOT NULL, trimestre INTEGER NOT NULL,
+  date_debut TEXT, date_fin TEXT, mois_traitement INTEGER, annee_traitement INTEGER,
+  statut TEXT DEFAULT 'ouverte',
+  date_cloture TEXT, cloturee_par TEXT, date_reouverture TEXT, motif_reouverture TEXT,
+  created_at TEXT DEFAULT (datetime('now')), updated_at TEXT DEFAULT (datetime('now')),
+  UNIQUE(entreprise_id, annee, trimestre)
+);
+CREATE TABLE IF NOT EXISTS import_lot (
+  id TEXT PRIMARY KEY, cabinet_id TEXT NOT NULL, entreprise_id TEXT NOT NULL,
+  document_id TEXT, annee INTEGER, trimestre INTEGER,
+  source_nom TEXT, feuille TEXT, ligne_entete INTEGER, mapping_json TEXT,
+  statut TEXT DEFAULT 'confirme',
+  nb_lignes_total INTEGER DEFAULT 0, nb_lignes_valides INTEGER DEFAULT 0,
+  nb_lignes_ignorees INTEGER DEFAULT 0, nb_lignes_rejetees INTEGER DEFAULT 0,
+  nb_doublons INTEGER DEFAULT 0, total_ttc REAL DEFAULT 0,
+  empreinte_fichier TEXT, utilisateur_id TEXT,
+  created_at TEXT DEFAULT (datetime('now')), confirmed_at TEXT, cancelled_at TEXT
+);
+CREATE TABLE IF NOT EXISTS import_ligne (
+  id TEXT PRIMARY KEY, import_lot_id TEXT NOT NULL, cabinet_id TEXT, entreprise_id TEXT,
+  numero_ligne INTEGER, feuille TEXT,
+  donnees_brutes_json TEXT, donnees_normalisees_json TEXT,
+  statut TEXT, motif TEXT, champ TEXT, facture_id TEXT,
+  created_at TEXT DEFAULT (datetime('now'))
+);
+CREATE TABLE IF NOT EXISTS modele_mapping (
+  id TEXT PRIMARY KEY, cabinet_id TEXT NOT NULL, nom TEXT NOT NULL,
+  type_fichier TEXT, signature_colonnes TEXT, feuille TEXT, ligne_entete INTEGER,
+  mapping_json TEXT, transformations_json TEXT,
+  created_by TEXT, created_at TEXT DEFAULT (datetime('now')),
+  updated_at TEXT DEFAULT (datetime('now')), derniere_utilisation TEXT
+);
+`);
+
+// Colonnes de traçabilité période/lot (idempotent)
+for (const stmt of [
+  "ALTER TABLE facture ADD COLUMN import_lot_id TEXT",
+  "ALTER TABLE facture ADD COLUMN annee_origine INTEGER",       // période comptable = trimestre de la date de facture
+  "ALTER TABLE facture ADD COLUMN trimestre_origine INTEGER",
+  "ALTER TABLE facture ADD COLUMN incidence_reportee INTEGER DEFAULT 0",
+  "ALTER TABLE facture ADD COLUMN facture_origine_id TEXT",
+  "ALTER TABLE document ADD COLUMN annee INTEGER",
+  "ALTER TABLE document ADD COLUMN trimestre INTEGER",
+  "ALTER TABLE document ADD COLUMN import_lot_id TEXT",
+  "ALTER TABLE document ADD COLUMN empreinte TEXT",
+  "ALTER TABLE document ADD COLUMN utilisateur_id TEXT",
+  "ALTER TABLE document ADD COLUMN statut TEXT DEFAULT 'traite'",
+  "ALTER TABLE anomalie ADD COLUMN annee INTEGER",
+  "ALTER TABLE anomalie ADD COLUMN trimestre INTEGER",
+  "ALTER TABLE anomalie ADD COLUMN import_lot_id TEXT",
+]) { try { db.exec(stmt); } catch (_) {} }
+
+db.exec(`
+CREATE INDEX IF NOT EXISTS ix_perdecl_ent   ON periode_declaration(entreprise_id, annee, trimestre);
+CREATE INDEX IF NOT EXISTS ix_perdecl_cab   ON periode_declaration(cabinet_id, annee, trimestre);
+CREATE INDEX IF NOT EXISTS ix_lot_ent       ON import_lot(entreprise_id, annee, trimestre);
+CREATE INDEX IF NOT EXISTS ix_lot_cab       ON import_lot(cabinet_id, statut);
+CREATE INDEX IF NOT EXISTS ix_ligne_lot     ON import_ligne(import_lot_id, statut);
+CREATE INDEX IF NOT EXISTS ix_fac_lot       ON facture(import_lot_id);
+CREATE INDEX IF NOT EXISTS ix_fac_origine   ON facture(entreprise_id, annee_origine, trimestre_origine);
+CREATE INDEX IF NOT EXISTS ix_doc_ent_per   ON document(entreprise_id, annee, trimestre);
+CREATE INDEX IF NOT EXISTS ix_ano_ent_per   ON anomalie(entreprise_id, annee, trimestre);
+CREATE INDEX IF NOT EXISTS ix_mapping_cab   ON modele_mapping(cabinet_id, type_fichier);
+`);
+
 /* ------------------------------------------------------------- taux BAM provider */
 function tauxAt(y, m, cabinetId) {
   const dateStr = `${y}-${String(m).padStart(2, '0')}-15`;

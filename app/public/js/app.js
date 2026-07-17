@@ -65,6 +65,7 @@ async function boot() {
   state.clientId = localStorage.getItem('dp-client') || (state.clients[0] && state.clients[0].id) || null;
   if (state.clients.length && !state.clients.find(c => c.id === state.clientId)) state.clientId = state.clients[0].id;
   wireSwitcher(); wireGlobalSearch(); updateSwitcherLabel();
+  await loadPeriods(); wirePeriodSelector();
   refreshAlertsBadge();
   setView(location.hash.replace('#', '') || 'dash', { replace: true });
 }
@@ -95,6 +96,7 @@ async function renderView(name) {
   updateSwitcherLabel();
   $('#view').innerHTML = `<div class="empty"><div class="spin" style="border-color:rgba(14,77,100,.25);border-top-color:var(--primary)"></div></div>`;
   try { await VIEWS[name].fn(); $$('#view .kpi[data-goto]').forEach(el => el.onclick = () => setView(el.dataset.goto)); } catch (e) { $('#view').innerHTML = `<div class="empty"><h4>Erreur</h4><p>${esc(e.message)}</p></div>`; }
+  updatePeriodLabel(); updateCtxBanner();
 }
 // Navigation utilisateur : empile une entrée d'historique (back/forward fonctionnent dans l'app)
 function setView(name, opts = {}) {
@@ -114,17 +116,9 @@ window.addEventListener('popstate', (e) => {
 function currentClient() { return state.clients.find(c => c.id === state.clientId) || null; }
 const SCOPED = ['delais', 'conv', 'decl', 'visa', 'import', 'client'];
 
-// Barre de période (le client est piloté globalement par le switcher du bandeau)
-function clientPeriodBar(periods, showPeriod = true) {
-  if (!showPeriod || !periods || !periods.length) return '';
-  const perOpts = periods.map(p => `<option value="${p.annee}-${p.trimestre}" ${state.period && state.period.annee === p.annee && state.period.trimestre === p.trimestre ? 'selected' : ''}>Trimestre ${p.trimestre} ${p.annee}</option>`).join('');
-  return `<div class="filters" style="margin-bottom:18px"><div class="selctb" style="padding:0 6px 0 12px">
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" style="width:15px;height:15px;color:var(--muted)"><rect x="3" y="4" width="18" height="17" rx="2"/><path d="M3 9h18M8 2v4M16 2v4"/></svg>
-    <select id="perSel" class="input-fld" style="border:0;background:transparent;font-weight:600">${perOpts}</select></div></div>`;
-}
-function wireClientBar(reRender) {
-  const ps = $('#perSel'); if (ps) ps.onchange = () => { const [a, t] = ps.value.split('-'); state.period = { annee: +a, trimestre: +t }; reRender(); };
-}
+// La période est désormais GLOBALE (bandeau) — ces fonctions sont conservées pour compat mais neutres.
+function clientPeriodBar() { return ''; }
+function wireClientBar() { /* la période est pilotée globalement (voir sélecteur de période) */ }
 
 /* ---------- switcher client global (bandeau) ---------- */
 function updateSwitcherLabel() { const c = currentClient(); const el = $('#cswName'); if (el) el.textContent = c ? c.name : 'Sélectionner un client'; }
@@ -150,8 +144,9 @@ function wireSwitcher() {
   $('#cswPanel').onclick = e => e.stopPropagation();
   document.addEventListener('click', closeSwitcher);
 }
-function setClient(id) {
-  state.clientId = id; localStorage.setItem('dp-client', id); state.period = null; closeSwitcher(); updateSwitcherLabel();
+async function setClient(id) {
+  state.clientId = id; localStorage.setItem('dp-client', id); closeSwitcher(); updateSwitcherLabel();
+  await loadPeriods();                    // recharge les périodes disponibles du nouveau client
   if (SCOPED.includes(state.view) && state.view !== 'client') VIEWS[state.view].fn(); else setView('client');
 }
 /* ---------- recherche globale ---------- */
@@ -168,18 +163,101 @@ function wireGlobalSearch() {
   inp.onfocus = () => { if (inp.value.trim()) run(); };
   inp.onblur = () => setTimeout(() => box.classList.add('hidden'), 180);
 }
-async function ensurePeriod() {
-  if (!state.clientId) return null;
-  const data = await api(`/clients/${state.clientId}/periods`);
-  if (!state.period) state.period = data.latest;
-  return data.periods;
+/* ============================== PÉRIODE GLOBALE (contexte de travail) ============================== */
+const TRI_LABEL = t => `T${t}`;
+const PERIOD_STATUT = {
+  a_venir: ['À venir', 'st-gray'], ouverte: ['Ouverte', 'st-blue'], en_preparation: ['En préparation', 'st-blue'],
+  a_controler: ['À contrôler', 'st-orange'], prete: ['Prête', 'st-green'], validee: ['Validée', 'st-green'],
+  declaree: ['Déclarée', 'st-green'], cloturee: ['Clôturée', 'st-gray'], rouverte: ['Rouverte', 'st-orange'],
+};
+function periodStatutOf(a, t) {
+  const p = (state.periods || []).find(x => x.annee === a && x.trimestre === t);
+  return p ? p.statut : null;
 }
+function currentPeriodLocked() {
+  const st = state.period && periodStatutOf(state.period.annee, state.period.trimestre);
+  return st === 'cloturee' || st === 'declaree';
+}
+// Charge les périodes disponibles du client courant + fixe la période globale (persistée sinon période de travail).
+async function loadPeriods() {
+  if (!state.clientId) { state.periods = []; state.periodMeta = null; return; }
+  const data = await api(`/clients/${state.clientId}/periods`);
+  state.periods = data.disponibles || data.periods || [];
+  state.periodMeta = { travail: data.travail, plusFournie: data.plusFournie };
+  // priorité : période mémorisée (si dispo) → sinon période de travail → sinon plus fournie → sinon latest
+  const saved = (() => { try { return JSON.parse(localStorage.getItem('dp-period') || 'null'); } catch { return null; } })();
+  const has = p => p && state.periods.some(x => x.annee === p.annee && x.trimestre === p.trimestre);
+  state.period = has(saved) ? { annee: saved.annee, trimestre: saved.trimestre }
+    : (data.travail || data.plusFournie || data.latest || { annee: new Date().getFullYear(), trimestre: Math.floor(new Date().getMonth() / 3) + 1 });
+  updatePeriodLabel(); updateCtxBanner();
+}
+function setPeriod(annee, trimestre, opts = {}) {
+  state.period = { annee: +annee, trimestre: +trimestre };
+  localStorage.setItem('dp-period', JSON.stringify(state.period));
+  closePeriodPanel(); updatePeriodLabel(); updateCtxBanner();
+  if (!opts.silent) renderView(state.view);   // rafraîchit la vue courante
+}
+function updatePeriodLabel() {
+  const el = $('#periodLabel'); if (!el || !state.period) return;
+  el.textContent = `${state.period.annee} — ${TRI_LABEL(state.period.trimestre)}`;
+  const st = periodStatutOf(state.period.annee, state.period.trimestre);
+  const badge = $('#periodBadge');
+  if (badge) { const m = PERIOD_STATUT[st] || ['', '']; badge.textContent = m[0]; badge.className = 'period-badge ' + (m[1] || ''); }
+}
+function updateCtxBanner() {
+  const b = $('#ctxBanner'); if (!b) return;
+  const c = currentClient();
+  if (!c || !state.period || !SCOPED.includes(state.view)) { b.classList.add('hidden'); return; }
+  const st = periodStatutOf(state.period.annee, state.period.trimestre);
+  const meta = PERIOD_STATUT[st] || ['', 'st-blue'];
+  const locked = currentPeriodLocked();
+  b.className = 'ctx-banner ' + (locked ? 'locked' : (meta[1] || 'st-blue'));
+  b.innerHTML = `<span class="ctx-ic">${locked ? '🔒' : '📅'}</span>
+    <b>${esc(c.name)}</b> — Période de travail : <b>${state.period.annee} ${TRI_LABEL(state.period.trimestre)}</b>
+    ${st ? `<span class="ctx-st">${esc((PERIOD_STATUT[st] || [''])[0])}</span>` : ''}
+    ${locked ? `<span class="ctx-lock">Lecture seule — période clôturée</span>` : ''}`;
+  b.classList.remove('hidden');
+}
+/* ---------- panneau du sélecteur de période ---------- */
+function openPeriodPanel() {
+  const panel = $('#periodPanel'); if (!panel) return;
+  buildPeriodList(); panel.classList.remove('hidden'); $('#periodBtn').setAttribute('aria-expanded', 'true');
+}
+function closePeriodPanel() { const p = $('#periodPanel'); if (p) p.classList.add('hidden'); const b = $('#periodBtn'); if (b) b.setAttribute('aria-expanded', 'false'); }
+function buildPeriodList() {
+  const cur = $('#perCur'); if (cur && state.period) cur.textContent = `${state.period.annee} ${TRI_LABEL(state.period.trimestre)}`;
+  const list = $('#perList'); if (!list) return;
+  const items = (state.periods || []).slice().sort((a, b) => (b.annee - a.annee) || (b.trimestre - a.trimestre));
+  list.innerHTML = items.length ? items.map(p => {
+    const m = PERIOD_STATUT[p.statut] || ['', ''];
+    const active = state.period && state.period.annee === p.annee && state.period.trimestre === p.trimestre;
+    return `<button class="pp-item ${active ? 'active' : ''}" data-a="${p.annee}" data-t="${p.trimestre}">
+      <span><b>${p.annee} ${TRI_LABEL(p.trimestre)}</b> <small>${p.nbFactures} fact.</small></span>
+      <span class="period-badge ${m[1] || ''}">${m[0]}</span></button>`;
+  }).join('') : `<div class="pp-empty">Aucune donnée. Choisissez un trimestre via ← →.</div>`;
+  $$('#perList .pp-item').forEach(b => b.onclick = () => setPeriod(+b.dataset.a, +b.dataset.t));
+}
+function wirePeriodSelector() {
+  const btn = $('#periodBtn'); if (!btn) return;
+  btn.onclick = e => { e.stopPropagation(); $('#periodPanel').classList.contains('hidden') ? openPeriodPanel() : closePeriodPanel(); };
+  $('#periodPanel').onclick = e => e.stopPropagation();
+  document.addEventListener('click', closePeriodPanel);
+  $('#perPrev').onclick = () => { const p = state.period; const np = p.trimestre === 1 ? { annee: p.annee - 1, trimestre: 4 } : { annee: p.annee, trimestre: p.trimestre - 1 }; setPeriod(np.annee, np.trimestre); };
+  $('#perNext').onclick = () => { const p = state.period; const np = p.trimestre === 4 ? { annee: p.annee + 1, trimestre: 1 } : { annee: p.annee, trimestre: p.trimestre + 1 }; setPeriod(np.annee, np.trimestre); };
+  $('#perWork').onclick = () => { const w = (state.periodMeta || {}).travail; if (w) setPeriod(w.annee, w.trimestre); };
+  $('#perData').onclick = () => { const d = (state.periodMeta || {}).plusFournie; if (d) setPeriod(d.annee, d.trimestre); };
+}
+async function ensurePeriod() { if (!state.periods) await loadPeriods(); return state.periods || []; }
 function perQuery() { return state.period ? `?annee=${state.period.annee}&trimestre=${state.period.trimestre}` : ''; }
+// Bandeau « lecture seule » à insérer en tête des vues scoped quand la période est clôturée.
+function lockBanner() { return currentPeriodLocked() ? `<div class="lock-note">🔒 Cette période est clôturée. Les données sont en lecture seule.</div>` : ''; }
 
 /* ============================== DASHBOARD ============================== */
 async function renderDash() {
-  const d = await api('/dashboard');
+  await ensurePeriod();
+  const d = await api('/dashboard' + perQuery());
   const k = d.kpis;
+  const cal = d.calendrier || {};
   const evo = d.evolution || [];
   const max = Math.max(1, ...evo.map(e => e.v));
   const pts = evo.map((e, i) => ({ x: 46 + (664 * (evo.length <= 1 ? 0.5 : i / (evo.length - 1))), y: 200 - (150 * e.v / max), m: e.ym.slice(5) }));
@@ -195,8 +273,18 @@ async function renderDash() {
   const mini = (lbl, val, unit, sub, col, goto) => `<div class="kpi${goto ? ' clk' : ''}"${goto ? ` data-goto="${goto}"` : ''}><div class="lbl">${lbl}</div><div class="val" style="font-size:22px${col ? ';color:' + col : ''}">${val}${unit ? ` <small>${unit}</small>` : ''}</div><div class="sub">${sub}</div></div>`;
   const GO = `<div class="go">Voir le détail <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M5 12h14M13 6l6 6-6 6"/></svg></div>`;
 
+  const joursCls = cal.joursAvantEcheance < 0 ? 'var(--r-red)' : cal.joursAvantEcheance <= 15 ? 'var(--r-orange)' : 'var(--r-green)';
   $('#view').innerHTML = `
   <div class="page-head"><h1>Tableau de bord exécutif</h1><p>Vue consolidée du portefeuille — conformité, exposition et échéances (période <b>T${d.periode.trimestre} ${d.periode.annee}</b>).</p></div>
+
+  ${secTitle('Calendrier déclaratif')}
+  <div class="card"><div class="card-b"><div class="cal-decl">
+    <div class="cd-box"><div class="l">Période</div><div class="v">${cal.label || `T${d.periode.trimestre} ${d.periode.annee}`}</div></div>
+    <div class="cd-box"><div class="l">Trimestre couvert</div><div class="v" style="font-size:14px">${dateFr(cal.date_debut)} → ${dateFr(cal.date_fin)}</div></div>
+    <div class="cd-box"><div class="l">Mois de traitement</div><div class="v" style="font-size:15px;text-transform:capitalize">${cal.mois_traitement || '—'} ${cal.annee_traitement || ''}</div></div>
+    <div class="cd-box"><div class="l">Échéance de dépôt (SIMPL)</div><div class="v" style="font-size:14px">${dateFr(cal.echeance)}</div></div>
+    <div class="cd-box"><div class="l">Jours restants</div><div class="v" style="color:${joursCls}">${cal.joursAvantEcheance != null ? cal.joursAvantEcheance + ' j' : '—'}</div></div>
+  </div></div></div>
 
   ${secTitle('Portefeuille & activité')}
   <div class="kpi-grid">
@@ -482,76 +570,188 @@ function factureDrawer(f) {
 }
 
 /* ============================== IMPORT ============================== */
+/* ============================== ASSISTANT D'IMPORT (6 étapes) ============================== */
+const WIZ_STEPS = ['Fichier', 'Feuille & mapping', 'Prévisualisation', 'Confirmation'];
 async function renderImport() {
   if (!state.clientId) return noClient();
-  const periods = await ensurePeriod();
-  $('#view').innerHTML = `
-  ${clientPeriodBar(periods)}
-  <div class="page-head"><h1>Import de fichiers</h1><p>Téléversez un journal d'achats (TVA) ou le fichier de calcul des délais au format Excel (.xlsx/.csv). Les fournisseurs, délais, retards et amendes sont calculés automatiquement.</p></div>
-  <div class="grid-2-3">
-    <div>
-      <div class="dropzone" id="dz"><div class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M12 16V4m0 0l-4 4m4-4l4 4M5 20h14"/></svg></div>
-        <b>Glissez vos fichiers ici</b><div style="margin-top:6px">ou cliquez pour parcourir · <b>plusieurs fichiers</b> acceptés · .xlsx, .xls, .csv</div></div>
-      <input type="file" id="file" accept=".xlsx,.xls,.csv" class="hidden" multiple>
-      <div id="importResult" style="margin-top:18px"></div>
-    </div>
-    <div class="card"><div class="card-h"><h3>Colonnes reconnues</h3></div><div class="card-b" style="font-size:12.5px;line-height:1.9;color:var(--muted)">
-      <b style="color:var(--ink)">Format TVA / achats</b><br>identifiantFiscal, num, des, mht, tva, ttc, if, nom, ice, tx, id, dpai, dfac<br><br>
-      <b style="color:var(--ink)">Format DELAI</b><br>… + colonne <b>convention</b> (60/120) utilisée comme délai applicable.<br><br>
-      Contrôles automatiques : dates incohérentes, ICE (15 chiffres), TTC = HT+TVA, doublons.
-    </div></div>
-  </div>
-  <div id="docsList" style="margin-top:22px"></div>`;
-  wireClientBar(renderImport);
-  const dz = $('#dz'), fi = $('#file');
-  dz.onclick = () => fi.click();
-  dz.ondragover = e => { e.preventDefault(); dz.classList.add('drag'); };
-  dz.ondragleave = () => dz.classList.remove('drag');
-  dz.ondrop = e => { e.preventDefault(); dz.classList.remove('drag'); if (e.dataTransfer.files.length) doImport(e.dataTransfer.files); };
-  fi.onchange = () => { if (fi.files.length) doImport(fi.files); };
+  await ensurePeriod();
+  state.wiz = { step: 'upload' };
+  drawWizard();
   renderDocs();
+}
+function wizStepIndex() { return { upload: 0, map: 1, preview: 2, done: 3 }[state.wiz.step] || 0; }
+function wizScaffold(inner) {
+  return `${lockBanner()}
+  <div class="page-head"><h1>Import de fichiers</h1><p>Assistant contrôlé : analyse → feuille & mapping → prévisualisation → confirmation. <b>Aucune donnée n'est enregistrée avant votre validation.</b></p></div>
+  <div class="wiz-steps">${WIZ_STEPS.map((s, i) => `<span class="ws ${wizStepIndex() > i ? 'done' : ''} ${wizStepIndex() === i ? 'cur' : ''}">${i + 1}. ${s}</span>`).join('<span class="ws-sep">›</span>')}</div>
+  <div id="wizBody">${inner}</div>
+  <div id="docsList" style="margin-top:26px"></div>`;
+}
+function drawWizard() {
+  const locked = currentPeriodLocked();
+  const step = state.wiz.step;
+  let inner = '';
+  if (locked) {
+    inner = `<div class="card"><div class="card-b">🔒 La période <b>${state.period.annee} T${state.period.trimestre}</b> est clôturée : import impossible. Choisissez une autre période ou demandez une réouverture (administrateur).</div></div>`;
+  } else if (step === 'upload') {
+    inner = `<div class="card"><div class="card-b">
+      <div class="wiz-ctx">Client : <b>${esc(currentClient().name)}</b> · Période : <b>${state.period.annee} T${state.period.trimestre}</b> · Formats : .xlsx, .xls, .csv, .xml (relevé SIMPL)</div>
+      <div class="dropzone" id="dz"><div class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M12 16V4m0 0l-4 4m4-4l4 4M5 20h14"/></svg></div>
+        <b>Glissez un fichier ici</b><div style="margin-top:6px">ou cliquez pour parcourir — <b>un fichier à la fois</b> (analysé avant import)</div></div>
+      <input type="file" id="file" accept=".xlsx,.xls,.csv,.xml" class="hidden">
+    </div></div>`;
+  } else if (step === 'map') { inner = wizMapHtml(); }
+  else if (step === 'preview') { inner = wizPreviewHtml(); }
+  else if (step === 'done') { inner = wizDoneHtml(); }
+  $('#view').innerHTML = wizScaffold(inner);
+  if (step === 'upload' && !locked) {
+    const dz = $('#dz'), fi = $('#file');
+    dz.onclick = () => fi.click();
+    dz.ondragover = e => { e.preventDefault(); dz.classList.add('drag'); };
+    dz.ondragleave = () => dz.classList.remove('drag');
+    dz.ondrop = e => { e.preventDefault(); dz.classList.remove('drag'); if (e.dataTransfer.files.length) wizAnalyze(e.dataTransfer.files[0]); };
+    fi.onchange = () => { if (fi.files.length) wizAnalyze(fi.files[0]); };
+  }
+  if (step === 'map') wizWireMap();
+  if (step === 'preview') wizWirePreview();
+  if (step === 'done') wizWireDone();
+  renderDocs();
+}
+async function wizAnalyze(file) {
+  $('#wizBody').innerHTML = `<div class="card"><div class="card-b" style="display:flex;gap:10px;align-items:center"><span class="spin"></span>Analyse de « ${esc(file.name)} »…</div></div>`;
+  try {
+    const fd = new FormData(); fd.append('file', file);
+    const a = await api(`/clients/${state.clientId}/import/analyze`, { method: 'POST', body: fd });
+    if (a.xml) { // relevé XML : mapping implicite → import direct via route legacy
+      state.wiz = { step: 'preview', token: a.token, sourceName: a.sourceName, xml: true, analyse: a, sheet: null, headerRow: 0, mapping: {} };
+      return wizPreview(); // preview gérera le cas XML côté serveur ? → on route vers confirm direct
+    }
+    const sug = a.feuilles.find(f => f.nom === a.suggestion) || a.feuilles[0];
+    state.wiz = { step: 'map', token: a.token, sourceName: a.sourceName, analyse: a, sheet: sug.nom, headerRow: sug.ligneEntete, mapping: sheetMapping(sug), requireNumero: false };
+    drawWizard();
+  } catch (e) { toast(e.message, 'err'); state.wiz = { step: 'upload' }; drawWizard(); }
+}
+function sheetMapping(sheet) { const m = {}; for (const [k, v] of Object.entries(sheet.mapping || {})) m[k] = v.col; return m; }
+function curSheet() { return state.wiz.analyse.feuilles.find(f => f.nom === state.wiz.sheet) || state.wiz.analyse.feuilles[0]; }
+function wizMapHtml() {
+  const a = state.wiz.analyse, sheet = curSheet();
+  const champs = a.champs;
+  const colOpts = (sel) => `<option value="">— non mappé —</option>` + sheet.colonnes.map(c => `<option value="${c.index}" ${sel == c.index ? 'selected' : ''}>${esc(c.label)}</option>`).join('');
+  const autoM = sheet.mapping || {};
+  return `<div class="card"><div class="card-h"><div><h3>Feuille & correspondance des colonnes</h3><div class="sub">Vérifiez le mapping proposé — les champs requis sont marqués ✱</div></div>
+      <div class="selctb"><select id="wizSheet">${a.feuilles.map(f => `<option value="${esc(f.nom)}" ${f.nom === state.wiz.sheet ? 'selected' : ''}>${esc(f.nom)}${f.ignoree ? ' (grand-livre — ignorée)' : ''} · ${f.nbLignes} lignes</option>`).join('')}</select></div></div>
+    <div class="card-b">
+      <div class="map-grid">${champs.map(ch => {
+        const auto = autoM[ch.key]; const conf = auto ? Math.round(auto.confidence * 100) : 0;
+        const confCls = conf >= 85 ? 'cf-high' : conf >= 50 ? 'cf-med' : 'cf-low';
+        const sel = state.wiz.mapping[ch.key];
+        return `<div class="map-row">
+          <div class="map-field">${esc(ch.label)}${ch.requis ? ' <span class="req">✱</span>' : ''}</div>
+          <div class="map-pick"><select data-field="${ch.key}" class="mapsel">${colOpts(sel)}</select></div>
+          <div class="map-conf">${auto ? `<span class="cf ${confCls}">${conf}%</span>` : (sel != null && sel !== '' ? '<span class="cf cf-med">manuel</span>' : '')}
+            ${auto && auto.apercu && auto.apercu.length ? `<span class="map-sample" title="${esc(auto.apercu.join(' · '))}">${esc(auto.apercu.slice(0, 3).join(' · '))}</span>` : ''}</div>
+        </div>`;
+      }).join('')}</div>
+      <label class="wiz-opt"><input type="checkbox" id="wizReqNum" ${state.wiz.requireNumero ? 'checked' : ''}> Exiger un n° de facture (sinon référence technique générée + anomalie)</label>
+      <div class="wiz-actions"><button class="btn btn-ghost" id="wizBack">← Changer de fichier</button><button class="btn btn-primary" id="wizToPreview">Prévisualiser →</button></div>
+    </div></div>`;
+}
+function wizWireMap() {
+  $('#wizSheet').onchange = e => { state.wiz.sheet = e.target.value; const s = curSheet(); state.wiz.headerRow = s.ligneEntete; state.wiz.mapping = sheetMapping(s); drawWizard(); };
+  $$('#wizBody .mapsel').forEach(sel => sel.onchange = () => { const v = sel.value; if (v === '') delete state.wiz.mapping[sel.dataset.field]; else state.wiz.mapping[sel.dataset.field] = +v; });
+  $('#wizReqNum').onchange = e => state.wiz.requireNumero = e.target.checked;
+  $('#wizBack').onclick = () => { state.wiz = { step: 'upload' }; drawWizard(); };
+  $('#wizToPreview').onclick = () => wizPreview();
+}
+async function wizPreview() {
+  // contrôle des champs requis
+  const req = ['date_facture', 'four_nom', 'ttc'];
+  const missing = req.filter(k => state.wiz.mapping[k] == null);
+  if (missing.length && !state.wiz.xml) { toast('Champs requis non mappés : ' + missing.join(', '), 'err'); return; }
+  state.wiz.step = 'preview';
+  $('#view').innerHTML = wizScaffold(`<div class="card"><div class="card-b" style="display:flex;gap:10px;align-items:center"><span class="spin"></span>Prévisualisation…</div></div>`);
+  try {
+    const pv = await api(`/clients/${state.clientId}/import/preview${perQuery()}`, { method: 'POST', body: { token: state.wiz.token, sheetName: state.wiz.sheet, headerRow: state.wiz.headerRow, mapping: state.wiz.mapping, requireNumero: state.wiz.requireNumero } });
+    state.wiz.preview = pv; drawWizard();
+  } catch (e) { toast(e.message, 'err'); state.wiz.step = 'map'; drawWizard(); }
+}
+function wizPreviewHtml() {
+  const pv = state.wiz.preview || { stats: {}, apercu: {} }; const s = pv.stats;
+  const mism = s.autrePeriode > 0;
+  const rowsHtml = (arr, cls) => (arr || []).slice(0, 8).map(l => `<tr class="${cls}"><td class="mono">${l.ligne}</td><td>${esc(l.statut)}</td><td>${esc(l.motif || (l.avertissements || []).join(', ') || '—')}</td><td class="dh">${esc((l.brut || []).filter(Boolean).slice(0, 5).join(' · ')).slice(0, 90)}</td></tr>`).join('');
+  return `<div class="card"><div class="card-h"><h3>Prévisualisation — ${esc(state.wiz.sourceName)}</h3><div class="sub">Feuille « ${esc(pv.feuille || '')} » · période ${state.period.annee} T${state.period.trimestre}</div></div>
+    <div class="card-b">
+      <div class="kpi-grid" style="margin-bottom:12px">
+        <div class="kpi"><div class="lbl">Lignes analysées</div><div class="val">${s.total || 0}</div></div>
+        <div class="kpi"><div class="lbl">Valides</div><div class="val" style="color:var(--r-green)">${s.valides || 0}</div></div>
+        <div class="kpi"><div class="lbl">Ignorées</div><div class="val">${s.ignorees || 0}</div></div>
+        <div class="kpi"><div class="lbl">Rejetées</div><div class="val" style="color:var(--r-red)">${s.rejetees || 0}</div></div>
+        <div class="kpi"><div class="lbl">Doublons</div><div class="val" style="color:var(--r-orange)">${s.doublons || 0}</div></div>
+        <div class="kpi accent"><div class="lbl">Total TTC (valides)</div><div class="val">${money(s.totalTtc)} <small>DH</small></div></div>
+      </div>
+      ${mism ? `<div class="lock-note" style="background:rgba(214,158,46,.12);border-color:rgba(214,158,46,.4)">⚠ ${s.autrePeriode} ligne(s) ont une date hors de la période sélectionnée (${state.period.annee} T${state.period.trimestre}). Elles seront rattachées à cette période (période d'origine conservée). Vérifiez le trimestre.</div>` : ''}
+      ${s.rejetees ? `<h4 style="margin:14px 0 6px">Lignes rejetées (extrait)</h4><div class="table-wrap" style="box-shadow:none;border:1px solid var(--line)"><table><thead><tr><th>Ligne</th><th>Statut</th><th>Motif</th><th>Données</th></tr></thead><tbody>${rowsHtml(pv.apercu.rejetees, 'rej')}</tbody></table></div>` : ''}
+      ${s.ignorees ? `<details style="margin-top:10px"><summary>${s.ignorees} ligne(s) ignorée(s) (total/sous-total/vide…)</summary><div class="table-wrap" style="box-shadow:none;border:1px solid var(--line);margin-top:8px"><table><thead><tr><th>Ligne</th><th>Statut</th><th>Motif</th><th>Données</th></tr></thead><tbody>${rowsHtml(pv.apercu.ignorees, 'ign')}</tbody></table></div></details>` : ''}
+      <div class="wiz-actions"><button class="btn btn-ghost" id="wizBack2">← Mapping</button>
+        <button class="btn btn-primary" id="wizConfirm" ${!s.valides ? 'disabled' : ''}>Confirmer l'import (${s.valides || 0} facture${(s.valides || 0) > 1 ? 's' : ''})</button></div>
+    </div></div>`;
+}
+function wizWirePreview() {
+  $('#wizBack2').onclick = () => { state.wiz.step = 'map'; drawWizard(); };
+  const c = $('#wizConfirm'); if (c) c.onclick = () => wizConfirm();
+}
+async function wizConfirm() {
+  const btn = $('#wizConfirm'); if (btn) { btn.disabled = true; btn.textContent = 'Import en cours…'; }
+  try {
+    const r = await api(`/clients/${state.clientId}/import/confirm${perQuery()}`, { method: 'POST', body: { token: state.wiz.token, sheetName: state.wiz.sheet, headerRow: state.wiz.headerRow, mapping: state.wiz.mapping, requireNumero: state.wiz.requireNumero, sourceName: state.wiz.sourceName } });
+    state.wiz.result = r; state.wiz.step = 'done'; drawWizard();
+    toast(`${r.imported} facture(s) importée(s).`, 'ok', 'Import confirmé');
+    refreshAlertsBadge();
+  } catch (e) { toast(e.message, 'err'); if (btn) { btn.disabled = false; btn.textContent = 'Confirmer l\'import'; } }
+}
+function wizDoneHtml() {
+  const r = state.wiz.result || {};
+  return `<div class="card"><div class="card-h"><h3>Import terminé ✓</h3></div><div class="card-b">
+      <div class="kpi-grid" style="margin-bottom:12px">
+        <div class="kpi"><div class="lbl">Factures créées</div><div class="val" style="color:var(--r-green)">${r.imported || 0}</div></div>
+        <div class="kpi"><div class="lbl">Ignorées</div><div class="val">${r.ignored || 0}</div></div>
+        <div class="kpi"><div class="lbl">Rejetées</div><div class="val" style="color:var(--r-red)">${r.rejected || 0}</div></div>
+        <div class="kpi"><div class="lbl">Doublons</div><div class="val" style="color:var(--r-orange)">${r.duplicates || 0}</div></div>
+        <div class="kpi accent"><div class="lbl">TTC importé</div><div class="val">${money(r.totalTtc)} <small>DH</small></div></div>
+      </div>
+      <div class="wiz-actions">
+        <button class="btn btn-primary" onclick="setView('delais')">Voir la feuille de délais →</button>
+        ${(r.rejected || r.ignored || r.duplicates) ? `<a class="btn btn-ghost" href="/api/imports/${r.importId}/rejections.csv">Rapport des rejets (CSV)</a>` : ''}
+        <button class="btn btn-ghost" id="wizNew">Importer un autre fichier</button>
+        <button class="btn btn-ghost" style="color:var(--r-red)" id="wizCancel">Annuler cet import</button>
+      </div></div></div>`;
+}
+function wizWireDone() {
+  $('#wizNew').onclick = () => { state.wiz = { step: 'upload' }; drawWizard(); };
+  $('#wizCancel').onclick = async () => {
+    const r = state.wiz.result; if (!r) return;
+    if (!confirm(`Annuler cet import ?\nCela retirera les ${r.imported} facture(s) créée(s). Le fichier source sera conservé.`)) return;
+    try { const x = await api(`/clients/${state.clientId}/import/${r.importId}/cancel`, { method: 'POST', body: {} }); toast(`Import annulé (${x.facturesSupprimees} facture(s) retirée(s)).`, 'ok'); state.wiz = { step: 'upload' }; drawWizard(); refreshAlertsBadge(); }
+    catch (e) { toast(e.message, 'err'); }
+  };
 }
 async function renderDocs() {
   const wrap = $('#docsList'); if (!wrap) return;
-  const docs = await api(`/clients/${state.clientId}/documents`);
-  wrap.innerHTML = `<div class="card"><div class="card-h"><div><h3>Fichiers importés</h3><div class="sub">${docs.length} fichier(s) · ${esc(currentClient().name)}</div></div></div>
+  const docs = await api(`/clients/${state.clientId}/documents${perQuery()}`);
+  const locked = currentPeriodLocked();
+  wrap.innerHTML = `<div class="card"><div class="card-h"><div><h3>Fichiers importés</h3><div class="sub">${docs.length} fichier(s) · ${esc(currentClient().name)} · ${state.period.annee} T${state.period.trimestre}</div></div></div>
     ${docs.length ? `<div class="table-wrap" style="box-shadow:none;border:0"><table style="min-width:640px"><thead><tr><th>Fichier</th><th class="num">Factures</th><th>Importé le</th><th></th></tr></thead>
       <tbody>${docs.map(d => `<tr><td><b>${esc(d.nom)}</b></td><td class="num">${d.nb_factures || 0}</td><td class="mono dh">${esc((d.created_at || '').replace('T', ' ').slice(0, 16))}</td>
         <td style="text-align:right;white-space:nowrap"><a class="btn btn-ghost btn-sm" href="/api/clients/${state.clientId}/documents/${d.id}/download">Télécharger</a>
-          <button class="btn btn-ghost btn-sm" style="color:var(--r-red);border-color:rgba(210,69,47,.35)" data-del="${d.id}" data-nb="${d.nb_factures || 0}" data-nom="${esc(d.nom)}">Supprimer</button></td></tr>`).join('')}</tbody></table></div>`
-    : '<div class="card-b dh">Aucun fichier importé pour ce client.</div>'}</div>`;
+          ${d.import_lot_id ? `<a class="btn btn-ghost btn-sm" href="/api/imports/${d.import_lot_id}/rejections.csv">Rejets</a>` : ''}
+          ${locked ? '' : `<button class="btn btn-ghost btn-sm" style="color:var(--r-red);border-color:rgba(210,69,47,.35)" data-del="${d.id}" data-nb="${d.nb_factures || 0}" data-nom="${esc(d.nom)}">Supprimer</button>`}</td></tr>`).join('')}</tbody></table></div>`
+    : `<div class="card-b dh">Aucun fichier importé pour cette période.</div>`}</div>`;
   $$('#docsList [data-del]').forEach(b => b.onclick = () => {
     if (!confirm(`Supprimer « ${b.dataset.nom} » ?\nCela retirera aussi les ${b.dataset.nb} facture(s) importée(s) depuis ce fichier.`)) return;
     api(`/clients/${state.clientId}/documents/${b.dataset.del}`, { method: 'DELETE' })
       .then(r => { toast(`Fichier supprimé (${r.facturesSupprimees} facture(s) retirée(s)).`, 'ok'); renderDocs(); refreshAlertsBadge(); })
       .catch(e => toast(e.message, 'err'));
   });
-}
-async function doImport(fileList) {
-  const files = [...fileList];
-  const box = $('#importResult');
-  box.innerHTML = `<div class="card"><div class="card-b" style="display:flex;gap:10px;align-items:center"><span class="spin" style="border-color:rgba(14,77,100,.25);border-top-color:var(--primary)"></span>Import de ${files.length} fichier(s) en cours…</div></div>`;
-  const fd = new FormData();
-  files.forEach(f => fd.append('files', f));
-  if (state.period) { fd.append('annee', state.period.annee); fd.append('trimestre', state.period.trimestre); }
-  try {
-    const r = await api(`/clients/${state.clientId}/import`, { method: 'POST', body: fd });
-    const a = r.agg;
-    toast(`${a.imported} facture(s) importée(s) depuis ${files.length} fichier(s).`, 'ok', 'Import terminé');
-    box.innerHTML = `<div class="card"><div class="card-h"><h3>Résultat de l'import</h3></div><div class="card-b">
-        <div class="kpi-grid" style="margin-bottom:10px">
-          <div class="kpi"><div class="lbl">Importées</div><div class="val">${a.imported}</div></div>
-          <div class="kpi"><div class="lbl">En retard</div><div class="val" style="color:var(--r-red)">${a.aDeclarer}</div></div>
-          <div class="kpi"><div class="lbl">Fournisseurs créés</div><div class="val">${a.fournisseursCreated}</div></div>
-          <div class="kpi accent"><div class="lbl">Amende estimée</div><div class="val">${money(a.amende)} <small>DH</small></div></div>
-        </div>
-        ${r.files.map(f => `<div class="list-row"><div style="flex:1"><b>${esc(f.file)}</b> ${f.ok ? `<span class="badge b120">${esc(f.format)}</span>` : '<span class="pill pill-red"><span class="dot"></span>Échec</span>'}
-          <div class="dh" style="font-size:12px">${f.ok ? `${f.imported} importée(s) · ${f.duplicates} doublon(s) · ${f.anomalies.length} anomalie(s)` : esc(f.error)}</div></div></div>`).join('')}
-        ${a.duplicates ? `<div class="dh" style="margin-top:8px">${a.duplicates} doublon(s) ignoré(s) au total · ${a.anomalies} anomalie(s) détectée(s).</div>` : ''}
-        <div style="margin-top:16px;display:flex;gap:10px"><button class="btn btn-primary" onclick="setView('delais')">Voir la feuille de calcul →</button>${a.anomalies ? `<button class="btn btn-ghost" onclick="setView('anomalies')">Voir les anomalies</button>` : ''}</div>
-      </div></div>`;
-    renderDocs(); refreshAlertsBadge();
-  } catch (e) { box.innerHTML = `<div class="card"><div class="card-b" style="color:var(--r-red)">${esc(e.message)}</div></div>`; toast(e.message, 'err'); }
 }
 
 /* ============================== CONVENTIONS ============================== */
