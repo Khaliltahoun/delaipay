@@ -174,8 +174,8 @@ function computeFacture(opts) {
     res.periode = q;
   }
 
-  res.delaiEcoule = daysBetween(dfac, fin);         // délai CONSTATÉ = arrêté − date de facture
-  res.retardJours = daysBetween(dateLimite, fin);   // = delaiEcoule − delai autorisé
+  res.delaiEcoule = daysBetween(dfac, fin);              // délai CONSTATÉ = arrêté − date de facture
+  res.retardJours = Math.max(0, daysBetween(dateLimite, fin)); // jours de retard = max(0, constaté − autorisé) — JAMAIS négatif
   res.aDeclarer = res.retardJours > 0;
 
   if (res.retardJours <= 0) { res.couleurRisque = riskColor(res); return res; }
