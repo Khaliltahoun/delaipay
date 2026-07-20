@@ -599,7 +599,7 @@ async function renderDelais() {
         : (f.four_id
           ? ` <button class="btn btn-ghost btn-sm" style="font-size:10px;padding:2px 8px;color:var(--primary);border-color:rgba(14,77,100,.3)" title="Ce fournisseur a une convention signée : l'enregistrer en un clic" data-four="${f.four_id}" data-fournom="${esc(f.four || '')}" data-delai="${f.delai_ecoule}" onclick="event.stopPropagation();convExpress(this)">+ Convention présente</button>`
           : ' <span class="pill pill-red" style="font-size:10px;padding:1px 7px" title="Aucune convention pour ce fournisseur">sans conv.</span>')) : ''}</td>
-      <td class="retard ${f.retard > 0 ? 'pos' : 'neg'}">${f.retard > 0 ? '+' + f.retard : f.retard}</td>
+      <td class="retard ${f.retard > 0 ? 'pos' : 'neg'}">${f.retard == null ? '—' : (f.retard > 0 ? '+' + f.retard : f.retard)}</td>
       <td>${f.a_declarer ? '<span class="pill pill-red" style="font-size:11px"><span class="dot"></span>Oui</span>' : '<span class="tag-no">—</span>'}</td>
       <td class="num" style="font-weight:700">${f.amende ? money(f.amende) : '—'}</td>
       <td>${riskPill(f.risk)}</td></tr>`,
@@ -639,14 +639,14 @@ window.convExpress = function (btn) {
     <p class="dh" style="margin-bottom:12px">Enregistrer la convention de délai de paiement signée avec <b>${esc(nom)}</b>.
     Le document PDF pourra être ajouté ensuite dans la rubrique <b>Conventions</b> (statut « Document manquant »).</p>
     <div class="form-grid"><div><label class="fld-lbl">Délai convenu (jours)</label>
-      <input class="input-fld" id="ce_delai" type="number" min="1" max="180" value="120">
-      <div class="dh" style="font-size:11.5px;margin-top:4px">Délai réellement écoulé sur cette facture : <b>${esc(ecoule)} j</b>. Indiquez le délai figurant dans la convention (180 j maximum).</div>
+      <input class="input-fld" id="ce_delai" type="number" min="1" max="120" value="120">
+      <div class="dh" style="font-size:11.5px;margin-top:4px">Délai réellement écoulé sur cette facture : <b>${esc(ecoule)} j</b>. Indiquez le délai figurant dans la convention (120 j maximum — plafond légal).</div>
     </div></div>
   </div>
   <div class="modal-f"><button class="btn btn-ghost" onclick="closeOverlay()">Annuler</button><button class="btn btn-primary" id="ce_save">Créer la convention</button></div>`);
   $('#ce_save').onclick = async () => {
     const d = parseInt($('#ce_delai').value, 10);
-    if (!(d > 0 && d <= 180)) { toast('Indiquez un délai valide entre 1 et 180 jours.', 'err'); return; }
+    if (!(d > 0 && d <= 120)) { toast('Indiquez un délai valide entre 1 et 120 jours.', 'err'); return; }
     const b = $('#ce_save'); b.disabled = true; b.textContent = 'Création…';
     try {
       await api(`/clients/${state.clientId}/conventions`, { method: 'POST', body: { fournisseur_id: fourId, delai: d } });

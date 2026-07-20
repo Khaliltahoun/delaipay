@@ -141,11 +141,12 @@ function inferByContent(grid, startRow, idx) {
 
 /* ------------------------------------------------------------------ helpers métier */
 function lookupDelai(entrepriseId, fournisseurId) {
+  // Toute valeur lue est ramenée à [1, 120] j (garde-fou contre des données corrompues).
   if (fournisseurId) {
     const conv = db.prepare(`SELECT delai_convenu FROM convention WHERE entreprise_id=? AND fournisseur_id=? AND statut='valide' ORDER BY created_at DESC LIMIT 1`).get(entrepriseId, fournisseurId);
-    if (conv) return conv.delai_convenu;
+    if (conv && conv.delai_convenu != null) return calc.saneDelai(conv.delai_convenu);
     const f = db.prepare('SELECT delai_applicable FROM fournisseur WHERE id=?').get(fournisseurId);
-    if (f && f.delai_applicable) return f.delai_applicable;
+    if (f && f.delai_applicable) return calc.saneDelai(f.delai_applicable);
   }
   return 60;
 }
@@ -331,7 +332,7 @@ function importExcel(buffer, { cabinetId, entrepriseId, sourceName, periode }) {
       if (four.created) result.fournisseursCreated++;
 
       let delai;
-      const convVal = num(cell(row, 'delai_conv'));
+      const convVal = convDelaiFromCell(cell(row, 'delai_conv'));   // sain (1..120) ou null — jamais concaténé
       if (format === 'DELAI' && convVal) { delai = convVal; db.prepare('UPDATE fournisseur SET delai_applicable=? WHERE id=?').run(convVal, four.id); }
       else delai = lookupDelai(entrepriseId, four.id);
 
@@ -529,7 +530,7 @@ function classifyGrid(grid, { headerRow, mapping, entrepriseId, annee, trimestre
         numero: notEmpty(numero) ? String(numero) : null, mht: mht || null, tva: tva || null, ttc,
         taux_tva: num(cell(row, 'taux_tva')) || null, mode_reglement: notEmpty(cell(row, 'mode_reglement')) ? String(cell(row, 'mode_reglement')) : null,
         designation: notEmpty(cell(row, 'designation')) ? String(cell(row, 'designation')) : null,
-        delai_conv: num(cell(row, 'delai_conv')) || null,
+        delai_conv: convDelaiFromCell(cell(row, 'delai_conv')),
         dfac: iso(dfac), dpai: iso(dpai), yFac, qFac } });
   }
   return { lignes, stats };
@@ -584,7 +585,7 @@ function confirmImport(buffer, opts) {
       const d = l.data;
       const four = upsertFournisseur(cabinetId, entrepriseId, { nom: d.nom, ice: d.ice, iff: d.iff });
       let delai;
-      if (d.delai_conv) { delai = d.delai_conv; db.prepare('UPDATE fournisseur SET delai_applicable=? WHERE id=?').run(d.delai_conv, four.id); }
+      if (d.delai_conv) { delai = calc.saneDelai(d.delai_conv); db.prepare('UPDATE fournisseur SET delai_applicable=? WHERE id=?').run(delai, four.id); }
       else delai = lookupDelai(entrepriseId, four.id);
       const c = calc.computeFacture({ dateFacture: d.dfac, datePaiement: d.dpai, ttc: d.ttc, delaiApplicable: delai, periode: per, today, tauxProvider: (y, m) => tauxAt(y, m, cabinetId) });
       const facId = uid('fac');
@@ -643,15 +644,19 @@ function normRc(v) { if (v == null) return null; const s = String(v).replace(/\D
 function normDateIso(v) { if (v == null || String(v).trim() === '') return null; const d = calc.parseDate(v); return d && d.getFullYear() >= 1990 && d.getFullYear() <= 2100 ? calc.iso(d) : null; }
 
 // Interprète un délai (nombre ou texte) → { ok, delai, raw, reason }. Retient le plus grand d'une plage.
+// Plafond LÉGAL = 120 j (loi 69-21). Au-delà → non accepté (« superieur_max »).
+const DELAI_MAX = calc.DELAI_MAX; // 120
 function parseDelai(v) {
   const raw = v == null ? '' : (v instanceof Date ? calc.iso(v) : String(v).trim());
   if (v == null || raw === '') return { ok: false, raw, reason: 'absent' };
   if (typeof v === 'number') {
     const d = Math.round(v);
     if (!(d > 0)) return { ok: false, raw, reason: 'invalide', delai: d };
-    if (d > 180) return { ok: false, raw, reason: 'superieur_180', delai: d };
+    if (d > DELAI_MAX) return { ok: false, raw, reason: 'superieur_max', delai: d };
     return { ok: true, raw, delai: d };
   }
+  // On EXTRAIT les nombres et on prend le plus grand (« 60 à 120 j » → 120). On ne CONCATÈNE
+  // jamais : le bug « 60 120 » → 60120 est ainsi impossible.
   const nums = raw.match(/-?\d+(?:[.,]\d+)?/g);
   if (!nums) return { ok: false, raw, reason: 'illisible' };
   const vals = nums.map(x => Math.round(parseFloat(x.replace(',', '.')))).filter(x => !isNaN(x));
@@ -659,9 +664,11 @@ function parseDelai(v) {
   if (vals.some(x => x < 0)) return { ok: false, raw, reason: 'invalide' };
   const delai = Math.max(...vals);                       // plage → plus grand nombre
   if (!(delai > 0)) return { ok: false, raw, reason: 'invalide', delai };
-  if (delai > 180) return { ok: false, raw, reason: 'superieur_180', delai };
+  if (delai > DELAI_MAX) return { ok: false, raw, reason: 'superieur_max', delai };
   return { ok: true, raw, delai };
 }
+// Délai convenu lu dans un fichier de FACTURES → nombre sain (1..120) ou null (jamais de valeur aberrante).
+function convDelaiFromCell(v) { const p = parseDelai(v); return p.ok ? p.delai : null; }
 function parseConv(v) {
   const cv = normCell(v);
   if (cv === '') return 'vide';
@@ -836,7 +843,7 @@ function importConventions(buffer, opts) {
         }
         // Convention = OUI → un délai valide est requis.
         if (!del.ok) {
-          if (del.reason === 'superieur_180') { record('a_verifier', `délai de ${del.delai} j supérieur au maximum standard de 180 j — à valider explicitement`, 'delai'); continue; }
+          if (del.reason === 'superieur_max') { record('a_verifier', `délai de ${del.delai} j supérieur au maximum légal de ${DELAI_MAX} j — à valider explicitement`, 'delai'); continue; }
           if (del.reason === 'absent') { record('a_verifier', 'convention « OUI » mais délai convenu manquant', 'delai'); continue; }
           record('rejetee', del.reason === 'invalide' ? 'délai nul, négatif ou invalide' : 'délai illisible', 'delai');
           continue;

@@ -17,6 +17,19 @@
 
 const TAUX_MOIS_SUPP = 0.0085; // 0,85 % par mois/fraction supplémentaire (loi 69-21)
 
+// Délai maximal LÉGAL d'un délai applicable/convenu (loi 69-21 : 60 j par défaut,
+// jusqu'à 120 j par convention). AUCUN délai appliqué ne peut dépasser ce plafond.
+const DELAI_LEGAL_DEFAUT = 60;
+const DELAI_MAX = 120;
+// Ramène n'importe quelle valeur à un délai RÉEL en jours : entier dans [1, 120].
+// Une valeur nulle/négative/illisible → 60 j (défaut légal) ; > 120 → 120 (plafond).
+// Protège tout le moteur contre des données corrompues (ex. « 60 120 » concaténé → 60120).
+function saneDelai(v, fallback = DELAI_LEGAL_DEFAUT) {
+  const n = Math.round(Number(v));
+  if (!Number.isFinite(n) || n < 1) return fallback;
+  return Math.min(n, DELAI_MAX);
+}
+
 /* ------------------------------------------------------------------ dates */
 function parseDate(v) {
   if (v == null || v === '') return null;
@@ -81,7 +94,9 @@ function computeFacture(opts) {
   const dfac = parseDate(opts.dateFacture);
   const dpai = parseDate(opts.datePaiement);
   const ttc = Number(opts.ttc) || 0;
-  const delai = Number(opts.delaiApplicable) || 60;
+  // Garde-fou LÉGAL : le délai appliqué est TOUJOURS ramené à [1, 120] j (jamais de valeur
+  // aberrante qui masquerait un retard réel). C'est le point de passage unique du calcul.
+  const delai = saneDelai(opts.delaiApplicable);
   const today = opts.today ? parseDate(opts.today) : atMidnight(new Date());
   const tauxProvider = opts.tauxProvider || (() => 0.0225);
 
@@ -151,4 +166,5 @@ function round2(n) { return Math.round((n + Number.EPSILON) * 100) / 100; }
 module.exports = {
   computeFacture, parseDate, iso, daysBetween, addDays,
   trimestreOf, quarterMonths, retardMonths, round2, TAUX_MOIS_SUPP,
+  saneDelai, DELAI_MAX, DELAI_LEGAL_DEFAUT,
 };

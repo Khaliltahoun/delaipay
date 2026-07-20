@@ -72,6 +72,57 @@ test('1er mois au taux BAM, mois suivants à 0,85 %, mois du trimestre déclaré
   assert.ok(c.montantAmende > 0);
 });
 
+/* -------------------- PLAFOND LÉGAL DU DÉLAI APPLICABLE (≤ 120 j) -------------------- */
+test('saneDelai : borne tout délai à [1,120] (défaut légal 60)', () => {
+  assert.equal(calc.saneDelai(90), 90);
+  assert.equal(calc.saneDelai(120), 120);
+  assert.equal(calc.saneDelai(60120), 120, 'valeur concaténée « 60 120 » → plafonnée');
+  assert.equal(calc.saneDelai(920260000000000), 120, 'valeur aberrante → plafonnée');
+  assert.equal(calc.saneDelai(0), 60);
+  assert.equal(calc.saneDelai(-5), 60);
+  assert.equal(calc.saneDelai(null), 60);
+  assert.equal(calc.saneDelai('abc'), 60);
+});
+test('computeFacture : un délai aberrant ne masque JAMAIS le retard réel', () => {
+  const opts = { dateFacture: '2025-01-01', datePaiement: '2025-06-01', ttc: 100000, periode: { annee: 2025, trimestre: 2 }, today: new Date(2025, 5, 30), tauxProvider: () => 0.0225 };
+  const bad = calc.computeFacture({ ...opts, delaiApplicable: 60120 });
+  const good = calc.computeFacture({ ...opts, delaiApplicable: 120 });
+  assert.equal(bad.delaiApplicable, 120, 'délai borné à 120 dans le calcul');
+  assert.ok(bad.montantAmende > 0, 'le retard réel est facturé (pas masqué)');
+  assert.equal(bad.montantAmende, good.montantAmende, 'identique à un délai de 120 j');
+});
+test('import facture : « Délai convenu » = « 60 à 120 » → 120 (jamais 60120)', () => {
+  const { cab, ent } = seedCab();
+  const X = require('../node_modules/xlsx');
+  const aoa = [
+    ['N°', 'Date', 'Fournisseur', 'TTC', 'Date paiement', 'Délai convenu'],
+    ['F1', '2026-01-05', 'FRS Z', 1000, '2026-03-20', '60 à 120'],
+  ];
+  const ws = X.utils.aoa_to_sheet(aoa); const wb = X.utils.book_new(); X.utils.book_append_sheet(wb, ws, 'S');
+  const buf = X.write(wb, { type: 'buffer', bookType: 'xlsx' });
+  const r = importer.confirmImport(buf, { sheetName: 'S', headerRow: 0, mapping: { numero: 0, date_facture: 1, four_nom: 2, ttc: 3, date_paiement: 4, delai_conv: 5 }, cabinetId: cab, entrepriseId: ent, annee: 2026, trimestre: 1, sourceName: 'z.xlsx', userId: 'u' });
+  assert.ok(r.imported >= 1);
+  const f = db.prepare('SELECT delai_applicable FROM fournisseur WHERE entreprise_id=? AND raison_sociale=?').get(ent, 'FRS Z');
+  assert.equal(f.delai_applicable, 120, 'délai fournisseur = 120 (plage 60→120), pas 60120');
+  const fac = db.prepare('SELECT delai_applicable FROM facture WHERE entreprise_id=?').get(ent);
+  assert.ok(fac.delai_applicable > 0 && fac.delai_applicable <= 120, 'délai facture dans [1,120]');
+});
+test('repair : plafonne les délais corrompus et révèle le retard masqué', () => {
+  const { cab, ent } = seedCab();
+  const fid = uid('four');
+  db.prepare('INSERT INTO fournisseur (id,cabinet_id,entreprise_id,raison_sociale,delai_applicable) VALUES (?,?,?,?,?)').run(fid, cab, ent, 'FRS BAD', 60120);
+  db.prepare(`INSERT INTO facture (id,cabinet_id,entreprise_id,fournisseur_id,numero,ttc,date_facture,date_paiement,annee,trimestre,delai_applicable,retard_jours,a_declarer,montant_amende)
+              VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).run(uid('fac'), cab, ent, fid, 'FB', 100000, '2025-01-01', '2025-06-01', 2025, 2, 60120, 0, 0, 0);
+  const { repair } = require('../src/repair');
+  const st = repair();
+  assert.ok(st.fournisseursPlafonnes >= 1);
+  assert.equal(db.prepare('SELECT delai_applicable FROM fournisseur WHERE id=?').get(fid).delai_applicable, 120);
+  const fac = db.prepare('SELECT delai_applicable, retard_jours, montant_amende FROM facture WHERE fournisseur_id=?').get(fid);
+  assert.equal(fac.delai_applicable, 120, 'facture recalculée à 120');
+  assert.ok(fac.retard_jours > 0, 'retard réel révélé');
+  assert.ok(fac.montant_amende > 0, 'amende recalculée (retard plus masqué)');
+});
+
 /* -------------------- IMPORT : classification lignes -------------------- */
 test('preview : rejette TTC négatif (avoirs) et détecte les doublons', { skip: !fs.existsSync(path.join(DOCS, '..', 'DELAI DE PAIEMENT', '01-2026', 'FERMA PREFA', 'Tableau des déductions janvier 2026.xlsx')) }, () => {
   const { cab, ent } = seedCab();

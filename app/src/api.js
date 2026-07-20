@@ -123,7 +123,8 @@ function recomputePeriod(cabinetId, entrepriseId, annee, trimestre) {
   for (const f of rows) {
     const conv = db.prepare(`SELECT delai_convenu FROM convention WHERE entreprise_id=? AND fournisseur_id=? AND statut='valide' ORDER BY created_at DESC LIMIT 1`).get(entrepriseId, f.fournisseur_id);
     const fRow = db.prepare('SELECT delai_applicable FROM fournisseur WHERE id=?').get(f.fournisseur_id);
-    const delai = conv ? conv.delai_convenu : (fRow && fRow.delai_applicable ? fRow.delai_applicable : (f.delai_applicable || 60));
+    // Garde-fou LÉGAL : délai appliqué toujours ramené à [1, 120] j (données corrompues neutralisées).
+    const delai = calc.saneDelai(conv ? conv.delai_convenu : (fRow && fRow.delai_applicable ? fRow.delai_applicable : f.delai_applicable));
     const c = calc.computeFacture({ dateFacture: f.date_facture, datePaiement: f.date_paiement, ttc: f.ttc,
       delaiApplicable: delai, periode: { annee, trimestre }, tauxProvider: (y, m) => tauxAt(y, m, cabinetId) });
     upd.run(delai, c.delaiEcoule, c.dateLimite, c.retardJours, c.nMois, c.aDeclarer ? 1 : 0,
@@ -468,13 +469,14 @@ router.post('/clients/:id/conventions', upload.single('file'), (req, res) => {
     }
   }
   const id = uid('conv');
+  const delaiConv = calc.saneDelai(b.delai, 120);   // convention : défaut 120 j, plafond légal 120 j
   db.prepare(`INSERT INTO convention (id, cabinet_id, entreprise_id, fournisseur_id, objet, delai_convenu,
       date_signature, date_debut, date_fin, statut, conforme, fichier, fichier_nom)
       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`)
-    .run(id, req.cabinetId, e.id, fournisseurId || null, b.objet || 'Délais de paiement', Number(b.delai) || 120,
+    .run(id, req.cabinetId, e.id, fournisseurId || null, b.objet || 'Délais de paiement', delaiConv,
       b.date_signature || null, b.date_debut || null, b.date_fin || null, 'valide',
-      (Number(b.delai) || 120) <= 120 ? 1 : 0, req.file ? req.file.filename : null, req.file ? req.file.originalname : null);
-  if (fournisseurId) db.prepare('UPDATE fournisseur SET delai_applicable=? WHERE id=?').run(Number(b.delai) || 120, fournisseurId);
+      1, req.file ? req.file.filename : null, req.file ? req.file.originalname : null);
+  if (fournisseurId) db.prepare('UPDATE fournisseur SET delai_applicable=? WHERE id=?').run(delaiConv, fournisseurId);
   const p = latestPeriod(e.id); recomputePeriod(req.cabinetId, e.id, p.annee, p.trimestre);
   audit(req.cabinetId, req.user.id, 'create', 'convention', { id, entreprise: e.id }, req.ip);
   res.json({ ok: true, id });
@@ -584,7 +586,7 @@ router.get('/clients/:id/delais', (req, res) => {
   const list = rows.map(f => ({
     id: f.id, numero: f.numero, four: f.four_nom, four_id: f.fournisseur_id, four_if: f.four_if, four_ice: f.four_ice, nature: f.designation,
     ttc: f.ttc, mht: f.mht, tva: f.tva, date_facture: f.date_facture, date_paiement: f.date_paiement,
-    delai_ecoule: f.delai_ecoule, delai_applicable: f.delai_applicable, date_limite: f.date_limite,
+    delai_ecoule: f.delai_ecoule, delai_applicable: calc.saneDelai(f.delai_applicable), date_limite: f.date_limite,
     retard: f.retard_jours, n_mois: f.n_mois, a_declarer: !!f.a_declarer, has_conv: !!f.has_conv,
     taux_bam: f.taux_bam, taux_total: f.taux_total, amende: f.montant_amende, risk: f.couleur_risque,
     incidence: false,
@@ -593,7 +595,7 @@ router.get('/clients/:id/delais', (req, res) => {
   const inc = incidenceFactures(req.cabinetId, e.id, p.annee, p.trimestre).map(({ f, c }) => ({
     id: f.id, numero: f.numero, four: f.four_nom, four_id: f.fournisseur_id, four_if: f.four_if, four_ice: f.four_ice, nature: f.designation,
     ttc: f.ttc, mht: f.mht, tva: f.tva, date_facture: f.date_facture, date_paiement: f.date_paiement,
-    delai_ecoule: c.delaiEcoule, delai_applicable: f.delai_applicable, date_limite: c.dateLimite,
+    delai_ecoule: c.delaiEcoule, delai_applicable: calc.saneDelai(f.delai_applicable), date_limite: c.dateLimite,
     retard: c.retardJours, n_mois: c.nMois, a_declarer: true, has_conv: !!f.has_conv,
     taux_bam: c.tauxBam, taux_total: c.tauxTotal, amende: c.montantAmende, risk: c.couleurRisque,
     incidence: true, periode_origine: `T${f.trimestre} ${f.annee}`,
