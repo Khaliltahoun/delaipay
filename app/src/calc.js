@@ -4,7 +4,12 @@
  *
  * Modèle RÉEL validé sur les déclarations DGI de CADOZAT (T1 2026) :
  *  - date limite   = date_facture + délai_applicable (60 j sans convention, 120 j avec, ou sectoriel)
- *  - retard        = période au-delà de la date limite jusqu'au règlement (ou fin de période si impayé)
+ *  - DATE D'ARRÊTÉ (règle métier) : pour un trimestre de déclaration donné, le délai est
+ *    constaté à la date d'arrêté = date de paiement si payée au plus tard le dernier jour du
+ *    trimestre, SINON le dernier jour du trimestre (facture impayée OU payée après la clôture).
+ *    → délai constaté = date d'arrêté − date de facture (jours calendaires).
+ *    Voir getDateArreteFacture(). La date du jour n'arrête JAMAIS un trimestre.
+ *  - retard        = date d'arrêté − date limite (jamais négatif ; = délai constaté − délai autorisé)
  *  - amende trimestrielle = TTC × Σ taux(mois de retard tombant DANS le trimestre déclaré)
  *      • le TOUT PREMIER mois de retard (sur la vie de la facture) = taux directeur Bank Al-Maghrib
  *      • chaque mois (ou fraction) suivant = 0,85 %
@@ -15,6 +20,7 @@
  * (1,70 %) ; BG EXPRESS 3 050 → 25,93 (0,85 %). Total T1 CADOZAT : 7 026,00 DH.
  */
 
+const periode = require('./periode');   // SOURCE UNIQUE des bornes de trimestre (pas de date en dur)
 const TAUX_MOIS_SUPP = 0.0085; // 0,85 % par mois/fraction supplémentaire (loi 69-21)
 
 // Délai maximal LÉGAL d'un délai applicable/convenu (loi 69-21 : 60 j par défaut,
@@ -55,6 +61,37 @@ function addDays(d, n) { const r = new Date(d); r.setDate(r.getDate() + n); retu
 function daysBetween(a, b) { return Math.round((atMidnight(b) - atMidnight(a)) / 86400000); }
 function iso(d) { return d ? `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}` : null; }
 function pad(n) { return String(n).padStart(2, '0'); }
+
+/* ------------------------------------------------------ date d'arrêté (règle métier) */
+// Dernier jour calendaire d'un trimestre (T1→31/03, T2→30/06, T3→30/09, T4→31/12 de l'année N).
+// T4 est TRAITÉ en janvier N+1 mais son arrêté reste le 31/12/N (source : periode.periodInfo).
+function getFinTrimestre(annee, trimestre) {
+  return parseDate(periode.periodInfo(annee, trimestre).date_fin);
+}
+/**
+ * Date d'ARRÊTÉ d'une facture pour un trimestre de déclaration (source de vérité UNIQUE).
+ *  - payée au plus tard le dernier jour du trimestre → arrêté = date de paiement ;
+ *  - impayée à la clôture OU payée APRÈS la clôture   → arrêté = dernier jour du trimestre ;
+ *  - facture postérieure au trimestre / paiement antérieur à la facture → incohérence (jamais de délai négatif).
+ * @returns {{dateArrete:Date, dateArreteIso:string, finTrimIso:string, etat:string, delaiConstate:(number|null)}}
+ *   etat ∈ 'paye' | 'impaye_cloture' | 'paye_apres_cloture' | 'facture_hors_periode' | 'paiement_anterieur'
+ */
+function getDateArreteFacture({ dateFacture, datePaiement, annee, trimestre }) {
+  const dfac = parseDate(dateFacture);
+  const dpai = parseDate(datePaiement);
+  const finTrim = getFinTrimestre(annee, trimestre);
+  let dateArrete, etat;
+  if (dpai && dpai <= finTrim) { dateArrete = dpai; etat = 'paye'; }
+  else if (dpai && dpai > finTrim) { dateArrete = finTrim; etat = 'paye_apres_cloture'; }
+  else { dateArrete = finTrim; etat = 'impaye_cloture'; }
+  let delaiConstate = dfac ? daysBetween(dfac, dateArrete) : null;
+  // Sécurité : aucune valeur négative ne doit être produite silencieusement.
+  if (dfac && dfac > dateArrete) {
+    etat = (dfac > finTrim) ? 'facture_hors_periode' : 'paiement_anterieur';
+    delaiConstate = null;
+  }
+  return { dateArrete, dateArreteIso: iso(dateArrete), finTrimIso: iso(finTrim), etat, delaiConstate };
+}
 
 function trimestreOf(d) { return Math.floor(d.getMonth() / 3) + 1; }         // 1..4
 function quarterMonths(annee, trimestre) {                                   // [{y,m}] m:1..12
@@ -104,6 +141,7 @@ function computeFacture(opts) {
     dateFacture: iso(dfac), datePaiement: iso(dpai), ttc,
     delaiApplicable: delai, delaiEcoule: null, dateLimite: null,
     retardJours: 0, nMois: 0, aDeclarer: false, paye: !!dpai,
+    arreteAu: null, etatPaiement: null, incoherent: false,
     tauxBam: null, tauxTotal: 0, baseAmende: 0, montantAmende: 0,
     couleurRisque: 'ok', periode: null,
   };
@@ -112,14 +150,33 @@ function computeFacture(opts) {
   const dateLimite = addDays(dfac, delai);
   res.dateLimite = iso(dateLimite);
 
-  const fin = dpai || today;                        // fin de la période de retard
-  res.delaiEcoule = daysBetween(dfac, fin);
-  res.retardJours = daysBetween(dateLimite, fin);   // = delaiEcoule - delai
-  res.aDeclarer = res.retardJours > 0;
+  // Fin de la période de retard = DATE D'ARRÊTÉ.
+  //  - periode fournie → règle métier : paiement si ≤ dernier jour du trimestre, sinon dernier jour du trimestre ;
+  //  - pas de periode (appel direct) → repli historique : paiement ou aujourd'hui.
+  let fin, q;
+  if (opts.periode && opts.periode.annee != null && opts.periode.trimestre != null) {
+    q = { annee: +opts.periode.annee, trimestre: +opts.periode.trimestre };
+    const arr = getDateArreteFacture({ dateFacture: dfac, datePaiement: dpai, annee: q.annee, trimestre: q.trimestre });
+    fin = arr.dateArrete;
+    res.arreteAu = arr.dateArreteIso;
+    res.etatPaiement = arr.etat;
+    res.periode = q;
+    // Incohérences (facture postérieure au trimestre, paiement antérieur à la facture) :
+    // aucun délai/retard, jamais de valeur négative — la ligne est signalée par ailleurs.
+    if (arr.etat === 'facture_hors_periode' || arr.etat === 'paiement_anterieur') {
+      res.incoherent = true; res.couleurRisque = 'ok'; return res;
+    }
+  } else {
+    fin = dpai || today;
+    q = { annee: fin.getFullYear(), trimestre: trimestreOf(fin) };
+    res.arreteAu = iso(fin);
+    res.etatPaiement = dpai ? 'paye' : 'impaye_cloture';
+    res.periode = q;
+  }
 
-  // Période déclarée cible
-  const q = opts.periode || { annee: fin.getFullYear(), trimestre: trimestreOf(fin) };
-  res.periode = q;
+  res.delaiEcoule = daysBetween(dfac, fin);         // délai CONSTATÉ = arrêté − date de facture
+  res.retardJours = daysBetween(dateLimite, fin);   // = delaiEcoule − delai autorisé
+  res.aDeclarer = res.retardJours > 0;
 
   if (res.retardJours <= 0) { res.couleurRisque = riskColor(res); return res; }
 
@@ -167,4 +224,5 @@ module.exports = {
   computeFacture, parseDate, iso, daysBetween, addDays,
   trimestreOf, quarterMonths, retardMonths, round2, TAUX_MOIS_SUPP,
   saneDelai, DELAI_MAX, DELAI_LEGAL_DEFAUT,
+  getFinTrimestre, getDateArreteFacture,
 };

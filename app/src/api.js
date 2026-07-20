@@ -583,19 +583,28 @@ router.get('/clients/:id/delais', (req, res) => {
       FROM facture f LEFT JOIN fournisseur fo ON fo.id=f.fournisseur_id
       WHERE f.entreprise_id=? AND f.annee=? AND f.trimestre=? ORDER BY f.montant_amende DESC, f.retard_jours DESC`)
     .all(e.id, p.annee, p.trimestre);
-  const list = rows.map(f => ({
-    id: f.id, numero: f.numero, four: f.four_nom, four_id: f.fournisseur_id, four_if: f.four_if, four_ice: f.four_ice, nature: f.designation,
-    ttc: f.ttc, mht: f.mht, tva: f.tva, date_facture: f.date_facture, date_paiement: f.date_paiement,
-    delai_ecoule: f.delai_ecoule, delai_applicable: calc.saneDelai(f.delai_applicable), date_limite: f.date_limite,
-    retard: f.retard_jours, n_mois: f.n_mois, a_declarer: !!f.a_declarer, has_conv: !!f.has_conv,
-    taux_bam: f.taux_bam, taux_total: f.taux_total, amende: f.montant_amende, risk: f.couleur_risque,
-    incidence: false,
-  }));
+  const list = rows.map(f => {
+    // Délai CONSTATÉ + date d'arrêté recalculés à la volée (source de vérité = moteur), pour
+    // que la feuille soit toujours correcte selon la règle « arrêté au dernier jour du trimestre ».
+    const arr = calc.getDateArreteFacture({ dateFacture: f.date_facture, datePaiement: f.date_paiement, annee: p.annee, trimestre: p.trimestre });
+    const delaiApp = calc.saneDelai(f.delai_applicable);
+    const retard = arr.delaiConstate == null ? null : Math.max(0, arr.delaiConstate - delaiApp);
+    return {
+      id: f.id, numero: f.numero, four: f.four_nom, four_id: f.fournisseur_id, four_if: f.four_if, four_ice: f.four_ice, nature: f.designation,
+      ttc: f.ttc, mht: f.mht, tva: f.tva, date_facture: f.date_facture, date_paiement: f.date_paiement,
+      delai_ecoule: arr.delaiConstate, delai_applicable: delaiApp, date_limite: f.date_limite,
+      arrete_au: arr.dateArreteIso, etat_paiement: arr.etat,
+      retard, n_mois: f.n_mois, a_declarer: !!f.a_declarer, has_conv: !!f.has_conv,
+      taux_bam: f.taux_bam, taux_total: f.taux_total, amende: f.montant_amende, risk: f.couleur_risque,
+      incidence: false,
+    };
+  });
   // Incidence reportée (factures d'un trimestre antérieur qui pèsent encore sur Q)
   const inc = incidenceFactures(req.cabinetId, e.id, p.annee, p.trimestre).map(({ f, c }) => ({
     id: f.id, numero: f.numero, four: f.four_nom, four_id: f.fournisseur_id, four_if: f.four_if, four_ice: f.four_ice, nature: f.designation,
     ttc: f.ttc, mht: f.mht, tva: f.tva, date_facture: f.date_facture, date_paiement: f.date_paiement,
     delai_ecoule: c.delaiEcoule, delai_applicable: calc.saneDelai(f.delai_applicable), date_limite: c.dateLimite,
+    arrete_au: c.arreteAu, etat_paiement: c.etatPaiement,
     retard: c.retardJours, n_mois: c.nMois, a_declarer: true, has_conv: !!f.has_conv,
     taux_bam: c.tauxBam, taux_total: c.tauxTotal, amende: c.montantAmende, risk: c.couleurRisque,
     incidence: true, periode_origine: `T${f.trimestre} ${f.annee}`,

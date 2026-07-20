@@ -47,6 +47,21 @@ Dans **Feuille de calcul des délais**, une facture payée au-delà de 60 jours 
 ## 3. Clôturer une période (administrateur)
 Une fois la déclaration faite, un administrateur peut **clôturer** la période : elle passe alors en **lecture seule** (plus d'import ni de modification). Une **réouverture exceptionnelle** est possible avec un **motif** (tracé dans le journal d'audit).
 
+## 3 bis. Délai constaté : arrêté au dernier jour du trimestre
+Le **délai constaté** d'une facture est le nombre de jours entre la date de facture et la **date d'arrêté** :
+- **Facture payée** pendant le trimestre (au plus tard le dernier jour) → arrêté = **date de paiement**.
+- **Facture non payée** au dernier jour du trimestre → arrêté = **dernier jour du trimestre**.
+- **Facture payée après la clôture** → pour le trimestre en cours, arrêté = **dernier jour du trimestre** (le paiement postérieur est pris en compte au trimestre suivant, via l'incidence reportée).
+
+**Exemple** : une facture datée du **15 avril** et non payée au **30 juin** a un délai constaté de **76 jours** pour la déclaration **T2**. Si elle est payée le **10 juillet**, le calcul **T2 reste arrêté au 30 juin** (76 j) ; c'est le trimestre suivant qui prendra en compte la date réelle de paiement.
+
+Les trois indicateurs restent distincts dans la feuille de délais :
+- **délai constaté** = date d'arrêté − date de facture ;
+- **délai autorisé** = 60 j (défaut) ou le délai de la convention (jusqu'à 120 j) ;
+- **jours de retard** = délai constaté − délai autorisé (jamais négatif).
+
+Dates de fin retenues : T1 → 31/03, T2 → 30/06, T3 → 30/09, T4 → 31/12 (année N, même si T4 est traité en janvier N+1).
+
 ## 4. Une facture impayée sur plusieurs trimestres
 Si une facture reste impayée, son amende est **reportée automatiquement** sur chaque trimestre concerné (mois par mois), **sans déplacer le fichier d'origine**. Vous la retrouvez dans la feuille de délais du trimestre, marquée « incidence reportée ».
 

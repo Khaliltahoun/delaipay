@@ -40,8 +40,10 @@ Public cible : **experts-comptables / commissaires aux comptes** (utilisateurs n
 Implémenté dans `app/src/calc.js`.
 
 - **Amende trimestrielle « apportée »**, avec **découpage par MOIS CALENDAIRE**.
-- **Date limite** = date de facture + délai applicable (60 / 120 / 180).
-- **Retard** = période au-delà de la date limite jusqu'au règlement (ou fin de période si impayé).
+- **Date limite** = date de facture + délai applicable (60 / 120 j, plafond légal 120).
+- **Date d'arrêté** (`calc.getDateArreteFacture`, source unique) : paiement si payée au plus tard le dernier jour du trimestre, sinon **dernier jour du trimestre** (impayée ou payée après la clôture). T1→31/03, T2→30/06, T3→30/09, T4→31/12 (année N, même si T4 traité en janvier N+1). La date du jour n'arrête jamais un trimestre.
+- **Délai constaté** = date d'arrêté − date de facture (jours calendaires). **Retard** = délai constaté − délai autorisé (jamais négatif). Ces trois valeurs restent distinctes.
+- **Retard facturé** = mois de retard tombant dans le trimestre déclaré, entre la date limite et la date d'arrêté.
 - Le **tout premier mois de retard** (sur la vie de la facture) est taxé au **taux directeur Bank Al-Maghrib** en vigueur ce mois (2,25 % en 2026) ; **chaque mois calendaire suivant** = **0,85 %**.
 - On ne facture que les **mois de retard tombant DANS le trimestre déclaré**.
 - **Base** = montant TTC réglé hors délai + montant non réglé.
@@ -171,7 +173,7 @@ Vue consolidée du portefeuille, par période (trimestre) :
 5. **Listes de conventions** (fournisseur + échéance/délai convenu).
 
 ### 6.7 Feuille de calcul des délais (`#delais`)
-- Tableau par facture : **N° facture**, fournisseur (IF/ICE), nature, TTC, date facture, date paiement, **délai appliqué**, date limite, **retard (jours)**, nombre de mois, taux BAM, taux total, **amende**, risque.
+- Tableau par facture : **N° facture**, fournisseur (IF/ICE), nature, TTC, date facture, date paiement, **arrêté au**, **délai constaté**, **délai autorisé**, **retard (jours)**, à déclarer, **amende**, risque. État lisible (payée / impayée à la clôture / payée après la clôture) + infobulle. Délai constaté et date d'arrêté calculés côté backend (`getDateArreteFacture`) — le frontend n'a aucune formule propre.
 - Badge **conv. / sans conv.** (quand délai écoulé > 60 j).
 - **Action express « + Convention présente »** : sur une ligne dont le fournisseur n'a pas de convention (délai écoulé > 60 j), un clic ouvre une mini-fenêtre (délai proposé 120 j, éditable, plafond 180 j) et **crée la convention** pour ce fournisseur (PDF différé → « Document manquant »). Recalcul immédiat : toutes les lignes du fournisseur passent en « conv. ». Réutilise `POST /clients/:id/conventions` avec `fournisseur_id` (appartenance vérifiée, anti-IDOR). `four_id` exposé dans `GET /clients/:id/delais`.
 - **KPIs** : factures analysées, montant TTC concerné, retard moyen, amende du trimestre.

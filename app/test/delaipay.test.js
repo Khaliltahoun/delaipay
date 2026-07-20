@@ -454,3 +454,95 @@ test('délais/HTTP : action express refusée pour un fournisseur d\'un autre ten
   assert.equal(r.status, 400, 'fournisseur hors entreprise → rejeté');
   assert.equal(db.prepare(`SELECT COUNT(*) n FROM convention WHERE fournisseur_id=?`).get(fidB).n, 0, 'aucune convention créée chez B');
 });
+
+/* ==================================================================================
+ * RÈGLE MÉTIER : DATE D'ARRÊTÉ & DÉLAI CONSTATÉ (facture impayée à la clôture)
+ * ================================================================================== */
+const A = (dateFacture, datePaiement, annee, trimestre) => calc.getDateArreteFacture({ dateFacture, datePaiement, annee, trimestre });
+
+test('arrêté #1 : T1 impayée → 31/03', () => { assert.equal(A('2026-01-10', null, 2026, 1).dateArreteIso, '2026-03-31'); });
+test('arrêté #2 : T2 impayée → 30/06', () => { assert.equal(A('2026-04-10', null, 2026, 2).dateArreteIso, '2026-06-30'); });
+test('arrêté #3 : T3 impayée → 30/09', () => { assert.equal(A('2026-07-10', null, 2026, 3).dateArreteIso, '2026-09-30'); });
+test('arrêté #4 : T4 impayée → 31/12 (même si traité en janvier N+1)', () => {
+  const r = A('2026-10-15', null, 2026, 4);
+  assert.equal(r.dateArreteIso, '2026-12-31');
+  assert.equal(periode.periodInfo(2026, 4).annee_traitement, 2027); // traité en janvier 2027…
+  assert.equal(r.dateArreteIso, '2026-12-31');                       // …mais arrêté au 31/12/2026
+});
+test('arrêté #5 : 15/04 impayée → 30/06 = 76 jours', () => {
+  const r = A('2026-04-15', null, 2026, 2);
+  assert.equal(r.dateArreteIso, '2026-06-30');
+  assert.equal(r.delaiConstate, 76);
+});
+test('arrêté #6 : paiement avant fin trimestre → date de paiement utilisée', () => {
+  const r = A('2026-04-15', '2026-05-20', 2026, 2);
+  assert.equal(r.etat, 'paye'); assert.equal(r.dateArreteIso, '2026-05-20'); assert.equal(r.delaiConstate, 35);
+});
+test('arrêté #7 : paiement exactement le dernier jour → date de paiement utilisée', () => {
+  const r = A('2026-04-15', '2026-06-30', 2026, 2);
+  assert.equal(r.etat, 'paye'); assert.equal(r.dateArreteIso, '2026-06-30'); assert.equal(r.delaiConstate, 76);
+});
+test('arrêté #8 : paiement après la clôture → fin du trimestre utilisée', () => {
+  const r = A('2026-04-15', '2026-07-10', 2026, 2);
+  assert.equal(r.etat, 'paye_apres_cloture'); assert.equal(r.dateArreteIso, '2026-06-30'); assert.equal(r.delaiConstate, 76);
+});
+test('arrêté #9 : paiement vide → fin du trimestre utilisée', () => {
+  const r = A('2026-04-15', '', 2026, 2);
+  assert.equal(r.etat, 'impaye_cloture'); assert.equal(r.dateArreteIso, '2026-06-30');
+});
+test('arrêté #10 : facture d\'un trimestre antérieur impayée → calcul jusqu\'à la nouvelle clôture', () => {
+  const t2 = A('2026-02-15', null, 2026, 2), t3 = A('2026-02-15', null, 2026, 3), t4 = A('2026-02-15', null, 2026, 4);
+  assert.equal(t2.dateArreteIso, '2026-06-30'); assert.equal(t2.delaiConstate, 135);
+  assert.equal(t3.dateArreteIso, '2026-09-30');
+  assert.equal(t4.dateArreteIso, '2026-12-31');
+});
+test('arrêté #11 : facture postérieure à la fin du trimestre → anomalie, jamais de délai négatif', () => {
+  const r = A('2026-07-05', null, 2026, 2);
+  assert.equal(r.etat, 'facture_hors_periode');
+  assert.equal(r.delaiConstate, null);
+});
+test('arrêté #12 : paiement antérieur à la facture → anomalie, pas de délai négatif', () => {
+  const r = A('2026-04-15', '2026-04-10', 2026, 2);
+  assert.equal(r.etat, 'paiement_anterieur');
+  assert.equal(r.delaiConstate, null);
+});
+test('arrêté #13 : aucun décalage dû au fuseau horaire', () => {
+  // Résultat identique quel que soit le format/heure d'entrée.
+  assert.equal(A('2026-04-15', null, 2026, 2).delaiConstate, 76);
+  assert.equal(A('15/04/2026', null, 2026, 2).delaiConstate, 76);
+  assert.equal(calc.daysBetween(calc.parseDate('2026-04-15'), calc.parseDate('2026-06-30')), 76);
+});
+test('arrêté #14 : année bissextile (T1 2024)', () => {
+  const r = A('2024-01-01', null, 2024, 1);
+  assert.equal(r.dateArreteIso, '2024-03-31');
+  assert.equal(r.delaiConstate, calc.daysBetween(calc.parseDate('2024-01-01'), calc.parseDate('2024-03-31')));
+  assert.equal(A('2024-02-29', null, 2024, 1).delaiConstate, 31); // 29/02 → 31/03 (bissextile)
+});
+test('arrêté #15 : délai constaté / délai autorisé / retard bien distincts', () => {
+  seedCab();
+  const c = calc.computeFacture({ dateFacture: '2026-04-15', datePaiement: null, ttc: 100000, delaiApplicable: 60, periode: { annee: 2026, trimestre: 2 }, tauxProvider: () => 0.0225 });
+  assert.equal(c.delaiEcoule, 76, 'délai constaté = 76');
+  assert.equal(c.delaiApplicable, 60, 'délai autorisé = 60');
+  assert.equal(c.retardJours, 16, 'retard = 76 − 60 = 16');
+  assert.equal(c.etatPaiement, 'impaye_cloture');
+  assert.equal(c.arreteAu, '2026-06-30');
+});
+test('arrêté #16 : incidence reportée — même facture recalculée à chaque clôture, sans duplication', () => {
+  const t = newTenant();
+  const fid = uid('four'); db.prepare('INSERT INTO fournisseur (id,cabinet_id,entreprise_id,raison_sociale,delai_applicable) VALUES (?,?,?,?,60)').run(fid, t.cab, t.ent, 'FRS INC');
+  db.prepare(`INSERT INTO facture (id,cabinet_id,entreprise_id,fournisseur_id,numero,ttc,date_facture,date_paiement,annee,trimestre,delai_applicable,delai_ecoule,retard_jours,a_declarer,montant_amende)
+              VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).run(uid('fac'), t.cab, t.ent, fid, 'INC-1', 100000, '2026-01-15', null, 2026, 1, 60, 45, 15, 1, 500);
+  const before = db.prepare('SELECT COUNT(*) n FROM facture WHERE entreprise_id=?').get(t.ent).n;
+  // Arrêté recalculé à chaque trimestre ultérieur (source de vérité), sans créer de nouvelle facture.
+  assert.equal(calc.getDateArreteFacture({ dateFacture: '2026-01-15', datePaiement: null, annee: 2026, trimestre: 2 }).dateArreteIso, '2026-06-30');
+  assert.equal(calc.getDateArreteFacture({ dateFacture: '2026-01-15', datePaiement: null, annee: 2026, trimestre: 3 }).dateArreteIso, '2026-09-30');
+  assert.equal(db.prepare('SELECT COUNT(*) n FROM facture WHERE entreprise_id=?').get(t.ent).n, before, 'aucune duplication de la facture source');
+});
+test('arrêté #17 : période clôturée → même résultat quelle que soit la date du jour (reproductible)', () => {
+  const base = { dateFacture: '2026-04-15', datePaiement: null, ttc: 100000, delaiApplicable: 60, periode: { annee: 2026, trimestre: 2 }, tauxProvider: () => 0.0225 };
+  const a = calc.computeFacture({ ...base, today: new Date(2026, 6, 20) });
+  const b = calc.computeFacture({ ...base, today: new Date(2027, 0, 5) });
+  assert.equal(a.delaiEcoule, b.delaiEcoule, 'délai constaté indépendant de today');
+  assert.equal(a.montantAmende, b.montantAmende, 'amende reproductible');
+  assert.equal(a.arreteAu, '2026-06-30'); assert.equal(b.arreteAu, '2026-06-30');
+});

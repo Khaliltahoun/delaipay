@@ -1,5 +1,20 @@
 # Changelog — DelaiPay
 
+## Délai constaté arrêté au dernier jour du trimestre (juillet 2026)
+
+### Ajouté / corrigé
+- **Règle métier « date d'arrêté »** (fonction centrale `calc.getDateArreteFacture`, source unique côté backend) : le délai constaté d'une facture est calculé jusqu'à une **date d'arrêté** :
+  - payée au plus tard le dernier jour du trimestre → arrêté = **date de paiement** ;
+  - impayée à la clôture **ou payée après la clôture** → arrêté = **dernier jour du trimestre** (T1→31/03, T2→30/06, T3→30/09, T4→31/12 de l'année N, même si T4 est traité en janvier N+1).
+- **Correction** : auparavant, une facture impayée utilisait la **date du jour** (délai qui augmentait chaque jour) et une facture payée après la clôture utilisait sa **date de paiement postérieure**. Désormais l'arrêté est stable au dernier jour du trimestre déclaré. **La date du jour n'arrête plus jamais un trimestre.**
+- **Trois indicateurs distincts** garantis : *délai constaté* (arrêté − facture), *délai autorisé* (60/convention ≤ 120), *jours de retard* (= constaté − autorisé, jamais négatif).
+- **Feuille de délais** : nouvelles colonnes « Arrêté au » et « Délai constaté », état lisible (Payée / Impayée à la clôture / Payée après la clôture) + infobulle explicative. La valeur provient exclusivement du backend (le frontend ne recalcule pas).
+- **Cas limites** : facture datée après la fin du trimestre ou paiement antérieur à la facture → signalés (aucun délai négatif produit). Calcul en **jours calendaires** (sans dérive de fuseau horaire), correct en année bissextile.
+- **Incidence reportée préservée** : la facture source reste dans son trimestre d'origine (ni déplacée ni dupliquée) ; le délai constaté est recalculé à la clôture de chaque trimestre ultérieur.
+
+### Préservé
+- **Montants d'amende / à déclarer INCHANGÉS** pour tout trimestre clôturé (l'amende ne somme que les mois du trimestre déclaré) — **CADOZAT T1 2026 = 7 025,33 DH** (test de non-régression, 54/54).
+
 ## Import Excel des conventions fournisseurs & pièces PDF différées (juillet 2026)
 
 ### Ajouté

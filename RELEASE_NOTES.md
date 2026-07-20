@@ -5,6 +5,13 @@ Version candidate à la validation métier (Mme Zahra) et au déploiement de pro
 
 ---
 
+## 🆕 Nouveau (délai constaté à la clôture)
+
+- **Délai constaté arrêté au dernier jour du trimestre** : une facture **impayée** (ou **payée après la clôture**) est désormais calculée jusqu'au dernier jour du trimestre déclaré, et non plus jusqu'à la date du jour ni jusqu'à un paiement postérieur. Exemple : facture du **15/04** non payée au **30/06** → **76 jours** en T2 ; si payée le **10/07**, le calcul T2 **reste arrêté au 30/06**.
+- Fonction centrale unique côté backend (`getDateArreteFacture`) utilisée partout (feuille de délais, dashboard, déclaration, exports) — le frontend ne recalcule pas.
+- Feuille de délais enrichie : colonnes **Arrêté au** / **Délai constaté**, état (payée / impayée à la clôture / payée après clôture) et infobulle. Indicateurs *délai constaté*, *délai autorisé* et *jours de retard* clairement distincts.
+- **Montants d'amende inchangés** pour les trimestres clôturés (CADOZAT = 7 025,33 DH).
+
 ## 🆕 Nouveau (cycle « conventions »)
 
 - **Import Excel des conventions fournisseurs** : dans le menu Conventions, un bouton **Télécharger le modèle** (classeur à 2 feuilles, Instructions + Conventions) et un bouton **Importer une liste Excel**. L'import crée fournisseurs et conventions en une passe, **sans exiger le PDF** ; le document signé s'ajoute plus tard (statut **« Document manquant »** → **Ajouter le PDF**).

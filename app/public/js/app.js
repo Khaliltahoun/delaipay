@@ -554,6 +554,28 @@ function clientModal() {
 }
 
 /* ============================== DELAIS ============================== */
+// Libellés lisibles de l'état de paiement à la clôture (aucun jargon technique).
+const ETAT_PAIEMENT_LABEL = {
+  paye: 'Payée', impaye_cloture: 'Impayée à la clôture', paye_apres_cloture: 'Payée après la clôture',
+  facture_hors_periode: 'Hors trimestre', paiement_anterieur: 'Paiement avant la facture (à vérifier)',
+};
+// Phrase d'explication (infobulle) selon l'état.
+function etatTip(f) {
+  const fin = f.arrete_au ? dateFr(f.arrete_au) : '';
+  switch (f.etat_paiement) {
+    case 'impaye_cloture': return `Facture non payée à la clôture : le délai est calculé jusqu'au dernier jour du trimestre (${fin}).`;
+    case 'paye_apres_cloture': return `Paiement postérieur à la clôture — calcul arrêté au ${fin}.`;
+    case 'facture_hors_periode': return `Facture datée après la fin du trimestre : elle n'appartient pas à cette période.`;
+    case 'paiement_anterieur': return `Date de paiement antérieure à la date de facture — à vérifier.`;
+    default: return f.date_paiement ? `Facture payée le ${dateFr(f.date_paiement)}.` : '';
+  }
+}
+// Petit badge d'état affiché sous le délai constaté (uniquement quand ce n'est pas un simple « payée »).
+function etatMini(f) {
+  const m = { impaye_cloture: ['pill-orange', 'impayée à la clôture'], paye_apres_cloture: ['pill-app', 'payée après clôture'], facture_hors_periode: ['pill-red', 'hors trimestre'], paiement_anterieur: ['pill-red', 'à vérifier'] };
+  const e = m[f.etat_paiement];
+  return e ? `<div style="margin-top:2px"><span class="pill ${e[0]}" style="font-size:9.5px;padding:1px 6px">${e[1]}</span></div>` : '';
+}
 async function renderDelais() {
   if (!state.clientId) return noClient();
   const periods = await ensurePeriod();
@@ -577,11 +599,12 @@ async function renderDelais() {
     <button class="fpill" data-f="retard" aria-pressed="${filt === 'retard'}">Retard &gt; 0<span class="c">${t.aDeclarer}</span></button>
     <button class="fpill" data-f="conv" aria-pressed="${filt === 'conv'}">Convention absente<span class="c">${t.sansConvention}</span></button>
   </div>
-  ${rows.length ? `<div class="table-wrap"><table style="min-width:1040px"><thead><tr>
+  ${rows.length ? `<div style="font-size:12px;color:var(--muted);margin:-4px 0 10px">💡 Pour une facture non payée à la clôture, le délai est calculé jusqu'au dernier jour du trimestre.</div>
+  <div class="table-wrap"><table style="min-width:1120px"><thead><tr>
     <th>N° facture</th><th>Fournisseur (IF)</th><th>Nature</th><th class="num">TTC</th><th>Date facture</th><th>Date paiement</th>
-    <th class="num">Délai</th><th>Convention</th><th class="num">Retard</th><th>À déclarer</th><th class="num">Amende</th><th>Statut</th></tr></thead>
+    <th>Arrêté au</th><th class="num">Délai constaté</th><th>Délai autorisé</th><th class="num">Retard</th><th>À déclarer</th><th class="num">Amende</th><th>Statut</th></tr></thead>
     <tbody id="pgBody"></tbody>
-    <tfoot><tr><td colspan="3">Total — ${rows.length} facture(s)</td><td class="num">${money(rows.reduce((s, x) => s + (x.ttc || 0), 0))}</td><td colspan="4"></td><td></td><td></td><td class="num" style="color:var(--r-red)">${money(rows.reduce((s, x) => s + (x.amende || 0), 0))}</td><td></td></tr></tfoot>
+    <tfoot><tr><td colspan="3">Total — ${rows.length} facture(s)</td><td class="num">${money(rows.reduce((s, x) => s + (x.ttc || 0), 0))}</td><td colspan="5"></td><td></td><td></td><td class="num" style="color:var(--r-red)">${money(rows.reduce((s, x) => s + (x.amende || 0), 0))}</td><td></td></tr></tfoot>
   </table></div><div id="pgMore" style="text-align:center;margin:14px 0"></div>` : emptyBox('Aucune facture', 'Importez un journal d\'achats (Excel) pour ce client et cette période.', 'import')}`;
   $$('.fpill').forEach(b => b.onclick = () => { state._filter = b.dataset.f; renderDelais(); });
   wireClientBar(renderDelais);
@@ -593,7 +616,8 @@ async function renderDelais() {
       <td class="num">${money(f.ttc)}</td>
       <td class="mono dh">${dateFr(f.date_facture)}</td>
       <td class="mono dh">${dateFr(f.date_paiement)}</td>
-      <td class="num">${f.delai_ecoule != null ? f.delai_ecoule + ' j' : '—'}</td>
+      <td class="mono dh" title="${esc(etatTip(f))}">${f.arrete_au ? dateFr(f.arrete_au) : '—'}</td>
+      <td class="num" title="${esc(etatTip(f))}">${f.delai_ecoule != null ? f.delai_ecoule + ' j' : '—'}${etatMini(f)}</td>
       <td><span class="badge ${f.delai_applicable >= 120 ? 'b120' : 'b60'}">${f.delai_applicable} j</span>${f.delai_ecoule > 60 ? (f.has_conv
         ? ' <span class="pill pill-ok" style="font-size:10px;padding:1px 7px" title="Convention disponible">conv.</span>'
         : (f.four_id
@@ -616,11 +640,14 @@ function factureDrawer(f) {
       <div class="det-row"><span class="k">Date facture</span><span class="v">${dateFr(f.date_facture)}</span></div>
       <div class="det-row"><span class="k">Date paiement</span><span class="v">${dateFr(f.date_paiement)}</span></div>
       <div class="det-row"><span class="k">Date limite légale</span><span class="v">${dateFr(f.date_limite)}</span></div>
+      <div class="det-row"><span class="k">Date d'arrêté retenue</span><span class="v">${f.arrete_au ? dateFr(f.arrete_au) : '—'}</span></div>
+      <div class="det-row"><span class="k">État</span><span class="v" style="font-variant-numeric:normal">${esc(ETAT_PAIEMENT_LABEL[f.etat_paiement] || '—')}</span></div>
     </div>
+    ${etatTip(f) ? `<div class="dh" style="font-size:12px;margin:6px 0 2px">${esc(etatTip(f))}</div>` : ''}
     <div class="calc">
-      <div class="row"><span>Délai écoulé</span><b>${f.delai_ecoule} j</b></div>
-      <div class="row"><span>Délai applicable (convention)</span><b>${f.delai_applicable} j</b></div>
-      <div class="row"><span>Retard (au-delà du délai)</span><b style="color:${f.retard > 0 ? 'var(--r-red)' : 'var(--r-green)'}">${f.retard > 0 ? '+' + f.retard : f.retard} j</b></div>
+      <div class="row"><span>Délai constaté (arrêté − date de facture)</span><b>${f.delai_ecoule != null ? f.delai_ecoule + ' j' : '—'}</b></div>
+      <div class="row"><span>Délai autorisé (convention / légal)</span><b>${f.delai_applicable} j</b></div>
+      <div class="row"><span>Jours de retard (constaté − autorisé)</span><b style="color:${f.retard > 0 ? 'var(--r-red)' : 'var(--r-green)'}">${f.retard == null ? '—' : (f.retard > 0 ? '+' + f.retard : f.retard) + ' j'}</b></div>
       <div class="row"><span>Mois de retard</span><b>${f.n_mois || 0}</b></div>
       <div class="row"><span>Taux directeur BAM (1ᵉʳ mois)</span><b>${f.taux_bam != null ? pct(f.taux_bam) : '—'}</b></div>
       <div class="row"><span>Taux total appliqué</span><b>${f.taux_total ? pct(f.taux_total) : '—'}</b></div>
