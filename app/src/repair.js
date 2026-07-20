@@ -19,7 +19,10 @@ const calc = require('./calc');
 
 function repair() {
   const stats = { conventionsPlafonnees: 0, fournisseursPlafonnes: 0, facturesRecalculees: 0, periodes: 0 };
-  db.exec('BEGIN');
+  // La base peut être ouverte par un serveur en cours : on patiente si elle est verrouillée
+  // plutôt que d'échouer immédiatement (WAL autorise l'accès concurrent).
+  try { db.exec('PRAGMA busy_timeout=15000'); } catch (_) {}
+  db.exec('BEGIN IMMEDIATE');
   try {
     // 1) Conventions : délai convenu ramené à [1, 120] (défaut 120 si illisible sur une convention).
     for (const c of db.prepare('SELECT id, delai_convenu FROM convention').all()) {
