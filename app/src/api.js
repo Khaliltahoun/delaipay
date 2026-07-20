@@ -485,6 +485,71 @@ router.get('/conventions/:id/file', (req, res) => {
   res.download(path.join(UP_DIR, c.fichier), c.fichier_nom || 'convention');
 });
 
+// Types de fichiers acceptés (validés côté serveur — on ne fait pas confiance au client).
+const XLSX_EXT = new Set(['.xlsx', '.xls', '.xlsm']);
+function isExcelUpload(file) {
+  const ext = path.extname(file.originalname || '').toLowerCase();
+  if (XLSX_EXT.has(ext)) return true;
+  const mt = String(file.mimetype || '').toLowerCase();
+  return mt.includes('spreadsheetml') || mt.includes('ms-excel');
+}
+function looksLikePdf(filePath, originalname) {
+  if (path.extname(originalname || '').toLowerCase() !== '.pdf') return false;
+  try { const fd = fs.openSync(filePath, 'r'); const b = Buffer.alloc(5); fs.readSync(fd, b, 0, 5, 0); fs.closeSync(fd); return b.toString('latin1') === '%PDF-'; }
+  catch (_) { return false; }
+}
+
+// Import d'une LISTE de conventions (Excel) — crée les conventions SANS le PDF (document différé).
+router.post('/clients/:id/conventions/import', heavyLimiter, upload.single('file'), (req, res) => {
+  const e = ownedEntreprise(req, req.params.id);
+  if (!e) { cleanupUploads(req); return res.status(404).json({ error: 'Introuvable.' }); }
+  if (!req.file) return res.status(400).json({ error: 'Aucun fichier reçu.' });
+  if (!isExcelUpload(req.file)) { cleanupUploads(req); return res.status(400).json({ error: 'Format non pris en charge : importez un fichier Excel (.xlsx ou .xls). Utilisez le modèle fourni.' }); }
+  try {
+    const crypto = require('crypto');
+    const buf = fs.readFileSync(req.file.path);
+    const empreinte = crypto.createHash('sha256').update(buf).digest('hex');
+    const r = require('./importer').importConventions(buf, {
+      cabinetId: req.cabinetId, entrepriseId: e.id, userId: req.user.id,
+      sourceName: req.file.originalname, empreinte,
+    });
+    cleanupUploads(req);
+    // Recalcul de la période représentative (les nouveaux délais s'appliquent aux retards).
+    const p = latestPeriod(e.id); recomputePeriod(req.cabinetId, e.id, p.annee, p.trimestre);
+    audit(req.cabinetId, req.user.id, 'import_conventions', 'convention',
+      { file: req.file.originalname, batch: r.batchId, created: r.conventionsCreated, conflicts: r.conflicts, rejected: r.rejected }, req.ip);
+    res.json({ ok: true, ...r });
+  } catch (err) { cleanupUploads(req); res.status(400).json({ error: err.message }); }
+});
+
+// Ajout (ou remplacement EXPLICITE) du PDF de convention. PDF uniquement, jamais d'écrasement silencieux.
+router.post('/clients/:id/conventions/:convId/file', upload.single('file'), (req, res) => {
+  const e = ownedEntreprise(req, req.params.id);
+  if (!e) { cleanupUploads(req); return res.status(404).json({ error: 'Introuvable.' }); }
+  const c = db.prepare('SELECT * FROM convention WHERE id=? AND entreprise_id=? AND cabinet_id=?').get(req.params.convId, e.id, req.cabinetId);
+  if (!c) { cleanupUploads(req); return res.status(404).json({ error: 'Convention introuvable.' }); }
+  if (!req.file) return res.status(400).json({ error: 'Aucun fichier reçu.' });
+  if (!looksLikePdf(req.file.path, req.file.originalname)) { cleanupUploads(req); return res.status(400).json({ error: 'Le document doit être un fichier PDF.' }); }
+  const replacing = !!c.fichier;
+  const confirmReplace = req.query.replace === '1' || String((req.body || {}).replace) === '1';
+  if (replacing && !confirmReplace) { cleanupUploads(req); return res.status(409).json({ error: 'Un document est déjà rattaché à cette convention. Confirmez le remplacement.', hasFile: true }); }
+  // Nom de fichier généré côté serveur (anti path-traversal — aucune donnée du client dans le chemin).
+  const stored = 'conv_' + uid('f').slice(-12) + '.pdf';
+  try { fs.renameSync(req.file.path, path.join(UP_DIR, stored)); } catch (_) { fs.copyFileSync(req.file.path, path.join(UP_DIR, stored)); fs.unlink(req.file.path, () => {}); }
+  const previous = c.fichier;
+  db.prepare('UPDATE convention SET fichier=?, fichier_nom=? WHERE id=?').run(stored, req.file.originalname, c.id);
+  if (replacing && previous) try { fs.unlinkSync(path.join(UP_DIR, previous)); } catch (_) {}   // après enregistrement, pour ne pas perdre l'ancien sur erreur
+  audit(req.cabinetId, req.user.id, replacing ? 'convention_pdf_remplace' : 'convention_pdf_ajout', 'convention', { id: c.id, nom: req.file.originalname }, req.ip);
+  res.json({ ok: true, replaced: replacing });
+});
+
+// Modèle Excel de liste de conventions (2 feuilles : Instructions + Conventions). Aucune donnée réelle.
+router.get('/conventions/template.xlsx', (req, res) => {
+  res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+  res.setHeader('Content-Disposition', 'attachment; filename="modele_conventions_delaipay.xlsx"');
+  res.send(require('./importer').buildConventionsTemplate());
+});
+
 /* ============================================================ DELAIS (calc table) */
 // Incidence reportée : factures d'un trimestre ANTÉRIEUR, non soldées avant Q, dont des mois de
 // retard tombent dans Q → recalculées POUR Q. Additif : ne modifie pas les lignes stockées (CADOZAT intact).
@@ -1034,4 +1099,17 @@ function csvCell(v) {
   if (/[";\n\r]/.test(s)) s = '"' + s.replace(/"/g, '""') + '"';
   return s;
 }
+
+// Erreurs Multer (taille dépassée, champ inattendu…) → 400 lisible, jamais 500 ni stack exposée.
+router.use((err, req, res, next) => {
+  if (err instanceof multer.MulterError) {
+    cleanupUploads(req);
+    const msg = err.code === 'LIMIT_FILE_SIZE' ? 'Fichier trop volumineux (maximum 25 Mo).'
+      : err.code === 'LIMIT_FILE_COUNT' || err.code === 'LIMIT_UNEXPECTED_FILE' ? 'Trop de fichiers envoyés.'
+      : 'Téléversement invalide.';
+    return res.status(400).json({ error: msg });
+  }
+  next(err);
+});
+
 module.exports = router;

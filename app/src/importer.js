@@ -597,4 +597,320 @@ function confirmImport(buffer, opts) {
   return result;
 }
 
-module.exports = { importWorkbook, detectHeader, normHead, analyzeWorkbook, previewImport, confirmImport, FIELDS };
+/* ================================================================================
+ * IMPORT DES CONVENTIONS (liste fournisseurs) — crée les conventions SANS le PDF.
+ * Le fichier PDF de convention peut être ajouté ensuite sur la ligne créée.
+ *
+ * Règles métier (cf. cahier des charges) :
+ *  - Convention = OUI + délai valide (1..180)  → crée UNE convention active (PDF différé).
+ *  - Convention = NON                          → (met à jour le) fournisseur, AUCUNE convention,
+ *                                                délai applicable = 60 j, ligne « sans convention ».
+ *  - Convention vide / ambiguë                 → « à vérifier » (on ne devine pas).
+ *  - Délai d'une PLAGE (« 60 A 120 J »)        → on retient le PLUS GRAND (120).
+ *  - Délai > 180 j                             → « à vérifier » (jamais accepté d'office).
+ *  - Délai nul / négatif / illisible           → « rejetée ».
+ *  - Identification fournisseur : ICE → IF → RC → nom normalisé.
+ *  - Convention existante identique            → doublon exact (aucune création, aucun écrasement).
+ *  - Convention existante différente           → conflit (aucune création, aucun écrasement, PDF intact).
+ *  - Toutes les écritures sont dans UNE transaction : COMMIT si OK, ROLLBACK sinon.
+ * ================================================================================ */
+const CONV_OUI = new Set(['oui', 'o', 'yes', 'y', 'x', '1', 'true', 'vrai', 'signee', 'signe', 'disponible', 'ok', 'presente', 'present', 'conventionne', 'conventionnee']);
+const CONV_NON = new Set(['non', 'no', 'n', '0', 'false', 'faux', 'absente', 'absent', 'manquante', 'manquant', 'sans', 'areclamer', 'aucune']);
+const CONV_IGNORE_NAMES = new Set(['fournisseur', 'fournisseurs', 'intitule', 'total', 'totaux', 'totalgeneral', 'nom', 'raisonsociale', 'tiers', 'liste', 'designation', 'soustotal']);
+
+// Normalise un nom de fournisseur pour le rapprochement : minuscules, sans accents,
+// sans ponctuation, formes juridiques usuelles retirées (rapprochement prudent).
+function normName(s) {
+  let n = String(s == null ? '' : s).toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
+  n = n.replace(/[^a-z0-9]+/g, ' ').trim();
+  n = n.replace(/\b(sarlau|sarl|sasu|sas|snc|scs|sca|sa|gie|eurl|societe|ste|cie)\b/g, ' ').replace(/\s+/g, ' ').trim();
+  return n;
+}
+function normIf(v) { if (v == null) return null; const s = String(v).replace(/\s+/g, '').replace(/[^0-9A-Za-z]/g, ''); return s || null; }
+function normRc(v) { if (v == null) return null; const s = String(v).replace(/\D/g, ''); if (!s) return null; return s.replace(/^0+/, '') || s; }
+function normDateIso(v) { if (v == null || String(v).trim() === '') return null; const d = calc.parseDate(v); return d && d.getFullYear() >= 1990 && d.getFullYear() <= 2100 ? calc.iso(d) : null; }
+
+// Interprète un délai (nombre ou texte) → { ok, delai, raw, reason }. Retient le plus grand d'une plage.
+function parseDelai(v) {
+  const raw = v == null ? '' : (v instanceof Date ? calc.iso(v) : String(v).trim());
+  if (v == null || raw === '') return { ok: false, raw, reason: 'absent' };
+  if (typeof v === 'number') {
+    const d = Math.round(v);
+    if (!(d > 0)) return { ok: false, raw, reason: 'invalide', delai: d };
+    if (d > 180) return { ok: false, raw, reason: 'superieur_180', delai: d };
+    return { ok: true, raw, delai: d };
+  }
+  const nums = raw.match(/-?\d+(?:[.,]\d+)?/g);
+  if (!nums) return { ok: false, raw, reason: 'illisible' };
+  const vals = nums.map(x => Math.round(parseFloat(x.replace(',', '.')))).filter(x => !isNaN(x));
+  if (!vals.length) return { ok: false, raw, reason: 'illisible' };
+  if (vals.some(x => x < 0)) return { ok: false, raw, reason: 'invalide' };
+  const delai = Math.max(...vals);                       // plage → plus grand nombre
+  if (!(delai > 0)) return { ok: false, raw, reason: 'invalide', delai };
+  if (delai > 180) return { ok: false, raw, reason: 'superieur_180', delai };
+  return { ok: true, raw, delai };
+}
+function parseConv(v) {
+  const cv = normCell(v);
+  if (cv === '') return 'vide';
+  if (CONV_OUI.has(cv)) return 'oui';
+  if (CONV_NON.has(cv)) return 'non';
+  return 'ambigu';
+}
+
+// Repère la ligne d'en-tête et l'index des colonnes d'une LISTE de conventions.
+function mapConvHeader(cells) {
+  const H = (cells || []).map(normHead);
+  const find = (exacts, subs) => {
+    for (let i = 0; i < H.length; i++) if (H[i] && exacts.includes(H[i])) return i;
+    for (let i = 0; i < H.length; i++) { const h = H[i]; if (h && subs.some(k => h.includes(k))) return i; }
+    return undefined;
+  };
+  const idx = {};
+  idx.nom = find(['fournisseur', 'nom', 'tiers', 'raisonsociale', 'intitule'], ['fournisseur', 'raisonsociale', 'intitule', 'beneficiaire', 'denomination', 'nomdufournisseur']);
+  idx.ice = find(['ice'], ['icefournisseur', 'identifiantcommun', 'numeroice']);
+  idx.iff = find(['if', 'nif', 'numif', 'iffiscal'], ['iffiscal', 'identifiantfiscal', 'numeroif']);
+  idx.rc = find(['rc'], ['registrecommerce', 'registredecommerce', 'numrc', 'numerorc']);
+  for (let i = 0; i < H.length; i++) { const h = H[i]; if (h && (h === 'conv' || (h.includes('convention') && !h.includes('delai') && !h.includes('reference')))) { idx.conv = i; break; } }
+  idx.delai = find(['delai', 'delais', 'echeance', 'jours'], ['delaiconvenu', 'delaiconvention', 'delaiaccorde', 'delaicontractuel', 'delai', 'echeance', 'convenu']);
+  idx.debut = find(['debut', 'datedebut'], ['datedebut', 'datededebut', 'dateeffet', 'effet']);
+  idx.fin = find(['fin', 'datefin'], ['datefin', 'datedefin', 'expiration', 'findevalidite', 'validite']);
+  idx.ref = find(['reference', 'ref'], ['reference', 'referenceconvention', 'numconvention', 'ndeconvention']);
+  idx.comm = find(['commentaire', 'observation', 'remarque', 'note'], ['commentaire', 'observation', 'remarque']);
+  return idx;
+}
+// Feuilles à ignorer par leur NOM (texte explicatif, pas une liste à importer).
+const CONV_SHEET_SKIP = /instruction|notice|mode.?d.?emploi|lisez.?moi|read.?me|\baide\b|legende|l[eé]gende/i;
+function detectConvHeaderRow(grid) {
+  let best = { row: 0, score: -1, idx: {} };
+  const lim = Math.min(grid.length, 15);
+  for (let r = 0; r < lim; r++) {
+    const idx = mapConvHeader(grid[r]);
+    const hasId = idx.nom !== undefined || idx.ice !== undefined || idx.iff !== undefined;
+    if (!hasId) continue;
+    // Un vrai en-tête s'étale sur PLUSIEURS colonnes distinctes ; du texte d'instructions
+    // (tout en colonne A) mappe plusieurs concepts sur la même colonne → écarté.
+    const distinctCols = new Set(Object.values(idx).filter(v => v !== undefined));
+    if (distinctCols.size < 2) continue;
+    let score = distinctCols.size;
+    if (idx.conv !== undefined) score += 2;
+    if (idx.delai !== undefined) score += 1;
+    if (score > best.score) best = { row: r, score, idx };
+  }
+  return best;
+}
+
+// Identification fournisseur ICE → IF → RC → nom normalisé (+ enrichissement des identifiants manquants).
+function resolveConvFournisseur(cabinetId, entrepriseId, { nom, ice, iff, rc }) {
+  const iceN = normalizeIce(ice), ifN = normIf(iff), rcN = normRc(rc), nameN = normName(nom);
+  let row = null;
+  if (iceN) row = db.prepare('SELECT * FROM fournisseur WHERE entreprise_id=? AND ice=?').get(entrepriseId, iceN);
+  if (!row && ifN) row = db.prepare('SELECT * FROM fournisseur WHERE entreprise_id=? AND if_fiscal=?').get(entrepriseId, ifN);
+  if (!row && rcN) row = db.prepare('SELECT * FROM fournisseur WHERE entreprise_id=? AND rc=?').get(entrepriseId, rcN);
+  if (!row && nameN) {
+    for (const f of db.prepare('SELECT * FROM fournisseur WHERE entreprise_id=?').all(entrepriseId))
+      if (normName(f.raison_sociale) === nameN) { row = f; break; }
+  }
+  if (row) {
+    const sets = [], vals = [];
+    if (iceN && !row.ice) { sets.push('ice=?'); vals.push(iceN); }
+    if (ifN && !row.if_fiscal) { sets.push('if_fiscal=?'); vals.push(ifN); }
+    if (rcN && !row.rc) { sets.push('rc=?'); vals.push(rcN); }
+    if (nom && (!row.raison_sociale || row.raison_sociale.length < String(nom).length)) { sets.push('raison_sociale=?'); vals.push(String(nom)); }
+    if (sets.length) db.prepare(`UPDATE fournisseur SET ${sets.join(',')} WHERE id=?`).run(...vals, row.id);
+    return { id: row.id, created: false };
+  }
+  const id = uid('four');
+  db.prepare(`INSERT INTO fournisseur (id, cabinet_id, entreprise_id, raison_sociale, ice, if_fiscal, rc, delai_applicable) VALUES (?,?,?,?,?,?,?,60)`)
+    .run(id, cabinetId, entrepriseId, nom ? String(nom) : null, iceN, ifN, rcN);
+  return { id, created: true };
+}
+
+function importConventions(buffer, opts) {
+  const { cabinetId, entrepriseId, userId = null, sourceName = null, empreinte = null } = opts || {};
+  let wb;
+  try { wb = XLSX.read(buffer, { cellDates: true }); }
+  catch (_) { throw new Error("Fichier illisible : ce n'est pas un classeur Excel valide (.xlsx / .xls)."); }
+
+  // Détection : on retient les feuilles ressemblant à une liste de fournisseurs.
+  const sheets = [];
+  for (const name of wb.SheetNames) {
+    if (SHEET_SKIP.test(name) || CONV_SHEET_SKIP.test(name)) continue;   // grand-livre / feuille d'instructions
+    const grid = XLSX.utils.sheet_to_json(wb.Sheets[name], { header: 1, blankrows: false, raw: true });
+    if (!grid.length) continue;
+    const det = detectConvHeaderRow(grid);
+    if (det.score < 1) continue; // pas d'en-tête fournisseurs exploitable
+    sheets.push({ name, grid, headerRow: det.row, idx: det.idx });
+  }
+  if (!sheets.length)
+    throw new Error("Aucune liste de fournisseurs détectée. Utilisez le modèle : colonnes « Fournisseur », « ICE/IF », « Convention OUI/NON » et « Délai convenu ».");
+
+  const batchId = uid('imp');
+  const R = {
+    batchId, analyzed: 0, suppliersCreated: 0, suppliersFound: 0, conventionsCreated: 0,
+    duplicates: 0, conflicts: 0, withoutConvention: 0, ignored: 0, rejected: 0, toReview: 0,
+    lignes: [], preview: [], truncated: false,
+  };
+  const MAX_LINES = 1000;
+  const pushLine = (o) => { if (R.lignes.length < MAX_LINES) R.lignes.push(o); else R.truncated = true; };
+
+  const insConv = db.prepare(`INSERT INTO convention
+    (id, cabinet_id, entreprise_id, fournisseur_id, objet, delai_convenu, date_debut, date_fin,
+     statut, conforme, fichier, fichier_nom, reference, commentaire, import_lot_id, source_import)
+    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`);
+  const insLigne = db.prepare(`INSERT INTO import_ligne
+    (id, import_lot_id, cabinet_id, entreprise_id, numero_ligne, feuille, donnees_brutes_json, donnees_normalisees_json, statut, motif, champ, facture_id)
+    VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`);
+
+  db.exec('BEGIN');
+  try {
+    db.prepare(`INSERT INTO import_lot
+      (id, cabinet_id, entreprise_id, source_nom, source_type, statut, empreinte_fichier, utilisateur_id, confirmed_at)
+      VALUES (?,?,?,?,?,?,?,?,datetime('now'))`)
+      .run(batchId, cabinetId, entrepriseId, sourceName || 'conventions.xlsx', 'conventions_xlsx', 'confirme', empreinte, userId);
+
+    for (const { name, grid, headerRow, idx } of sheets) {
+      const cellAt = (row, key) => (idx[key] !== undefined ? row[idx[key]] : undefined);
+      const headerNorms = (grid[headerRow] || []).map(normCell).filter(Boolean);
+      for (let r = headerRow + 1; r < grid.length; r++) {
+        const row = grid[r] || [];
+        if (row.every(c => c === undefined || c === null || String(c).trim() === '')) continue; // ligne vide → non comptée
+        const excelLine = r + 1;
+        const brut = row.map(v => v instanceof Date ? calc.iso(v) : (v == null ? '' : String(v)));
+        const nomRaw = cellAt(row, 'nom');
+        const ice = cellAt(row, 'ice'), iff = cellAt(row, 'iff'), rc = cellAt(row, 'rc');
+        const convRaw = cellAt(row, 'conv'), delaiRaw = cellAt(row, 'delai');
+        const nomAff = (nomRaw != null && String(nomRaw).trim() !== '') ? String(nomRaw).trim()
+          : (normalizeIce(ice) || (iff != null ? String(iff).trim() : '') || '—');
+        const record = (statut, motif, champ) => {
+          const cat = { doublon: 'duplicates', conflit: 'conflicts', sans_convention: 'withoutConvention', a_verifier: 'toReview', rejetee: 'rejected', ignoree: 'ignored' }[statut];
+          if (cat) R[cat]++;
+          insLigne.run(uid('il'), batchId, cabinetId, entrepriseId, excelLine, name, JSON.stringify(brut), null, statut, motif || null, champ || null, null);
+          pushLine({ ligne: excelLine, fournisseur: nomAff, statut, motif: motif || '', delaiRecu: delaiRaw == null ? '' : String(delaiRaw), conventionRecu: convRaw == null ? '' : String(convRaw) });
+        };
+
+        // Lignes de total / répétition d'en-tête / sans identité → ignorées.
+        const nn = normCell(nomRaw);
+        const norms = row.map(normCell).filter(Boolean);
+        const headerRepeat = headerNorms.length && norms.length && norms.filter(n => headerNorms.includes(n)).length >= Math.max(2, Math.ceil(norms.length * 0.6));
+        const noIdentity = !(nomRaw != null && String(nomRaw).trim() !== '') && !normalizeIce(ice) && !(iff != null && String(iff).trim() !== '') && !normRc(rc);
+        if (CONV_IGNORE_NAMES.has(nn) || headerRepeat) { R.analyzed++; record('ignoree', headerRepeat ? "répétition de l'en-tête" : "ligne de total / titre"); continue; }
+        if (noIdentity) { R.analyzed++; record('ignoree', 'ligne sans fournisseur identifiable'); continue; }
+
+        R.analyzed++;
+        const conv = parseConv(convRaw);
+        const del = parseDelai(delaiRaw);
+        const debut = normDateIso(cellAt(row, 'debut')), fin = normDateIso(cellAt(row, 'fin'));
+        const reference = (() => { const v = cellAt(row, 'ref'); return v != null && String(v).trim() !== '' ? String(v).trim() : null; })();
+        const commentaire = (() => { const v = cellAt(row, 'comm'); return v != null && String(v).trim() !== '' ? String(v).trim() : null; })();
+
+        // Le fournisseur est réel : on le crée / met à jour dans tous les cas où l'identité est valable.
+        const four = resolveConvFournisseur(cabinetId, entrepriseId, { nom: nomRaw, ice, iff, rc });
+        if (four.created) R.suppliersCreated++; else R.suppliersFound++;
+
+        const existing = db.prepare(`SELECT * FROM convention WHERE entreprise_id=? AND fournisseur_id=? AND statut='valide' ORDER BY created_at DESC LIMIT 1`).get(entrepriseId, four.id);
+
+        // Convention = NON → aucune convention. Mais si une convention active existe déjà → conflit.
+        if (conv === 'non') {
+          if (existing) { record('conflit', 'le fichier indique « NON » alors qu\'une convention active existe déjà', 'convention'); continue; }
+          db.prepare('UPDATE fournisseur SET delai_applicable=60 WHERE id=?').run(four.id);
+          record('sans_convention', 'fournisseur sans convention (délai légal 60 j)', 'convention');
+          continue;
+        }
+        // Convention vide / ambiguë → on ne devine pas.
+        if (conv === 'vide' || conv === 'ambigu') {
+          record('a_verifier', conv === 'vide' ? 'colonne « Convention » vide — préciser OUI ou NON' : `valeur « Convention » non reconnue : « ${String(convRaw).trim()} »`, 'convention');
+          continue;
+        }
+        // Convention = OUI → un délai valide est requis.
+        if (!del.ok) {
+          if (del.reason === 'superieur_180') { record('a_verifier', `délai de ${del.delai} j supérieur au maximum standard de 180 j — à valider explicitement`, 'delai'); continue; }
+          if (del.reason === 'absent') { record('a_verifier', 'convention « OUI » mais délai convenu manquant', 'delai'); continue; }
+          record('rejetee', del.reason === 'invalide' ? 'délai nul, négatif ou invalide' : 'délai illisible', 'delai');
+          continue;
+        }
+        // Doublon exact vs conflit (jamais d'écrasement, jamais de suppression de PDF).
+        if (existing) {
+          const datesAbsent = !debut && !fin;
+          const sameDates = datesAbsent || (normDateIso(existing.date_debut) === debut && normDateIso(existing.date_fin) === fin);
+          if (existing.delai_convenu === del.delai && sameDates) { record('doublon', 'convention identique déjà enregistrée', 'convention'); continue; }
+          record('conflit', `convention existante différente (base : ${existing.delai_convenu} j${existing.date_debut ? ' du ' + existing.date_debut : ''} ; fichier : ${del.delai} j${debut ? ' du ' + debut : ''}) — à vérifier`, 'convention');
+          continue;
+        }
+        // Création de la convention (PDF différé → document manquant).
+        const convId = uid('conv');
+        insConv.run(convId, cabinetId, entrepriseId, four.id, 'Convention délais de paiement', del.delai, debut, fin,
+          'valide', del.delai <= 120 ? 1 : 0, null, null, reference, commentaire, batchId, 'import_xlsx');
+        db.prepare('UPDATE fournisseur SET delai_applicable=? WHERE id=?').run(del.delai, four.id);
+        R.conventionsCreated++;
+        insLigne.run(uid('il'), batchId, cabinetId, entrepriseId, excelLine, name, JSON.stringify(brut), JSON.stringify({ four: four.id, delai: del.delai, debut, fin }), 'creee', null, null, convId);
+        if (R.preview.length < 12) R.preview.push({ fournisseur: nomAff, delai: del.delai, debut, fin });
+      }
+    }
+
+    db.prepare(`UPDATE import_lot SET nb_lignes_total=?, nb_lignes_valides=?, nb_lignes_ignorees=?, nb_lignes_rejetees=?, nb_doublons=? WHERE id=?`)
+      .run(R.analyzed, R.conventionsCreated, R.ignored, R.rejected, R.duplicates, batchId);
+    db.exec('COMMIT');
+  } catch (e) {
+    db.exec('ROLLBACK');
+    throw new Error('Import annulé (aucune donnée enregistrée) : ' + e.message);
+  }
+  return R;
+}
+
+/* ------------------------------------------------------------------ modèle Excel conventions
+ * Classeur à deux feuilles : « Instructions » (mode d'emploi) + « Conventions » (à remplir).
+ * Exemples ENTIÈREMENT FICTIFS (aucune donnée client réelle). */
+const CONV_TEMPLATE_HEADERS = [
+  'Fournisseur *', 'ICE', 'IF', 'RC', 'Convention OUI/NON *',
+  'Délai convenu en jours', 'Date de début', 'Date de fin', 'Référence convention', 'Commentaire',
+];
+function buildConventionsTemplate() {
+  const instructions = [
+    ['DelaiPay — Modèle d’import des conventions fournisseurs'],
+    [''],
+    ['Comment remplir ce fichier :'],
+    ['• Une seule ligne par fournisseur.'],
+    ['• Les colonnes marquées d’une * sont obligatoires : « Fournisseur » et « Convention OUI/NON ».'],
+    ['• Renseignez au moins un identifiant fiable : ICE (de préférence), IF ou RC. Cela évite les doublons.'],
+    [''],
+    ['Colonne « Convention OUI/NON » :'],
+    ['• OUI  = une convention de délai a été signée avec ce fournisseur → une convention sera créée.'],
+    ['• NON  = aucune convention → le fournisseur est enregistré avec le délai légal de 60 jours, sans convention.'],
+    ['• Laissez vide seulement si vous ne savez pas : la ligne sera classée « à vérifier » (rien n’est deviné).'],
+    [''],
+    ['Colonne « Délai convenu en jours » (uniquement si Convention = OUI) :'],
+    ['• Indiquez le nombre de jours convenu : 60, 90, 120 ou 180.'],
+    ['• Le délai maximal standard pris en charge est de 180 jours.'],
+    ['• Pour une fourchette (ex. « 60 à 120 jours »), c’est le plus grand nombre qui est retenu (120).'],
+    ['• Un délai supérieur à 180 jours, nul ou illisible n’est pas importé : la ligne est signalée pour vérification.'],
+    [''],
+    ['Le document PDF de la convention :'],
+    ['• N’est PAS nécessaire pour l’import. Vous pourrez l’ajouter plus tard, ligne par ligne, dans DelaiPay.'],
+    ['• Tant qu’il n’est pas ajouté, la convention porte le statut « Document manquant ».'],
+    [''],
+    ['Formats de date acceptés (colonnes Début / Fin, facultatives) : JJ/MM/AAAA (ex. 31/12/2026) ou AAAA-MM-JJ.'],
+    [''],
+    ['Astuce : remplissez la feuille « Conventions » (onglet suivant), puis importez ce fichier dans DelaiPay,'],
+    ['rubrique « Conventions » → bouton « Importer une liste Excel ». Les exemples fournis sont fictifs : remplacez-les.'],
+  ];
+  const conventions = [
+    CONV_TEMPLATE_HEADERS,
+    ['FOURNISSEUR EXEMPLE ALPHA SARL', '000000000000001', '10000001', '1001', 'OUI', 90, '01/01/2026', '31/12/2026', 'CV-2026-001', 'Exemple fictif — à remplacer'],
+    ['SOCIETE DEMO BETA SA', '000000000000002', '10000002', '', 'OUI', 120, '', '', 'CV-2026-002', 'Exemple fictif — à remplacer'],
+    ['PRESTATAIRE TEST GAMMA', '000000000000003', '', '', 'NON', '', '', '', '', 'Exemple fictif sans convention — à remplacer'],
+  ];
+  const wsI = XLSX.utils.aoa_to_sheet(instructions);
+  wsI['!cols'] = [{ wch: 100 }];
+  const wsC = XLSX.utils.aoa_to_sheet(conventions);
+  wsC['!cols'] = [{ wch: 32 }, { wch: 18 }, { wch: 12 }, { wch: 10 }, { wch: 20 }, { wch: 22 }, { wch: 14 }, { wch: 14 }, { wch: 20 }, { wch: 32 }];
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, wsI, 'Instructions');
+  XLSX.utils.book_append_sheet(wb, wsC, 'Conventions');
+  return XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
+}
+
+module.exports = {
+  importWorkbook, detectHeader, normHead, analyzeWorkbook, previewImport, confirmImport,
+  importConventions, parseDelai, parseConv, normName, buildConventionsTemplate, CONV_TEMPLATE_HEADERS, FIELDS,
+};

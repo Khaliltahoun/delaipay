@@ -183,6 +183,14 @@ Vue consolidée du portefeuille, par période (trimestre) :
 - **Upload** de la convention (PDF / scan) + **téléchargement**.
 - **Ajout** (upsert du fournisseur si nécessaire) et **suppression** (repli au délai 60 j + recalcul).
 - Contrôle métier : **délai > 60 j → convention requise** (sinon anomalie `convention_absente`).
+- **Import Excel d'une liste de conventions** (`POST /clients/:id/conventions/import`) — crée fournisseurs + conventions **sans le PDF** (document différé) :
+  - **Modèle** téléchargeable à 2 feuilles (Instructions + Conventions, 10 colonnes, exemples fictifs) : `GET /conventions/template.xlsx`.
+  - **Identification** fournisseur : ICE → IF → RC → nom normalisé (accents/casse/ponctuation/formes juridiques).
+  - **Délais** : plage → plus grand (« 60 A 120 J » → 120) ; **> 180 j** → à vérifier ; nul/illisible → rejeté ; **NON** → aucune convention (60 j légal) ; vide/ambigu → à vérifier.
+  - **Dédoublonnage** : identique → doublon ; délai/dates différents → conflit (aucun écrasement, PDF préservé).
+  - **Transaction unique** (`BEGIN/COMMIT/ROLLBACK`) ; **lot d'import** tracé (`import_lot.source_type='conventions_xlsx'`, SHA-256) + `convention.import_lot_id`.
+  - **Rapport** (écran + CSV) : analysées / créées / fournisseurs créés-existants / doublons / conflits / sans convention / à vérifier / rejetées / ignorées, avec motif par ligne.
+- **Pièce PDF différée** (`POST /clients/:id/conventions/:convId/file`) : statut **« Document manquant »**, boutons **Ajouter / Voir / Remplacer** (PDF uniquement, signature `%PDF-`, remplacement confirmé, audit ajout/remplacement).
 
 ### 6.9 Déclaration DGI (`#decl`)
 - **Formulaire officiel** (articles 78-3 & 78-4) pré-rempli : identité déclarant, période, état des factures.
@@ -233,6 +241,7 @@ Vue consolidée du portefeuille, par période (trimestre) :
 **Conventions**
 - `GET /clients/:id/conventions` · `POST /clients/:id/conventions` (upload) · `DELETE /clients/:id/conventions/:convId`
 - `GET /conventions/:id/file`
+- `POST /clients/:id/conventions/import` (liste Excel → conventions, PDF différé) · `POST /clients/:id/conventions/:convId/file` (PDF, remplacement confirmé) · `GET /conventions/template.xlsx` (modèle 2 feuilles)
 
 **Délais / factures**
 - `GET /clients/:id/delais` · `POST /clients/:id/recompute` · `POST /clients/:id/factures` (saisie manuelle)

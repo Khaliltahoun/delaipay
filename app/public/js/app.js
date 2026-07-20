@@ -812,30 +812,112 @@ async function renderDocs() {
 }
 
 /* ============================== CONVENTIONS ============================== */
+// Libellés lisibles (jamais de jargon technique côté experte-comptable).
+const CONV_STATUT_LABEL = { creee: 'Convention créée', doublon: 'Doublon (déjà présente)', conflit: 'Conflit à vérifier', sans_convention: 'Sans convention', a_verifier: 'À vérifier', rejetee: 'Rejetée', ignoree: 'Ignorée' };
 async function renderConv() {
   if (!state.clientId) return noClient();
   const rows = await api(`/clients/${state.clientId}/conventions`);
   const S = { 'Trouvée': 'pill-ok', 'Bientôt expirée': 'pill-orange', 'Expirée': 'pill-red', 'Absente': 'pill-red' };
   $('#view').innerHTML = `
   ${clientPeriodBar(null, false)}
-  <div class="page-head headrow"><div><h1>Conventions &amp; OCR</h1><p>Registre des conventions de délai fournisseurs de ${esc(currentClient().name)}. Le délai de 120 j est appliqué automatiquement aux fournisseurs conventionnés.</p></div>
-    <button class="btn btn-primary" id="newConv"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 5v14M5 12h14"/></svg>Nouvelle convention</button></div>
-  ${rows.length ? `<div class="table-wrap"><table style="min-width:900px"><thead><tr><th>Fournisseur (ICE)</th><th>Objet</th><th class="num">Délai</th><th>Début</th><th>Fin</th><th>Statut</th><th>Document</th><th></th></tr></thead>
+  <div class="page-head headrow"><div><h1>Conventions fournisseurs</h1><p>Conventions de délai de paiement de ${esc(currentClient().name)}. Importez la liste depuis Excel, puis ajoutez les PDF signés au fil de l'eau.</p></div>
+    <div style="display:flex;gap:10px;flex-wrap:wrap">
+      <a class="btn btn-ghost" href="/api/conventions/template.xlsx" title="Fichier Excel prêt à remplir">Télécharger le modèle</a>
+      <button class="btn btn-ghost" id="impConv"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 16V4m0 0l-4 4m4-4l4 4M5 20h14"/></svg>Importer une liste Excel</button>
+      <input type="file" id="convXlsx" accept=".xlsx,.xls" class="hidden">
+      <button class="btn btn-primary" id="newConv"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 5v14M5 12h14"/></svg>Nouvelle convention</button></div></div>
+  ${rows.length ? `<div class="table-wrap"><table style="min-width:900px"><thead><tr><th>Fournisseur (ICE)</th><th class="num">Délai</th><th>Début</th><th>Fin</th><th>Statut</th><th>Document PDF</th><th></th></tr></thead>
     <tbody>${rows.map(c => `<tr><td><div class="fournisseur"><b>${esc(c.fournisseur || '—')}</b><small>${esc(c.four_ice || c.four_if || '')}</small></div></td>
-      <td class="dh">${esc(c.objet || '—')}</td><td class="num"><span class="badge b120">${c.delai} j</span></td>
+      <td class="num"><span class="badge b120">${c.delai} j</span></td>
       <td class="mono dh">${dateFr(c.date_debut)}</td><td class="mono dh">${c.date_fin ? dateFr(c.date_fin) : 'Indéterminée'}</td>
       <td><span class="pill ${S[c.statut] || 'pill-ok'}"><span class="dot"></span>${esc(c.statut)}</span></td>
-      <td>${c.fichier ? `<a href="/api/conventions/${c.fichier}/file" target="_blank">Ouvrir</a>` : '<span class="tag-no">—</span>'}</td>
+      <td>${c.fichier
+        ? `<a href="/api/conventions/${c.fichier}/file" target="_blank" rel="noopener">Voir le PDF</a> <button class="btn btn-ghost btn-sm" data-replacepdf="${c.id}">Remplacer</button>`
+        : `<span class="pill pill-orange"><span class="dot"></span>Document manquant</span> <button class="btn btn-ghost btn-sm" data-addpdf="${c.id}">Ajouter le PDF</button>`}</td>
       <td style="text-align:right"><button class="btn btn-ghost btn-sm" style="color:var(--r-red);border-color:rgba(210,69,47,.35)" data-delc="${c.id}" data-four="${esc(c.fournisseur || '')}">Supprimer</button></td></tr>`).join('')}</tbody></table></div>`
-    : emptyBox('Aucune convention', 'Ajoutez les conventions de délai (120 j) signées avec les fournisseurs.', null)}`;
+    : emptyBox('Aucune convention', 'Importez la liste des conventions depuis Excel (bouton ci-dessus) ou ajoutez-les une à une.', null)}`;
   wireClientBar(renderConv);
   $('#newConv').onclick = convModal;
+  $('#impConv').onclick = () => $('#convXlsx').click();
+  $('#convXlsx').onchange = async () => {
+    const f = $('#convXlsx').files[0]; if (!f) return;
+    const btn = $('#impConv'), old = btn.innerHTML;
+    btn.disabled = true; btn.innerHTML = 'Import en cours…';
+    const fd = new FormData(); fd.append('file', f);
+    try {
+      const r = await api(`/clients/${state.clientId}/conventions/import`, { method: 'POST', body: fd });
+      showConvImportReport(r); refreshAlertsBadge();
+    } catch (e) { toast(e.message, 'err', 'Import impossible'); }
+    finally { btn.disabled = false; btn.innerHTML = old; $('#convXlsx').value = ''; }
+  };
+  $$('#view [data-addpdf]').forEach(b => b.onclick = () => attachConvPdf(b, b.dataset.addpdf, false));
+  $$('#view [data-replacepdf]').forEach(b => b.onclick = () => {
+    if (confirm('Remplacer le document PDF déjà rattaché à cette convention ?\nL\'ancien document sera supprimé.')) attachConvPdf(b, b.dataset.replacepdf, true);
+  });
   $$('#view [data-delc]').forEach(b => b.onclick = () => {
     if (!confirm(`Supprimer la convention de « ${b.dataset.four} » ?\nLe délai applicable repassera à 60 j pour ce fournisseur (recalcul automatique des retards).`)) return;
     api(`/clients/${state.clientId}/conventions/${b.dataset.delc}`, { method: 'DELETE' })
       .then(() => { toast('Convention supprimée.', 'ok'); renderConv(); refreshAlertsBadge(); })
       .catch(e => toast(e.message, 'err'));
   });
+}
+
+// Ajout / remplacement d'un PDF (PDF uniquement), avec loader et bouton désactivé.
+function attachConvPdf(btn, convId, replace) {
+  const inp = document.createElement('input'); inp.type = 'file'; inp.accept = '.pdf,application/pdf';
+  inp.onchange = async () => {
+    if (!inp.files[0]) return;
+    const old = btn.innerHTML; btn.disabled = true; btn.innerHTML = 'Envoi…';
+    const fd = new FormData(); fd.append('file', inp.files[0]);
+    try {
+      await api(`/clients/${state.clientId}/conventions/${convId}/file${replace ? '?replace=1' : ''}`, { method: 'POST', body: fd });
+      toast(replace ? 'Document remplacé.' : 'Document PDF ajouté à la convention.', 'ok'); renderConv();
+    } catch (e) { toast(e.message, 'err', 'Ajout du document'); btn.disabled = false; btn.innerHTML = old; }
+  };
+  inp.click();
+}
+
+// Rapport d'import lisible : synthèse chiffrée + lignes à corriger + export CSV.
+function showConvImportReport(r) {
+  const col = { ok: 'var(--r-green)', warn: 'var(--r-orange)', bad: 'var(--r-red)' };
+  const tile = (n, lbl, cls) => `<div class="kpi" style="padding:12px 14px;min-width:130px"><div class="val" style="font-size:22px${cls && n ? ';color:' + col[cls] : ''}">${n}</div><div class="lbl" style="font-weight:600">${lbl}</div></div>`;
+  const problems = (r.lignes || []).filter(l => l.statut !== 'ignoree');
+  const rowsHtml = problems.length ? problems.map(l => `<tr>
+      <td class="mono">${l.ligne}</td><td>${esc(l.fournisseur || '—')}</td>
+      <td><span class="pill ${l.statut === 'rejetee' || l.statut === 'conflit' ? 'pill-red' : l.statut === 'a_verifier' ? 'pill-orange' : 'pill-ok'}">${esc(CONV_STATUT_LABEL[l.statut] || l.statut)}</span></td>
+      <td>${esc(l.motif || '')}</td><td class="mono dh">${esc(l.delaiRecu || '')}</td><td class="mono dh">${esc(l.conventionRecu || '')}</td></tr>`).join('')
+    : `<tr><td colspan="6" class="dh" style="text-align:center;padding:14px">Aucune ligne à corriger.</td></tr>`;
+  modal(`<div class="modal-h"><h3>Résultat de l'import des conventions</h3><button class="x" onclick="closeOverlay()">${XICO}</button></div>
+  <div class="modal-b">
+    <div class="stat-row" style="display:flex;flex-wrap:wrap;gap:10px;margin-bottom:6px">
+      ${tile(r.analyzed, 'Lignes analysées')}
+      ${tile(r.conventionsCreated, 'Conventions créées', 'ok')}
+      ${tile(r.suppliersCreated, 'Fournisseurs créés')}
+      ${tile(r.suppliersFound, 'Fournisseurs existants')}
+      ${tile(r.duplicates, 'Doublons')}
+      ${tile(r.conflicts, 'Conflits', r.conflicts ? 'warn' : '')}
+      ${tile(r.withoutConvention, 'Sans convention')}
+      ${tile(r.toReview, 'À vérifier', r.toReview ? 'warn' : '')}
+      ${tile(r.rejected, 'Rejetées', r.rejected ? 'bad' : '')}
+      ${tile(r.ignored, 'Ignorées')}
+    </div>
+    ${r.conventionsCreated ? `<p class="dh" style="margin:8px 0">✔ ${r.conventionsCreated} convention(s) créée(s). Ajoutez les PDF signés depuis la liste (statut « Document manquant »).</p>` : ''}
+    ${r.truncated ? `<p class="dh" style="margin:8px 0;color:var(--r-orange)">Liste des lignes tronquée à 1000 — utilisez l'export CSV pour la liste complète.</p>` : ''}
+    <div class="table-wrap" style="max-height:320px;overflow:auto"><table style="min-width:720px"><thead><tr><th>Ligne</th><th>Fournisseur</th><th>Statut</th><th>Motif</th><th>Délai reçu</th><th>Convention reçue</th></tr></thead><tbody>${rowsHtml}</tbody></table></div>
+  </div>
+  <div class="modal-f"><button class="btn btn-ghost" id="convCsv">Télécharger le rapport (CSV)</button><button class="btn btn-primary" onclick="closeOverlay()">Fermer</button></div>`);
+  $('#convCsv').onclick = () => downloadConvReportCsv(r);
+  // Fermer le modal recharge la liste (les nouvelles conventions apparaissent).
+  const ov = $('#overlay'); if (ov) { const closeBtns = ov.querySelectorAll('.x, .btn-primary, .scrim'); closeBtns.forEach(b => b.addEventListener('click', () => renderConv(), { once: true })); }
+}
+function downloadConvReportCsv(r) {
+  const cell = v => { let s = String(v == null ? '' : v); if (/^[=+\-@]/.test(s)) s = "'" + s; return '"' + s.replace(/"/g, '""') + '"'; };
+  const head = ['Ligne Excel', 'Fournisseur', 'Statut', 'Motif', 'Délai reçu', 'Convention reçue'];
+  const lines = [head.map(cell).join(';')];
+  for (const l of (r.lignes || [])) lines.push([l.ligne, l.fournisseur, CONV_STATUT_LABEL[l.statut] || l.statut, l.motif, l.delaiRecu, l.conventionRecu].map(cell).join(';'));
+  const blob = new Blob(['﻿' + lines.join('\r\n')], { type: 'text/csv;charset=utf-8' });
+  const a = document.createElement('a'); a.href = URL.createObjectURL(blob);
+  a.download = 'rapport_import_conventions.csv'; a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 2000);
 }
 async function convModal() {
   const fours = await api(`/clients/${state.clientId}/fournisseurs`);

@@ -167,6 +167,12 @@ for (const stmt of [
   "ALTER TABLE anomalie ADD COLUMN annee INTEGER",
   "ALTER TABLE anomalie ADD COLUMN trimestre INTEGER",
   "ALTER TABLE anomalie ADD COLUMN import_lot_id TEXT",
+  // Traçabilité de l'import Excel des CONVENTIONS (liste fournisseurs) — colonnes additives.
+  "ALTER TABLE convention ADD COLUMN import_lot_id TEXT",
+  "ALTER TABLE convention ADD COLUMN reference TEXT",
+  "ALTER TABLE convention ADD COLUMN commentaire TEXT",
+  "ALTER TABLE convention ADD COLUMN source_import TEXT",
+  "ALTER TABLE import_lot ADD COLUMN source_type TEXT",   // ex. 'conventions_xlsx' vs import de factures
 ]) { try { db.exec(stmt); } catch (_) {} }
 
 db.exec(`
@@ -180,6 +186,7 @@ CREATE INDEX IF NOT EXISTS ix_fac_origine   ON facture(entreprise_id, annee_orig
 CREATE INDEX IF NOT EXISTS ix_doc_ent_per   ON document(entreprise_id, annee, trimestre);
 CREATE INDEX IF NOT EXISTS ix_ano_ent_per   ON anomalie(entreprise_id, annee, trimestre);
 CREATE INDEX IF NOT EXISTS ix_mapping_cab   ON modele_mapping(cabinet_id, type_fichier);
+CREATE INDEX IF NOT EXISTS ix_conv_lot      ON convention(import_lot_id);
 `);
 
 /* ------------------------------------------------------------- taux BAM provider */

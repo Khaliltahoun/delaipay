@@ -5,6 +5,14 @@ Version candidate à la validation métier (Mme Zahra) et au déploiement de pro
 
 ---
 
+## 🆕 Nouveau (cycle « conventions »)
+
+- **Import Excel des conventions fournisseurs** : dans le menu Conventions, un bouton **Télécharger le modèle** (classeur à 2 feuilles, Instructions + Conventions) et un bouton **Importer une liste Excel**. L'import crée fournisseurs et conventions en une passe, **sans exiger le PDF** ; le document signé s'ajoute plus tard (statut **« Document manquant »** → **Ajouter le PDF**).
+- **Règles métier robustes** : fournisseur identifié par **ICE → IF → RC → nom** ; délai d'une fourchette = **plus grand** (« 60 A 120 J » = 120) ; délai **> 180 j** à vérifier ; délai invalide rejeté ; **Convention = NON** → aucune convention (délai légal 60 j).
+- **Dédoublonnage & conflits sans écrasement** : convention identique = doublon ; délai/dates différents = **conflit à vérifier** ; le PDF déjà rattaché n'est jamais remplacé sans confirmation.
+- **Rapport d'import lisible** (à l'écran + **export CSV**) : conventions créées, fournisseurs créés/existants, doublons, conflits, sans convention, à vérifier, rejetées, ignorées, avec le motif ligne par ligne.
+- **Import transactionnel** : tout ou rien (aucune convention partielle en cas d'erreur) ; chaque import est tracé (lot + empreinte SHA-256) et chaque convention reliée à son lot.
+
 ## ✨ Nouvelles fonctionnalités (cycle « périodes & import »)
 
 - **Contexte de travail global** : cabinet + entreprise + **année + trimestre**, sélectionnable dans le bandeau, mémorisé et validé côté serveur. Bannière de contexte permanente + badge de statut de la période.
