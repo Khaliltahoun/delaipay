@@ -623,7 +623,8 @@ router.get('/clients/:id/delais', (req, res) => {
   const rows = db.prepare(`SELECT f.*, fo.raison_sociale four_nom, fo.ice four_ice, fo.if_fiscal four_if,
       fo.operateur_reseau, fo.statut_classification, fo.hors_tableau_declaratif, fo.categorie_fournisseur, fo.delai_applicable fo_delai,
       (SELECT COUNT(*) FROM convention c WHERE c.fournisseur_id=f.fournisseur_id AND c.statut='valide') has_conv,
-      (SELECT delai_convenu FROM convention c WHERE c.fournisseur_id=f.fournisseur_id AND c.statut='valide' ORDER BY created_at DESC LIMIT 1) conv_delai
+      (SELECT delai_convenu FROM convention c WHERE c.fournisseur_id=f.fournisseur_id AND c.statut='valide' ORDER BY created_at DESC LIMIT 1) conv_delai,
+      (SELECT a.id FROM anomalie a WHERE a.type='doublon_potentiel' AND a.entite='facture' AND a.entite_id=f.id AND a.statut='ouverte' LIMIT 1) ano_doublon_id
       FROM facture f LEFT JOIN fournisseur fo ON fo.id=f.fournisseur_id
       WHERE f.entreprise_id=? AND f.annee=? AND f.trimestre=? ORDER BY f.montant_amende DESC, f.retard_jours DESC`)
     .all(e.id, p.annee, p.trimestre);
@@ -643,7 +644,10 @@ router.get('/clients/:id/delais', (req, res) => {
       operateur_reseau: rd.sourceRegle === 'operateur_reseau', categorie: f.categorie_fournisseur || 'standard', hors_tableau: rd.horsTableauDeclaratif, source_regle: rd.sourceRegle,
       retard, n_mois: f.n_mois, a_declarer: !!f.a_declarer, has_conv: !!f.has_conv,
       taux_bam: f.taux_bam, taux_total: f.taux_total, amende: f.montant_amende, risk: f.couleur_risque,
+      // Doublon potentiel : trace historique + état de revue courant (non destructif).
       doublon_potentiel: !!f.doublon_potentiel, motif_doublon: f.motif_doublon || null,
+      statut_doublon: f.statut_doublon || 'aucun', date_revue_doublon: f.date_revue_doublon || null,
+      utilisateur_revue_doublon: f.utilisateur_revue_doublon || null, anomalie_doublon_active: !!f.ano_doublon_id,
       incidence: false,
     };
   });
@@ -655,6 +659,10 @@ router.get('/clients/:id/delais', (req, res) => {
     arrete_au: c.arreteAu, etat_paiement: c.etatPaiement,
     retard: c.retardJours, n_mois: c.nMois, a_declarer: true, has_conv: !!f.has_conv,
     taux_bam: c.tauxBam, taux_total: c.tauxTotal, amende: c.montantAmende, risk: c.couleurRisque,
+    doublon_potentiel: !!f.doublon_potentiel, motif_doublon: f.motif_doublon || null,
+    statut_doublon: f.statut_doublon || 'aucun', date_revue_doublon: f.date_revue_doublon || null,
+    utilisateur_revue_doublon: f.utilisateur_revue_doublon || null,
+    anomalie_doublon_active: !!(f.doublon_potentiel && (f.statut_doublon || 'aucun') === 'potentiel'),
     incidence: true, periode_origine: `T${f.trimestre} ${f.annee}`,
   }));
   const all = list.concat(inc);
@@ -677,6 +685,46 @@ router.post('/clients/:id/recompute', (req, res) => {
   recomputePeriod(req.cabinetId, e.id, p.annee, p.trimestre);
   audit(req.cabinetId, req.user.id, 'recalcul', 'periode', { entreprise: e.id, annee: p.annee, trimestre: p.trimestre }, req.ip);
   res.json({ ok: true });
+});
+
+/* ============================================================ REVUE DES DOUBLONS (non destructive)
+ * L'utilisateur tranche une détection de doublon potentiel : « confirme » (vrai doublon gardé) ou
+ * « faux_positif » (à ignorer). AUCUNE facture n'est jamais supprimée ni fusionnée : seule change
+ * l'étiquette de revue. « potentiel » permet d'annuler une revue et de réactiver l'alerte.
+ */
+const DOUBLON_STATUTS_REVUE = new Set(['confirme', 'faux_positif', 'potentiel']);
+router.patch('/clients/:id/factures/:factureId/doublon', (req, res) => {
+  const e = ownedEntreprise(req, req.params.id);           // isolation tenant + appartenance client
+  if (!e) return res.status(404).json({ error: 'Introuvable.' });
+  const statut = String((req.body && req.body.statut) || '').trim();
+  if (!DOUBLON_STATUTS_REVUE.has(statut))
+    return res.status(400).json({ error: 'Statut de revue invalide (attendu : confirme, faux_positif ou potentiel).' });
+  const f = db.prepare('SELECT * FROM facture WHERE id=? AND entreprise_id=?').get(req.params.factureId, e.id);
+  if (!f) return res.status(404).json({ error: 'Facture introuvable.' });
+  const avant = { statut_doublon: f.statut_doublon || 'aucun', doublon_potentiel: !!f.doublon_potentiel,
+    date_revue_doublon: f.date_revue_doublon || null, utilisateur_revue_doublon: f.utilisateur_revue_doublon || null };
+  // Mise à jour NON destructive : la facture reste en base et dans les calculs ; doublon_potentiel (trace) est conservé.
+  db.prepare(`UPDATE facture SET statut_doublon=?, date_revue_doublon=datetime('now'), utilisateur_revue_doublon=? WHERE id=?`)
+    .run(statut, req.user.id, f.id);
+  // Anomalie associée : cohérente avec la décision de revue (jamais supprimée, l'historique reste).
+  const ano = db.prepare(`SELECT id FROM anomalie WHERE type='doublon_potentiel' AND entite='facture' AND entite_id=?
+     ORDER BY (statut='ouverte') DESC, created_at DESC LIMIT 1`).get(f.id);
+  if (ano) {
+    if (statut === 'potentiel') {
+      // Réouverture : on réactive l'alerte (annulation d'une revue précédente).
+      db.prepare(`UPDATE anomalie SET statut='ouverte', resolue_le=NULL, motif_resolution=NULL WHERE id=?`).run(ano.id);
+    } else {
+      const motifRes = statut === 'faux_positif' ? 'faux_positif' : 'doublon_confirme';
+      db.prepare(`UPDATE anomalie SET statut='resolue', resolue_le=datetime('now'), motif_resolution=? WHERE id=?`).run(motifRes, ano.id);
+    }
+  }
+  const upd = db.prepare('SELECT statut_doublon, date_revue_doublon, utilisateur_revue_doublon, doublon_potentiel FROM facture WHERE id=?').get(f.id);
+  const apres = { statut_doublon: upd.statut_doublon, doublon_potentiel: !!upd.doublon_potentiel,
+    date_revue_doublon: upd.date_revue_doublon, utilisateur_revue_doublon: upd.utilisateur_revue_doublon };
+  audit(req.cabinetId, req.user.id, 'revue_doublon', 'facture', { facture: f.id, entreprise: e.id, avant, apres }, req.ip);
+  res.json({ ok: true, id: f.id, statut_doublon: upd.statut_doublon, doublon_potentiel: !!upd.doublon_potentiel,
+    date_revue_doublon: upd.date_revue_doublon, utilisateur_revue_doublon: upd.utilisateur_revue_doublon,
+    anomalie_doublon_active: statut === 'potentiel' && !!ano });
 });
 
 /* ============================================================ FACTURE manuelle */

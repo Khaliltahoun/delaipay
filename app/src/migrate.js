@@ -85,6 +85,13 @@ try {
            WHERE annee IS NULL AND entite='facture'
              AND EXISTS (SELECT 1 FROM facture f WHERE f.id=anomalie.entite_id)`);
 
+  /* 5) Revue des doublons : les factures déjà marquées « doublon potentiel » (avant l'ajout de
+   *    statut_doublon) passent à l'état courant 'potentiel'. Idempotent : ne rouvre jamais une
+   *    revue déjà tranchée ('confirme' / 'faux_positif'). Aucune facture n'est supprimée ni fusionnée. */
+  report.doublons_potentiels = db.prepare(
+    `UPDATE facture SET statut_doublon='potentiel'
+      WHERE doublon_potentiel=1 AND (statut_doublon IS NULL OR statut_doublon='aucun')`).run().changes;
+
   db.exec('COMMIT');
 } catch (e) {
   db.exec('ROLLBACK');
@@ -106,6 +113,7 @@ console.log('=== RAPPORT DE MIGRATION ===');
 console.log('AVANT :', JSON.stringify(report.avant));
 console.log('APRÈS :', JSON.stringify(report.apres));
 console.log(`Créés → lots: ${report.lots} · périodes: ${report.periodes} · origines factures: ${report.factures_origine}`);
+console.log(`Revue doublons → factures 'potentiel' backfillées: ${report.doublons_potentiels || 0}`);
 if (report.incertains.length) { console.log('\n⚠️ À vérifier :'); report.incertains.forEach(x => console.log('  - ' + x)); }
 else console.log('\n✓ Aucune affectation incertaine.');
 // contrôle d'intégrité : le nombre de factures ne doit PAS changer

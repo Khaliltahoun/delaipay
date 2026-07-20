@@ -618,3 +618,276 @@ test('reseau/HTTP #18-20 : opérateur exclu du tableau déclaratif, visible en i
   assert.ok(opRow, 'opérateur VISIBLE en suivi interne');
   assert.equal(opRow.delai_applicable, 30); assert.equal(opRow.operateur_reseau, true); assert.equal(opRow.hors_tableau, true);
 });
+
+/* ==================================================================================
+ * REVUE NON DESTRUCTIVE DES DOUBLONS POTENTIELS
+ *  - harmonisation des 3 imports (fonction centrale markPotentialDuplicate)
+ *  - migration idempotente des statuts de revue
+ *  - endpoint PATCH de revue (audit, anomalies)
+ *  - exposition API + non-régression métier (CADOZAT, réseau, conventions, dates)
+ * ================================================================================== */
+const { backfillStatutDoublon } = require('../src/db');
+
+// Classeur de factures minimal (en-têtes reconnues par l'auto-mapping).
+function facBuf(rows, sheet = 'S') {
+  const H = ['N°', 'Date facture', 'Fournisseur', 'ICE', 'TTC', 'Date paiement'];
+  const ws = XLSX.utils.aoa_to_sheet([H, ...rows]);
+  const wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, ws, sheet);
+  return XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
+}
+const FAC_MAP = { numero: 0, date_facture: 1, four_nom: 2, four_ice: 3, ttc: 4, date_paiement: 5 };
+// Relevé de déductions TVA (SIMPL) au format XML officiel.
+function releveXml(rds) {
+  const items = rds.map(r => `<rd><num>${r.num || ''}</num><des>${r.des || ''}</des>` +
+    `<mht>${r.mht || ''}</mht><tva>${r.tva || ''}</tva><ttc>${r.ttc || ''}</ttc>` +
+    `<dfac>${r.dfac || ''}</dfac><dpai>${r.dpai || ''}</dpai>` +
+    `<refF><nom>${r.nom || ''}</nom><ice>${r.ice || ''}</ice><if>${r.iff || ''}</if></refF></rd>`).join('');
+  return Buffer.from(`<?xml version="1.0" encoding="UTF-8"?><DeclarationReleveDeduction><releveDeductions>${items}</releveDeductions></DeclarationReleveDeduction>`, 'utf8');
+}
+function anomaliesDoublon(ent) { return db.prepare(`SELECT * FROM anomalie WHERE entreprise_id=? AND type='doublon_potentiel'`).all(ent); }
+function facturesOf(ent) { return db.prepare('SELECT COUNT(*) n FROM facture WHERE entreprise_id=?').get(ent).n; }
+
+/* -------------------- A. HARMONISATION DES 3 IMPORTS -------------------- */
+test('doublon/A1 importExcel : ligne conservée + doublon marqué + anomalie basse', () => {
+  const { cab, ent } = seedCab();
+  const buf = facBuf([['F1', '2026-01-05', 'FRS A', '000000000000801', 1000, '2026-02-01']]);
+  const r1 = importer.importWorkbook(buf, { cabinetId: cab, entrepriseId: ent, sourceName: 'a.xlsx', periode: { annee: 2026, trimestre: 1 } });
+  assert.equal(r1.imported, 1); assert.equal(r1.duplicates, 0);
+  const r2 = importer.importWorkbook(buf, { cabinetId: cab, entrepriseId: ent, sourceName: 'a2.xlsx', periode: { annee: 2026, trimestre: 1 } });
+  assert.equal(r2.imported, 1, 'ligne conservée (non supprimée)');
+  assert.equal(r2.duplicates, 1, 'doublon signalé');
+  assert.equal(facturesOf(ent), 2, 'les 2 lignes coexistent');
+  const dup = db.prepare('SELECT * FROM facture WHERE entreprise_id=? AND doublon_potentiel=1').get(ent);
+  assert.ok(dup && dup.motif_doublon, 'motif présent'); assert.equal(dup.statut_doublon, 'potentiel');
+  const anos = anomaliesDoublon(ent);
+  assert.equal(anos.length, 1); assert.equal(anos[0].gravite, 'basse'); assert.equal(anos[0].statut, 'ouverte');
+});
+test('doublon/A2 importReleveXml : ligne conservée + doublon marqué + anomalie basse', () => {
+  const { cab, ent } = seedCab();
+  const xml = releveXml([{ num: 'X1', nom: 'FRS X', ice: '000000000000802', ttc: 2000, dfac: '2026-01-06', dpai: '2026-02-02' }]);
+  const r1 = importer.importWorkbook(xml, { cabinetId: cab, entrepriseId: ent, sourceName: 'r.xml', periode: { annee: 2026, trimestre: 1 } });
+  assert.equal(r1.imported, 1); assert.equal(r1.duplicates, 0);
+  const r2 = importer.importWorkbook(xml, { cabinetId: cab, entrepriseId: ent, sourceName: 'r2.xml', periode: { annee: 2026, trimestre: 1 } });
+  assert.equal(r2.imported, 1, 'ligne conservée'); assert.equal(r2.duplicates, 1, 'doublon signalé');
+  assert.equal(facturesOf(ent), 2);
+  const dup = db.prepare('SELECT * FROM facture WHERE entreprise_id=? AND doublon_potentiel=1').get(ent);
+  assert.equal(dup.statut_doublon, 'potentiel'); assert.ok(dup.motif_doublon);
+  const anos = anomaliesDoublon(ent);
+  assert.equal(anos.length, 1); assert.equal(anos[0].gravite, 'basse'); assert.equal(anos[0].statut, 'ouverte');
+});
+test('doublon/A3 confirmImport : ligne conservée + doublon marqué + anomalie basse', () => {
+  const { cab, ent } = seedCab();
+  const buf = facBuf([['C1', '2026-01-07', 'FRS C', '000000000000803', 3000, '2026-02-03']]);
+  const opts = { sheetName: 'S', headerRow: 0, mapping: FAC_MAP, cabinetId: cab, entrepriseId: ent, annee: 2026, trimestre: 1, sourceName: 'c.xlsx', userId: 'u' };
+  importer.confirmImport(buf, opts);
+  const r2 = importer.confirmImport(buf, { ...opts, sourceName: 'c2.xlsx' });
+  assert.equal(r2.imported, 1, 'ligne conservée'); assert.equal(r2.duplicates, 1, 'doublon signalé');
+  assert.equal(facturesOf(ent), 2);
+  const dup = db.prepare('SELECT * FROM facture WHERE entreprise_id=? AND doublon_potentiel=1').get(ent);
+  assert.equal(dup.statut_doublon, 'potentiel'); assert.ok(dup.motif_doublon);
+  const anos = anomaliesDoublon(ent);
+  assert.equal(anos.length, 1); assert.equal(anos[0].gravite, 'basse'); assert.equal(anos[0].statut, 'ouverte');
+});
+test('doublon/A4 anomalie idempotente : réexécution du marquage ne double pas l\'anomalie', () => {
+  const { cab, ent } = seedCab();
+  const fid = uid('fac');
+  db.prepare('INSERT INTO facture (id,cabinet_id,entreprise_id,numero,ttc,annee,trimestre) VALUES (?,?,?,?,?,?,?)').run(fid, cab, ent, 'D1', 500, 2026, 1);
+  importer.markPotentialDuplicate({ factureId: fid, cabinetId: cab, entrepriseId: ent, annee: 2026, trimestre: 1 });
+  importer.markPotentialDuplicate({ factureId: fid, cabinetId: cab, entrepriseId: ent, annee: 2026, trimestre: 1 });
+  importer.markPotentialDuplicate({ factureId: fid, cabinetId: cab, entrepriseId: ent, annee: 2026, trimestre: 1 });
+  assert.equal(anomaliesDoublon(ent).length, 1, 'une seule anomalie malgré 3 exécutions');
+});
+test('doublon/A5 les 3 imports produisent un résultat strictement identique', () => {
+  const norm = anos => anos.map(a => ({ type: a.type, gravite: a.gravite, statut: a.statut })); // effet DB comparable
+  function effet(runImport) {
+    const { cab, ent } = seedCab(); runImport(cab, ent);
+    const f = db.prepare('SELECT doublon_potentiel, statut_doublon, (motif_doublon IS NOT NULL) has_motif FROM facture WHERE entreprise_id=? AND doublon_potentiel=1').get(ent);
+    return { f, anos: norm(anomaliesDoublon(ent)) };
+  }
+  const excel = effet((cab, ent) => { const b = facBuf([['E', '2026-01-05', 'FE', '000000000000811', 1000, '2026-02-01']]); const o = { cabinetId: cab, entrepriseId: ent, sourceName: 's', periode: { annee: 2026, trimestre: 1 } }; importer.importWorkbook(b, o); importer.importWorkbook(b, o); });
+  const xml = effet((cab, ent) => { const x = releveXml([{ num: 'E', nom: 'FE', ice: '000000000000811', ttc: 1000, dfac: '2026-01-05', dpai: '2026-02-01' }]); const o = { cabinetId: cab, entrepriseId: ent, sourceName: 's', periode: { annee: 2026, trimestre: 1 } }; importer.importWorkbook(x, o); importer.importWorkbook(x, o); });
+  const conf = effet((cab, ent) => { const b = facBuf([['E', '2026-01-05', 'FE', '000000000000811', 1000, '2026-02-01']]); const o = { sheetName: 'S', headerRow: 0, mapping: FAC_MAP, cabinetId: cab, entrepriseId: ent, annee: 2026, trimestre: 1, sourceName: 's', userId: 'u' }; importer.confirmImport(b, o); importer.confirmImport(b, o); });
+  assert.deepEqual(excel, xml, 'Excel ≡ XML'); assert.deepEqual(excel, conf, 'Excel ≡ confirmImport');
+  assert.deepEqual(excel.f, { doublon_potentiel: 1, statut_doublon: 'potentiel', has_motif: 1 });
+  assert.deepEqual(excel.anos, [{ type: 'doublon_potentiel', gravite: 'basse', statut: 'ouverte' }]);
+});
+
+/* -------------------- B. MIGRATION ET STATUTS -------------------- */
+test('doublon/B6 migration : colonnes présentes', () => {
+  const cols = db.prepare('PRAGMA table_info(facture)').all().map(c => c.name);
+  for (const c of ['statut_doublon', 'date_revue_doublon', 'utilisateur_revue_doublon']) assert.ok(cols.includes(c), `colonne ${c}`);
+  const anoCols = db.prepare('PRAGMA table_info(anomalie)').all().map(c => c.name);
+  assert.ok(anoCols.includes('resolue_le') && anoCols.includes('motif_resolution'));
+});
+test('doublon/B7-B8 migration rejouée sans erreur + ancien doublon → potentiel', () => {
+  const { cab, ent } = seedCab();
+  const fid = uid('fac');
+  db.prepare("INSERT INTO facture (id,cabinet_id,entreprise_id,numero,ttc,annee,trimestre,doublon_potentiel,statut_doublon) VALUES (?,?,?,?,?,?,?,1,'aucun')").run(fid, cab, ent, 'OLD', 100, 2026, 1);
+  const n1 = backfillStatutDoublon();
+  assert.ok(n1 >= 1, 'au moins la facture héritée mise à jour');
+  assert.equal(db.prepare('SELECT statut_doublon FROM facture WHERE id=?').get(fid).statut_doublon, 'potentiel');
+  const n2 = backfillStatutDoublon();
+  assert.equal(n2, 0, 'rejouée : aucun changement (idempotente)');
+});
+test('doublon/B9 facture ordinaire reste statut aucun', () => {
+  const { cab, ent } = seedCab();
+  const fid = uid('fac');
+  db.prepare('INSERT INTO facture (id,cabinet_id,entreprise_id,numero,ttc,annee,trimestre) VALUES (?,?,?,?,?,?,?)').run(fid, cab, ent, 'ORD', 100, 2026, 1);
+  backfillStatutDoublon();
+  assert.equal(db.prepare('SELECT statut_doublon FROM facture WHERE id=?').get(fid).statut_doublon, 'aucun');
+});
+test('doublon/B10-B12 aucune revue (potentiel/confirme/faux_positif) ne supprime la facture', async () => {
+  const t = newTenant(); const fid = seedDoublonFac(t);
+  for (const statut of ['confirme', 'faux_positif', 'potentiel']) {
+    const r = await patchJson(`/api/clients/${t.ent}/factures/${fid}/doublon`, cookieOf(t.u), { statut });
+    assert.equal(r.status, 200, `statut ${statut} accepté`);
+    assert.equal(db.prepare('SELECT COUNT(*) n FROM facture WHERE id=?').get(fid).n, 1, `facture conservée après ${statut}`);
+    assert.equal(db.prepare('SELECT statut_doublon FROM facture WHERE id=?').get(fid).statut_doublon, statut);
+  }
+});
+
+/* -------------------- C. ENDPOINT DE REVUE -------------------- */
+async function patchJson(pathUrl, cookie, body) {
+  const res = await fetch(baseUrl() + pathUrl, { method: 'PATCH', headers: { ...(cookie ? { Cookie: cookie } : {}), 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+  let b = null; try { b = await res.json(); } catch (_) {}
+  return { status: res.status, body: b };
+}
+// Facture marquée doublon potentiel (avec anomalie ouverte) dans un tenant.
+function seedDoublonFac(t, numero = 'DUP-1') {
+  const fid = uid('fac');
+  db.prepare("INSERT INTO facture (id,cabinet_id,entreprise_id,numero,ttc,annee,trimestre) VALUES (?,?,?,?,?,?,?)").run(fid, t.cab, t.ent, numero, 1000, 2026, 1);
+  importer.markPotentialDuplicate({ factureId: fid, cabinetId: t.cab, entrepriseId: t.ent, annee: 2026, trimestre: 1, ref: numero });
+  return fid;
+}
+test('doublon/C13 PATCH potentiel → confirme', async () => {
+  const t = newTenant(); const fid = seedDoublonFac(t);
+  const r = await patchJson(`/api/clients/${t.ent}/factures/${fid}/doublon`, cookieOf(t.u), { statut: 'confirme' });
+  assert.equal(r.status, 200); assert.equal(r.body.statut_doublon, 'confirme');
+  assert.equal(db.prepare('SELECT statut_doublon FROM facture WHERE id=?').get(fid).statut_doublon, 'confirme');
+  assert.equal(db.prepare('SELECT doublon_potentiel FROM facture WHERE id=?').get(fid).doublon_potentiel, 1, 'trace conservée');
+});
+test('doublon/C14 PATCH potentiel → faux_positif', async () => {
+  const t = newTenant(); const fid = seedDoublonFac(t);
+  const r = await patchJson(`/api/clients/${t.ent}/factures/${fid}/doublon`, cookieOf(t.u), { statut: 'faux_positif' });
+  assert.equal(r.status, 200); assert.equal(r.body.statut_doublon, 'faux_positif');
+  assert.equal(db.prepare('SELECT statut_doublon FROM facture WHERE id=?').get(fid).statut_doublon, 'faux_positif');
+});
+test('doublon/C15 statut invalide → 400', async () => {
+  const t = newTenant(); const fid = seedDoublonFac(t);
+  const r = await patchJson(`/api/clients/${t.ent}/factures/${fid}/doublon`, cookieOf(t.u), { statut: 'supprime' });
+  assert.equal(r.status, 400);
+});
+test('doublon/C16 facture inexistante → 404', async () => {
+  const t = newTenant();
+  const r = await patchJson(`/api/clients/${t.ent}/factures/fac_inexistante/doublon`, cookieOf(t.u), { statut: 'confirme' });
+  assert.equal(r.status, 404);
+});
+test('doublon/C17 facture d\'un autre client inaccessible', async () => {
+  const a = newTenant('A'), b = newTenant('B'); const fidB = seedDoublonFac(b, 'B-DUP');
+  const r = await patchJson(`/api/clients/${b.ent}/factures/${fidB}/doublon`, cookieOf(a.u), { statut: 'confirme' });
+  assert.equal(r.status, 404, 'entreprise d\'un autre cabinet → introuvable');
+  assert.equal(db.prepare('SELECT statut_doublon FROM facture WHERE id=?').get(fidB).statut_doublon, 'potentiel', 'facture de B inchangée');
+});
+test('doublon/C18 utilisateur non authentifié refusé (401)', async () => {
+  const t = newTenant(); const fid = seedDoublonFac(t);
+  const r = await patchJson(`/api/clients/${t.ent}/factures/${fid}/doublon`, null, { statut: 'confirme' });
+  assert.equal(r.status, 401);
+  assert.equal(db.prepare('SELECT statut_doublon FROM facture WHERE id=?').get(fid).statut_doublon, 'potentiel', 'inchangée');
+});
+test('doublon/C19 audit avant/après créé', async () => {
+  const t = newTenant(); const fid = seedDoublonFac(t);
+  await patchJson(`/api/clients/${t.ent}/factures/${fid}/doublon`, cookieOf(t.u), { statut: 'confirme' });
+  const log = db.prepare("SELECT * FROM audit_log WHERE cabinet_id=? AND action='revue_doublon' ORDER BY created_at DESC LIMIT 1").get(t.cab);
+  assert.ok(log, 'entrée d\'audit présente');
+  const det = JSON.parse(log.details);
+  assert.equal(det.avant.statut_doublon, 'potentiel'); assert.equal(det.apres.statut_doublon, 'confirme');
+});
+test('doublon/C20 anomalie cohérente après confirmation', async () => {
+  const t = newTenant(); const fid = seedDoublonFac(t);
+  await patchJson(`/api/clients/${t.ent}/factures/${fid}/doublon`, cookieOf(t.u), { statut: 'confirme' });
+  const ano = db.prepare("SELECT * FROM anomalie WHERE entite_id=? AND type='doublon_potentiel'").get(fid);
+  assert.equal(ano.statut, 'resolue'); assert.equal(ano.motif_resolution, 'doublon_confirme'); assert.ok(ano.resolue_le);
+});
+test('doublon/C21 anomalie cohérente après faux positif (alerte désactivée)', async () => {
+  const t = newTenant(); const fid = seedDoublonFac(t);
+  await patchJson(`/api/clients/${t.ent}/factures/${fid}/doublon`, cookieOf(t.u), { statut: 'faux_positif' });
+  const ano = db.prepare("SELECT * FROM anomalie WHERE entite_id=? AND type='doublon_potentiel'").get(fid);
+  assert.equal(ano.statut, 'resolue'); assert.equal(ano.motif_resolution, 'faux_positif');
+  // réouverture possible : potentiel réactive l'alerte
+  await patchJson(`/api/clients/${t.ent}/factures/${fid}/doublon`, cookieOf(t.u), { statut: 'potentiel' });
+  assert.equal(db.prepare("SELECT statut FROM anomalie WHERE entite_id=?").get(fid).statut, 'ouverte', 'alerte réactivée');
+});
+
+/* -------------------- D. API ET INTERFACE -------------------- */
+test('doublon/D22-D23 /delais expose tous les champs + compat doublon_potentiel', async () => {
+  const t = newTenant(); const fid = seedDoublonFac(t, 'API-1');
+  const res = await fetch(baseUrl() + `/api/clients/${t.ent}/delais?annee=2026&trimestre=1`, { headers: { Cookie: cookieOf(t.u) } });
+  const data = await res.json();
+  const row = data.rows.find(r => r.numero === 'API-1');
+  assert.ok(row, 'ligne présente');
+  for (const k of ['doublon_potentiel', 'motif_doublon', 'statut_doublon', 'date_revue_doublon', 'utilisateur_revue_doublon', 'anomalie_doublon_active']) assert.ok(k in row, `champ ${k} exposé`);
+  assert.equal(row.doublon_potentiel, true, 'compat : booléen conservé');
+  assert.equal(row.statut_doublon, 'potentiel'); assert.equal(row.anomalie_doublon_active, true);
+});
+test('doublon/D24-D26 frontend : badge + actions appellent la bonne route', () => {
+  const src = fs.readFileSync(path.join(__dirname, '..', 'public', 'js', 'app.js'), 'utf8');
+  assert.ok(/function doublonBadge/.test(src) && /Doublon \?/.test(src) && /Doublon confirmé/.test(src), 'badges présents');
+  assert.ok(/reviewDoublon/.test(src), 'handler de revue présent');
+  assert.ok(/factures\/\$\{fid\}\/doublon/.test(src) && /method: 'PATCH'/.test(src), 'appel PATCH sur la bonne route');
+  assert.ok(/data-act="\$\{act\}"/.test(src) && /statut: act/.test(src), 'le statut choisi est transmis à la route');
+  assert.ok(/A\('confirme'/.test(src), 'action confirmer'); assert.ok(/A\('faux_positif'/.test(src), 'action faux positif');
+});
+
+/* -------------------- E. NON-RÉGRESSION MÉTIER -------------------- */
+test('doublon/E27 montants différents → conservés, NON associés', () => {
+  const { cab, ent } = seedCab();
+  const b1 = facBuf([['M', '2026-01-05', 'FRS M', '000000000000821', 1000, '2026-02-01']]);
+  const b2 = facBuf([['M', '2026-01-05', 'FRS M', '000000000000821', 1500, '2026-02-01']]); // même n°/date, TTC ≠
+  importer.importWorkbook(b1, { cabinetId: cab, entrepriseId: ent, sourceName: 's', periode: { annee: 2026, trimestre: 1 } });
+  const r2 = importer.importWorkbook(b2, { cabinetId: cab, entrepriseId: ent, sourceName: 's2', periode: { annee: 2026, trimestre: 1 } });
+  assert.equal(r2.duplicates, 0, 'montants différents ≠ doublon'); assert.equal(facturesOf(ent), 2);
+});
+test('doublon/E28 fournisseurs différents → non associés', () => {
+  const { cab, ent } = seedCab();
+  const b1 = facBuf([['S', '2026-01-05', 'FRS UN', '000000000000831', 1000, '2026-02-01']]);
+  const b2 = facBuf([['S', '2026-01-05', 'FRS DEUX', '000000000000832', 1000, '2026-02-01']]); // même n°/date/TTC, fournisseur ≠
+  importer.importWorkbook(b1, { cabinetId: cab, entrepriseId: ent, sourceName: 's', periode: { annee: 2026, trimestre: 1 } });
+  const r2 = importer.importWorkbook(b2, { cabinetId: cab, entrepriseId: ent, sourceName: 's2', periode: { annee: 2026, trimestre: 1 } });
+  assert.equal(r2.duplicates, 0, 'fournisseurs différents ≠ doublon');
+});
+test('doublon/E29 aucun doublon technique de jointure SQL (facture→fournisseur 1:1)', async () => {
+  const t = newTenant();
+  const fid = uid('four'); db.prepare('INSERT INTO fournisseur (id,cabinet_id,entreprise_id,raison_sociale,delai_applicable) VALUES (?,?,?,?,60)').run(fid, t.cab, t.ent, 'FRS J');
+  for (const n of ['J1', 'J2', 'J3']) db.prepare('INSERT INTO facture (id,cabinet_id,entreprise_id,fournisseur_id,numero,ttc,date_facture,annee,trimestre) VALUES (?,?,?,?,?,?,?,?,?)').run(uid('fac'), t.cab, t.ent, fid, n, 1000, '2026-01-05', 2026, 1);
+  const data = await (await fetch(baseUrl() + `/api/clients/${t.ent}/delais?annee=2026&trimestre=1`, { headers: { Cookie: cookieOf(t.u) } })).json();
+  const base = data.rows.filter(r => !r.incidence);
+  assert.equal(base.length, 3, 'exactement 3 lignes (pas de multiplication par jointure)');
+});
+test('doublon/E30 opérateurs réseau inchangés', () => {
+  assert.equal(reseau.resolveDelaiAutorise({ fournisseur: { operateur_reseau: 1, statut_classification: 'confirme', delai_special: 30 } }).delaiAutorise, 30);
+});
+test('doublon/E31 import des conventions inchangé', () => {
+  const t = newTenant();
+  const r = impConv(t, [['CONV Z', '000000000000841', '', '', 'OUI', 90]]);
+  assert.equal(r.conventionsCreated, 1);
+  assert.equal(convOfEnt(t.ent)[0].delai_convenu, 90);
+});
+test('doublon/E32 date d\'arrêté trimestrielle inchangée', () => {
+  assert.equal(A('2026-01-10', null, 2026, 1).dateArreteIso, '2026-03-31');
+  assert.equal(A('2026-04-15', null, 2026, 2).dateArreteIso, '2026-06-30');
+});
+test('doublon/E33 périodes clôturées inchangées (verrou)', () => {
+  assert.equal(periode.isLocked('cloturee'), true); assert.equal(periode.isLocked('declaree'), true);
+});
+test('doublon/E34-E36 CADOZAT : 36 factures, 7025,33 DH, 2 doublons à amende nulle', { skip: !fs.existsSync(path.join(DOCS, 'DELAI.xlsx')) }, () => {
+  const { cab, ent } = seedCab();
+  const r = importer.importWorkbook(fs.readFileSync(path.join(DOCS, 'DELAI.xlsx')), { cabinetId: cab, entrepriseId: ent, sourceName: 'DELAI.xlsx', periode: { annee: 2026, trimestre: 1 } });
+  assert.equal(r.imported, 36, 'CADOZAT = 36 factures');
+  assert.equal(r.duplicates, 2, '2 doublons potentiels gardés');
+  const amende = db.prepare('SELECT ROUND(SUM(montant_amende),2) s FROM facture WHERE entreprise_id=?').get(ent).s;
+  assert.ok(Math.abs(amende - 7025.33) < 0.5, `amende ${amende} ≈ 7025,33 (inchangée)`);
+  const dups = db.prepare('SELECT montant_amende, statut_doublon FROM facture WHERE entreprise_id=? AND doublon_potentiel=1').all(ent);
+  assert.equal(dups.length, 2);
+  for (const d of dups) { assert.equal(d.montant_amende || 0, 0, 'ligne doublon → amende nulle'); assert.equal(d.statut_doublon, 'potentiel'); }
+  assert.equal(anomaliesDoublon(ent).length, 2, '2 anomalies basses créées');
+});

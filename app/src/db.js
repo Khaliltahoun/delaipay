@@ -186,7 +186,28 @@ for (const stmt of [
   // Doublon POTENTIEL : facture identique gardée (paiement partiel / facture scindée) et signalée pour revue.
   "ALTER TABLE facture ADD COLUMN doublon_potentiel INTEGER DEFAULT 0",
   "ALTER TABLE facture ADD COLUMN motif_doublon TEXT",
+  // Revue NON DESTRUCTIVE du doublon potentiel : état courant + traçabilité (jamais de suppression/fusion).
+  //   'aucun' (défaut) | 'potentiel' (détecté auto) | 'confirme' (revue : vrai doublon) | 'faux_positif' (revue : à ignorer)
+  "ALTER TABLE facture ADD COLUMN statut_doublon TEXT DEFAULT 'aucun'",
+  "ALTER TABLE facture ADD COLUMN date_revue_doublon TEXT",
+  "ALTER TABLE facture ADD COLUMN utilisateur_revue_doublon TEXT",
+  // Traçabilité de résolution des anomalies (utilisée par la revue de doublon et par /anomalies/:id/resolve).
+  "ALTER TABLE anomalie ADD COLUMN resolue_le TEXT",
+  "ALTER TABLE anomalie ADD COLUMN motif_resolution TEXT",
 ]) { try { db.exec(stmt); } catch (_) {} }
+
+/* Rétro-compatibilité : les factures détectées « doublon potentiel » AVANT l'ajout de
+ * statut_doublon reçoivent l'état courant 'potentiel'. Idempotent (ne touche jamais une
+ * revue déjà faite : 'confirme' / 'faux_positif' restent intacts). Sûr à relancer. */
+function backfillStatutDoublon() {
+  try {
+    return db.prepare(
+      `UPDATE facture SET statut_doublon='potentiel'
+        WHERE doublon_potentiel=1 AND (statut_doublon IS NULL OR statut_doublon='aucun')`
+    ).run().changes;
+  } catch (_) { return 0; }
+}
+backfillStatutDoublon();
 
 db.exec(`
 CREATE INDEX IF NOT EXISTS ix_perdecl_ent   ON periode_declaration(entreprise_id, annee, trimestre);
@@ -226,4 +247,4 @@ function audit(cabinetId, userId, action, entite, details, ip) {
   } catch (e) { /* audit ne doit jamais casser le flux */ }
 }
 
-module.exports = { db, tauxAt, audit, DB_PATH };
+module.exports = { db, tauxAt, audit, DB_PATH, backfillStatutDoublon };

@@ -5,6 +5,48 @@ const { db, tauxAt } = require('./db');
 const calc = require('./calc');
 const { uid, normalizeIce } = require('./util');
 
+/* ==================================================================================
+ * DOUBLON POTENTIEL — marquage CENTRAL et NON DESTRUCTIF (paiement partiel / facture
+ * scindée / échéance distincte). La facture est TOUJOURS conservée : jamais supprimée,
+ * jamais fusionnée. Les trois chemins d'import (importExcel, importReleveXml,
+ * confirmImport) passent OBLIGATOIREMENT par cette fonction pour garantir un
+ * comportement strictement identique.
+ * ================================================================================== */
+// Motif porté sur la facture (badge « doublon ? »).
+const DUP_MOTIF = 'Facture identique déjà présente — gardée pour vérification (paiement partiel / facture scindée ?)';
+// Message de l'anomalie interne de gravité basse (revue à faire par le collaborateur).
+const DUP_ANO_MSG = 'Cette facture ressemble à une autre ligne importée. Elle a été conservée car elle peut correspondre à un paiement partiel, une facture scindée ou une échéance distincte.';
+
+/**
+ * Marque une facture comme doublon POTENTIEL et crée l'anomalie basse associée.
+ *  - doublon_potentiel = 1 (trace historique de détection, jamais effacée) ;
+ *  - motif_doublon renseigné ;
+ *  - statut_doublon = 'potentiel' (état courant) SANS écraser une revue déjà tranchée
+ *    ('confirme' / 'faux_positif' sont préservés → un faux positif n'est pas rouvert) ;
+ *  - une anomalie interne (type 'doublon_potentiel', gravité 'basse', statut 'ouverte')
+ *    est créée de façon IDEMPOTENTE : une seule anomalie ouverte par facture.
+ * Retourne { anomalieId, created, details } pour le récapitulatif d'import.
+ */
+function markPotentialDuplicate({ database, factureId, motif, sourceImport, cabinetId, entrepriseId, annee, trimestre, importLotId, ref } = {}) {
+  const d = database || db;
+  const theMotif = motif || DUP_MOTIF;
+  // 1) Drapeau + motif + état courant (ne jamais rétrograder une revue déjà faite).
+  d.prepare(`UPDATE facture SET doublon_potentiel=1, motif_doublon=?,
+       statut_doublon=CASE WHEN statut_doublon IN ('confirme','faux_positif') THEN statut_doublon ELSE 'potentiel' END
+     WHERE id=?`).run(theMotif, factureId);
+  // 2) Anomalie basse IDEMPOTENTE : pas de doublon d'anomalie sur réexécution/recalcul.
+  const existing = d.prepare(`SELECT id FROM anomalie
+      WHERE type='doublon_potentiel' AND entite='facture' AND entite_id=? AND statut='ouverte' LIMIT 1`).get(factureId);
+  const details = `${DUP_ANO_MSG}${ref ? ` (réf. ${ref})` : ''}${sourceImport ? ` [source : ${sourceImport}]` : ''}`;
+  if (existing) return { anomalieId: existing.id, created: false, details };
+  const anomalieId = uid('ano');
+  d.prepare(`INSERT INTO anomalie (id, cabinet_id, entreprise_id, type, gravite, details, entite, entite_id, annee, trimestre, import_lot_id)
+             VALUES (?,?,?,?,?,?,?,?,?,?,?)`)
+    .run(anomalieId, cabinetId || null, entrepriseId || null, 'doublon_potentiel', 'basse', details, 'facture', factureId,
+         annee != null ? annee : null, trimestre != null ? trimestre : null, importLotId || null);
+  return { anomalieId, created: true, details };
+}
+
 /* ------------------------------------------------------------------ détection colonnes */
 // Normalise un libellé d'en-tête : minuscules, sans accents, sans espaces/ponctuation.
 function normHead(s) {
@@ -261,7 +303,12 @@ function importReleveXml(buffer, { cabinetId, entrepriseId, sourceName, periode 
       sourceName || 'RELEVE_XML', importId,
       delai, c.delaiEcoule, c.dateLimite, c.retardJours, c.nMois, c.aDeclarer ? 1 : 0,
       c.tauxBam, c.tauxTotal, c.baseAmende, c.montantAmende, c.couleurRisque);
-    if (doublonPot) { result.duplicates++; db.prepare('UPDATE facture SET doublon_potentiel=1, motif_doublon=? WHERE id=?').run('Facture identique déjà présente — gardée pour vérification (paiement partiel / facture scindée ?)', facId); }
+    if (doublonPot) {
+      result.duplicates++;
+      // Fonction CENTRALE : drapeau + motif + statut 'potentiel' + anomalie basse idempotente.
+      markPotentialDuplicate({ factureId: facId, sourceImport: sourceName || 'RELEVE_XML', cabinetId, entrepriseId,
+        annee: per ? per.annee : null, trimestre: per ? per.trimestre : null, ref: numero || null });
+    }
     result.imported++;
     result.totals.ttc = round2(result.totals.ttc + (ttc || 0));
     if (c.aDeclarer) { result.totals.aDeclarer++; result.totals.montantTtcRetard = round2(result.totals.montantTtcRetard + (ttc || 0)); result.totals.amende = round2(result.totals.amende + (c.montantAmende || 0)); }
@@ -383,8 +430,10 @@ function importExcel(buffer, { cabinetId, entrepriseId, sourceName, periode }) {
         c.tauxBam, c.tauxTotal, c.baseAmende, c.montantAmende, c.couleurRisque);
       if (doublonPot) {
         result.duplicates++;
-        db.prepare('UPDATE facture SET doublon_potentiel=1, motif_doublon=? WHERE id=?').run('Facture identique déjà présente — gardée pour vérification (paiement partiel / facture scindée ?)', facId);
-        addAnomalie('doublon_potentiel', 'basse', `Facture ${nfx} (${ttc}) identique à une autre — GARDÉE et à vérifier (paiement partiel / scindée ?).`, facId);
+        // Fonction CENTRALE : drapeau + motif + statut 'potentiel' + anomalie basse idempotente.
+        const m = markPotentialDuplicate({ factureId: facId, sourceImport: sourceName || format, cabinetId, entrepriseId,
+          annee: per ? per.annee : null, trimestre: per ? per.trimestre : null, ref: numero != null ? String(numero) : null });
+        result.anomalies.push({ type: 'doublon_potentiel', gravite: 'basse', details: m.details });
       }
       result.imported++;
       result.totals.ttc = round2(result.totals.ttc + (ttc || 0));
@@ -620,7 +669,12 @@ function confirmImport(buffer, opts) {
         d.yFac || null, d.qFac || null,
         delai, c.delaiEcoule, c.dateLimite, c.retardJours, c.nMois, c.aDeclarer ? 1 : 0,
         c.tauxBam, c.tauxTotal, c.baseAmende, c.montantAmende, c.couleurRisque);
-      if (l.doublonPotentiel) db.prepare('UPDATE facture SET doublon_potentiel=1, motif_doublon=? WHERE id=?').run('Facture identique déjà présente — gardée pour vérification (paiement partiel / facture scindée ?)', facId);
+      if (l.doublonPotentiel) {
+        // Fonction CENTRALE : drapeau + motif + statut 'potentiel' + anomalie basse idempotente.
+        markPotentialDuplicate({ factureId: facId, sourceImport: sourceName || name, cabinetId, entrepriseId,
+          annee: per.annee, trimestre: per.trimestre, importLotId: importId, ref: d.numero || null });
+        result.anomalies++;
+      }
       insLigne.run(uid('il'), importId, cabinetId, entrepriseId, l.ligne, name, JSON.stringify(l.brut || []), JSON.stringify(d), 'valide', (l.avertissements || []).join(' ; ') || null, null, facId);
       if (c.delaiEcoule != null && c.delaiEcoule > 60 && !hasValidConvention(entrepriseId, four.id)) {
         result.convAbsente++;
@@ -958,4 +1012,5 @@ function buildConventionsTemplate() {
 module.exports = {
   importWorkbook, detectHeader, normHead, analyzeWorkbook, previewImport, confirmImport,
   importConventions, parseDelai, parseConv, normName, buildConventionsTemplate, CONV_TEMPLATE_HEADERS, FIELDS,
+  markPotentialDuplicate, DUP_MOTIF, DUP_ANO_MSG,
 };

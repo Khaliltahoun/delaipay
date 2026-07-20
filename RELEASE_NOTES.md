@@ -5,6 +5,14 @@ Version candidate à la validation métier (Mme Zahra) et au déploiement de pro
 
 ---
 
+## 🆕 Nouveau (revue des doublons)
+
+- **DelaiPay conserve les factures ressemblant à des doublons. Elles sont signalées pour vérification afin de ne pas supprimer par erreur des paiements partiels, factures scindées ou échéances multiples.**
+- **Un utilisateur peut confirmer l'alerte ou la marquer comme faux positif. Cette revue ne supprime ni ne fusionne aucune facture.**
+- Dans la feuille de délais : badge **« Doublon ? »** (à vérifier), puis, après revue, **« Doublon confirmé »** ou disparition de l'alerte (faux positif). Les actions **Confirmer le doublon** / **Marquer comme faux positif** se trouvent dans le détail de la facture (avec demande de confirmation).
+- Les trois modes d'import (assistant, import direct, relevé XML) signalent les doublons de façon identique, avec une anomalie interne de gravité basse.
+- **Les doublons supprimés par d'anciennes versions ne peuvent être récupérés qu'en réimportant la source originale.**
+
 ## 🆕 Nouveau (opérateurs de réseau)
 
 - **Délai spécifique de 30 jours** pour les opérateurs de télécom, eau, électricité et régies / SRM, et **exclusion des tableaux déclaratifs** (déclaration, exports, visa) avec **résumé des exclusions** — factures conservées et visibles en suivi interne.

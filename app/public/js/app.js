@@ -576,6 +576,17 @@ function etatMini(f) {
   const e = m[f.etat_paiement];
   return e ? `<div style="margin-top:2px"><span class="pill ${e[0]}" style="font-size:9.5px;padding:1px 6px">${e[1]}</span></div>` : '';
 }
+const DUP_MOTIF_FR = 'Facture identique déjà présente — gardée pour vérification (paiement partiel / facture scindée ?)';
+// Badge « doublon » dans la feuille de délais, selon l'état de revue (jamais destructif) :
+//  potentiel → « Doublon ? » (avertissement léger) · confirme → « Doublon confirmé » · faux_positif → aucune alerte principale.
+function doublonBadge(f) {
+  const st = f.statut_doublon || (f.doublon_potentiel ? 'potentiel' : 'aucun');
+  if (st === 'potentiel')
+    return ` <span class="pill pill-orange" style="font-size:9.5px;padding:1px 6px" title="${esc(f.motif_doublon || DUP_MOTIF_FR)} — cliquez la ligne pour vérifier.">Doublon ?</span>`;
+  if (st === 'confirme')
+    return ` <span class="pill pill-red" style="font-size:9.5px;padding:1px 6px" title="Doublon confirmé lors de la revue — facture conservée (aucune suppression).">Doublon confirmé</span>`;
+  return ''; // faux_positif → pas d'alerte principale (indication discrète dans le détail)
+}
 // Badge « opérateur de réseau » (délai 30 j + exclusion déclarative).
 function reseauBadge(f) {
   if (!f.operateur_reseau) return '';
@@ -628,7 +639,7 @@ async function renderDelais() {
         ? ' <span class="pill pill-ok" style="font-size:10px;padding:1px 7px" title="Convention disponible">conv.</span>'
         : (f.four_id
           ? ` <button class="btn btn-ghost btn-sm" style="font-size:10px;padding:2px 8px;color:var(--primary);border-color:rgba(14,77,100,.3)" title="Ce fournisseur a une convention signée : l'enregistrer en un clic" data-four="${f.four_id}" data-fournom="${esc(f.four || '')}" data-delai="${f.delai_ecoule}" onclick="event.stopPropagation();convExpress(this)">+ Convention présente</button>`
-          : ' <span class="pill pill-red" style="font-size:10px;padding:1px 7px" title="Aucune convention pour ce fournisseur">sans conv.</span>')) : ''}${reseauBadge(f)}${f.doublon_potentiel ? ` <span class="pill pill-orange" style="font-size:9.5px;padding:1px 6px" title="${esc(f.motif_doublon || 'Facture identique déjà présente — gardée pour vérification (paiement partiel / facture scindée ?)')}">doublon ?</span>` : ''}</td>
+          : ' <span class="pill pill-red" style="font-size:10px;padding:1px 7px" title="Aucune convention pour ce fournisseur">sans conv.</span>')) : ''}${reseauBadge(f)}${doublonBadge(f)}</td>
       <td class="retard ${f.retard > 0 ? 'pos' : 'neg'}">${f.retard == null ? '—' : (f.retard > 0 ? '+' + f.retard : f.retard)}</td>
       <td>${f.a_declarer ? '<span class="pill pill-red" style="font-size:11px"><span class="dot"></span>Oui</span>' : '<span class="tag-no">—</span>'}</td>
       <td class="num" style="font-weight:700">${f.amende ? money(f.amende) : '—'}</td>
@@ -660,8 +671,56 @@ function factureDrawer(f) {
       <div class="row tot"><span>Amende (trimestre)</span><span>${money(f.amende)} DH</span></div>
     </div>
     <div class="dh" style="font-size:12px">Modèle trimestriel apporté (mois calendaire) : 1ᵉʳ mois de retard au taux directeur BAM, mois suivants à 0,85 %, seuls les mois du trimestre déclaré sont facturés.</div>
+    ${doublonDrawer(f)}
   </div>`);
 }
+
+// Bloc « Revue du doublon » dans le détail facture (actions non destructives).
+function doublonDrawer(f) {
+  const st = f.statut_doublon || (f.doublon_potentiel ? 'potentiel' : 'aucun');
+  if (!f.doublon_potentiel && st === 'aucun') return ''; // facture non concernée
+  const meta = f.date_revue_doublon ? `<div class="dh" style="font-size:11.5px;margin-top:6px">Revue enregistrée le ${dateFr(f.date_revue_doublon)}.</div>` : '';
+  const A = (act, label, primary) => `<button class="btn ${primary ? 'btn-primary' : 'btn-ghost'} btn-sm" style="font-size:12px;padding:6px 12px" onclick="reviewDoublon(this)" data-fid="${f.id}" data-act="${act}">${esc(label)}</button>`;
+  let title, note, actions;
+  if (st === 'confirme') {
+    title = '<span class="pill pill-red"><span class="dot"></span>Doublon confirmé</span>';
+    note = 'Doublon confirmé lors de la revue. La facture reste enregistrée et incluse dans les calculs — aucune suppression, aucune fusion.';
+    actions = A('faux_positif', 'Requalifier en faux positif') + ' ' + A('potentiel', 'Rouvrir l’alerte');
+  } else if (st === 'faux_positif') {
+    title = '<span class="pill pill-ok"><span class="dot"></span>Alerte vérifiée — faux positif</span>';
+    note = 'Alerte vérifiée — faux positif : ce n’est pas un doublon (paiement partiel, facture scindée ou échéance distincte). L’alerte principale n’est plus affichée.';
+    actions = A('confirme', 'Requalifier en doublon') + ' ' + A('potentiel', 'Rouvrir l’alerte');
+  } else { // potentiel
+    title = '<span class="pill pill-orange"><span class="dot"></span>Doublon ?</span>';
+    note = esc(f.motif_doublon || DUP_MOTIF_FR) + ' La facture est conservée : rien n’est supprimé tant que vous n’avez pas tranché.';
+    actions = A('confirme', 'Confirmer le doublon', true) + ' ' + A('faux_positif', 'Marquer comme faux positif');
+  }
+  return `<div class="calc" id="dupReview" style="margin-top:14px">
+    <div class="row" style="align-items:center"><span>Revue du doublon</span><b>${title}</b></div>
+    <div class="dh" style="font-size:12px;margin:6px 0">${note}</div>${meta}
+    <div id="dupActions" style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px">${actions}</div>
+  </div>`;
+}
+
+// Revue d'un doublon : confirmation, appel API PATCH, toast, rafraîchissement de la ligne.
+window.reviewDoublon = async function (btn) {
+  const fid = btn.dataset.fid, act = btn.dataset.act;
+  const ASK = { confirme: 'confirmer ce doublon', faux_positif: 'marquer cette alerte comme faux positif', potentiel: 'rouvrir l’alerte de doublon' };
+  if (!window.confirm(`Voulez-vous ${ASK[act] || 'modifier la revue'} ?\n\nAucune facture ne sera supprimée ni fusionnée.`)) return;
+  const box = $('#dupActions'), btns = box ? $$('button', box) : [btn];
+  btns.forEach(b => { b.disabled = true; }); btn.textContent = '…';
+  try {
+    await api(`/clients/${state.clientId}/factures/${fid}/doublon`, { method: 'PATCH', body: { statut: act } });
+    const MSG = { confirme: 'Doublon confirmé.', faux_positif: 'Marqué comme faux positif.', potentiel: 'Alerte rouverte.' };
+    toast(MSG[act] || 'Revue enregistrée.', 'ok', 'Revue du doublon');
+    await renderDelais(); refreshAlertsBadge();
+    const nf = ((state._delais && state._delais.rows) || []).find(x => x.id === fid);
+    if (nf) factureDrawer(nf); else closeOverlay();
+  } catch (e) {
+    toast(e.message, 'err');
+    btns.forEach(b => { b.disabled = false; });
+  }
+};
 
 // Enregistrement express d'une convention depuis la feuille de délais : le comptable
 // sait que le fournisseur a une convention signée → 1 clic pour la créer (PDF différé).

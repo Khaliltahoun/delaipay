@@ -1,5 +1,29 @@
 # Changelog — DelaiPay
 
+## Revue non destructive des doublons potentiels (juillet 2026)
+
+> **DelaiPay conserve les factures ressemblant à des doublons. Elles sont signalées pour vérification afin de ne pas supprimer par erreur des paiements partiels, factures scindées ou échéances multiples.**
+>
+> **Un utilisateur peut confirmer l'alerte ou la marquer comme faux positif. Cette revue ne supprime ni ne fusionne aucune facture.**
+>
+> **Les doublons supprimés par d'anciennes versions ne peuvent être récupérés qu'en réimportant la source originale.**
+
+### Ajouté
+- **Fonction centrale unique `importer.markPotentialDuplicate`** : les **trois** chemins d'import (import direct `importExcel`, relevé XML `importReleveXml`, assistant `confirmImport`) marquent désormais un doublon de façon **strictement identique** — drapeau `doublon_potentiel`, `motif_doublon`, `statut_doublon='potentiel'` et **anomalie interne de gravité basse** (idempotente : jamais recréée deux fois sur réexécution/recalcul).
+- **Statut de revue non destructif** sur la facture (migration SQLite idempotente) : `statut_doublon` (`aucun` | `potentiel` | `confirme` | `faux_positif`), `date_revue_doublon`, `utilisateur_revue_doublon`. Le drapeau `doublon_potentiel` est conservé comme **trace historique de détection**.
+- **Endpoint `PATCH /clients/:id/factures/:factureId/doublon`** (`{ "statut": "confirme" | "faux_positif" | "potentiel" }`) : authentifié, isolé par tenant/client, statut validé (400), facture inexistante (404). Écrit `statut_doublon` + traçabilité, journalise une **entrée d'audit avant/après**, et met l'anomalie associée en cohérence :
+  - `potentiel` → anomalie **ouverte** ;
+  - `confirme` → anomalie **résolue** (motif `doublon_confirme`), historique conservé ;
+  - `faux_positif` → anomalie **résolue** (motif `faux_positif`), **alerte principale désactivée** (non reproposée automatiquement pour la même détection).
+- **API** : `GET /clients/:id/delais` et le détail de facture exposent `doublon_potentiel`, `motif_doublon`, `statut_doublon`, `date_revue_doublon`, `utilisateur_revue_doublon` et `anomalie_doublon_active`. **Compatibilité conservée** : une interface ne lisant que `doublon_potentiel` continue de fonctionner.
+- **Interface** (feuille de délais) : badge **« Doublon ? »** (potentiel, avertissement léger + infobulle du motif), badge **« Doublon confirmé »** (confirme), **aucune alerte principale** en faux positif (indication discrète « Alerte vérifiée — faux positif » dans le détail). Actions **Confirmer le doublon** / **Marquer comme faux positif** dans le tiroir de détail, avec confirmation avant mise à jour, toast de succès/erreur et rafraîchissement de la ligne.
+
+### Préservé / sécurité
+- **Aucune facture n'est jamais supprimée ni fusionnée** ; la facture reste incluse dans le suivi et les calculs quel que soit le statut de revue. Aucune période clôturée modifiée, aucune formule légale touchée.
+- Migration **idempotente** (rejouable sans erreur) ; les factures héritées `doublon_potentiel=1` passent à `statut_doublon='potentiel'` sans rouvrir une revue déjà tranchée.
+- Correction connexe : la colonne `resolue_le` (utilisée par la résolution d'anomalies) est désormais présente en base.
+- **CADOZAT = 36 factures / 7 025,33 DH** inchangé (les 2 doublons gardés ont une amende nulle). Suite de tests **88/88** (60 initiaux + 28 nouveaux couvrant harmonisation, migration, endpoint, API et non-régression).
+
 ## Doublons conservés (paiements partiels / factures scindées) (juillet 2026)
 
 ### Modifié
