@@ -628,7 +628,7 @@ async function renderDelais() {
         ? ' <span class="pill pill-ok" style="font-size:10px;padding:1px 7px" title="Convention disponible">conv.</span>'
         : (f.four_id
           ? ` <button class="btn btn-ghost btn-sm" style="font-size:10px;padding:2px 8px;color:var(--primary);border-color:rgba(14,77,100,.3)" title="Ce fournisseur a une convention signée : l'enregistrer en un clic" data-four="${f.four_id}" data-fournom="${esc(f.four || '')}" data-delai="${f.delai_ecoule}" onclick="event.stopPropagation();convExpress(this)">+ Convention présente</button>`
-          : ' <span class="pill pill-red" style="font-size:10px;padding:1px 7px" title="Aucune convention pour ce fournisseur">sans conv.</span>')) : ''}${reseauBadge(f)}</td>
+          : ' <span class="pill pill-red" style="font-size:10px;padding:1px 7px" title="Aucune convention pour ce fournisseur">sans conv.</span>')) : ''}${reseauBadge(f)}${f.doublon_potentiel ? ` <span class="pill pill-orange" style="font-size:9.5px;padding:1px 6px" title="${esc(f.motif_doublon || 'Facture identique déjà présente — gardée pour vérification (paiement partiel / facture scindée ?)')}">doublon ?</span>` : ''}</td>
       <td class="retard ${f.retard > 0 ? 'pos' : 'neg'}">${f.retard == null ? '—' : (f.retard > 0 ? '+' + f.retard : f.retard)}</td>
       <td>${f.a_declarer ? '<span class="pill pill-red" style="font-size:11px"><span class="dot"></span>Oui</span>' : '<span class="tag-no">—</span>'}</td>
       <td class="num" style="font-weight:700">${f.amende ? money(f.amende) : '—'}</td>

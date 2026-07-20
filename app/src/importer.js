@@ -243,9 +243,10 @@ function importReleveXml(buffer, { cabinetId, entrepriseId, sourceName, periode 
     if (four.created) result.fournisseursCreated++;
     const delai = lookupDelai(entrepriseId, four.id);
     const numero = T(x.num);
+    // DOUBLON POTENTIEL : gardé (paiement partiel / scindé) et signalé, jamais supprimé.
     const dup = db.prepare(`SELECT id FROM facture WHERE entreprise_id=? AND fournisseur_id=? AND numero IS ? AND ttc=? AND date_facture IS ?`)
       .get(entrepriseId, four.id, numero, ttc, iso(dfac));
-    if (dup) { result.duplicates++; continue; }
+    const doublonPot = !!dup;
     const per = periode || (dpai ? { annee: dpai.getFullYear(), trimestre: calc.trimestreOf(dpai) } : (dfac ? { annee: dfac.getFullYear(), trimestre: calc.trimestreOf(dfac) } : null));
     const c = calc.computeFacture({ dateFacture: dfac, datePaiement: dpai, ttc, delaiApplicable: delai, periode: per, today, tauxProvider: (y, m) => tauxAt(y, m, cabinetId) });
     if (c.delaiEcoule != null && c.delaiEcoule > 60 && !hasValidConvention(entrepriseId, four.id)) {
@@ -253,12 +254,14 @@ function importReleveXml(buffer, { cabinetId, entrepriseId, sourceName, periode 
       db.prepare(`INSERT INTO anomalie (id, cabinet_id, entreprise_id, type, gravite, details, entite, entite_id) VALUES (?,?,?,?,?,?,?,?)`)
         .run(uid('ano'), cabinetId, entrepriseId, 'convention_absente', 'moyenne', `Facture ${numero || '?'} : délai de ${c.delaiEcoule} j (> 60 j) SANS convention pour ${nom || four.id}.`, 'facture', four.id);
     }
-    insertFacture.run(uid('fac'), cabinetId, entrepriseId, four.id, numero,
+    const facId = uid('fac');
+    insertFacture.run(facId, cabinetId, entrepriseId, four.id, numero,
       T(x.des), mht || null, tva || null, ttc || null, num(T(x.tx)) || null, T(x.mp && x.mp.id),
       iso(dfac), iso(dpai), per ? per.annee : null, per ? per.trimestre : null, per ? per.trimestre : null,
       sourceName || 'RELEVE_XML', importId,
       delai, c.delaiEcoule, c.dateLimite, c.retardJours, c.nMois, c.aDeclarer ? 1 : 0,
       c.tauxBam, c.tauxTotal, c.baseAmende, c.montantAmende, c.couleurRisque);
+    if (doublonPot) { result.duplicates++; db.prepare('UPDATE facture SET doublon_potentiel=1, motif_doublon=? WHERE id=?').run('Facture identique déjà présente — gardée pour vérification (paiement partiel / facture scindée ?)', facId); }
     result.imported++;
     result.totals.ttc = round2(result.totals.ttc + (ttc || 0));
     if (c.aDeclarer) { result.totals.aDeclarer++; result.totals.montantTtcRetard = round2(result.totals.montantTtcRetard + (ttc || 0)); result.totals.amende = round2(result.totals.amende + (c.montantAmende || 0)); }
@@ -354,9 +357,11 @@ function importExcel(buffer, { cabinetId, entrepriseId, sourceName, periode }) {
       if (dfac && dfac > today) addAnomalie('date_future', 'haute', `Facture ${nfx} : date de facture dans le futur (${iso(dfac)}).`);
       if (mht && tva && ttc && Math.abs(ttc - (mht + tva)) > 0.5) addAnomalie('montant_incoherent', 'moyenne', `Facture ${nfx} : TTC (${ttc}) ≠ HT+TVA (${round2(mht + tva)}).`);
 
+      // DOUBLON POTENTIEL : facture identique déjà présente. On ne SUPPRIME plus (paiement partiel /
+      // facture scindée saisie au montant plein) → on GARDE la ligne et on la SIGNALE pour revue.
       const dup = db.prepare(`SELECT id FROM facture WHERE entreprise_id=? AND fournisseur_id=? AND numero IS ? AND ttc=? AND date_facture IS ?`)
         .get(entrepriseId, four.id, numero != null ? String(numero) : null, ttc, iso(dfac));
-      if (dup) { result.duplicates++; addAnomalie('doublon', 'moyenne', `Facture ${nfx} (${ttc}) déjà présente — ignorée.`, dup.id); continue; }
+      const doublonPot = !!dup;
 
       const per = periode || (dpai ? { annee: dpai.getFullYear(), trimestre: calc.trimestreOf(dpai) } : (dfac ? { annee: dfac.getFullYear(), trimestre: calc.trimestreOf(dfac) } : null));
       const c = calc.computeFacture({ dateFacture: dfac, datePaiement: dpai, ttc, delaiApplicable: delai, periode: per, today, tauxProvider: (y, m) => tauxAt(y, m, cabinetId) });
@@ -367,7 +372,8 @@ function importExcel(buffer, { cabinetId, entrepriseId, sourceName, periode }) {
         addAnomalie('convention_absente', 'moyenne', `Facture ${nfx} : délai de ${c.delaiEcoule} j (> 60 j) SANS convention enregistrée pour le fournisseur ${cell(row, 'four_nom') || four.id}.`, four.id);
       }
 
-      insertFacture.run(uid('fac'), cabinetId, entrepriseId, four.id, numero != null ? String(numero) : null,
+      const facId = uid('fac');
+      insertFacture.run(facId, cabinetId, entrepriseId, four.id, numero != null ? String(numero) : null,
         cell(row, 'designation') != null ? String(cell(row, 'designation')) : null,
         mht || null, tva || null, ttc || null, num(cell(row, 'taux_tva')) || null,
         cell(row, 'mode_reglement') != null ? String(cell(row, 'mode_reglement')) : null,
@@ -375,6 +381,11 @@ function importExcel(buffer, { cabinetId, entrepriseId, sourceName, periode }) {
         sourceName || format, importId,
         delai, c.delaiEcoule, c.dateLimite, c.retardJours, c.nMois, c.aDeclarer ? 1 : 0,
         c.tauxBam, c.tauxTotal, c.baseAmende, c.montantAmende, c.couleurRisque);
+      if (doublonPot) {
+        result.duplicates++;
+        db.prepare('UPDATE facture SET doublon_potentiel=1, motif_doublon=? WHERE id=?').run('Facture identique déjà présente — gardée pour vérification (paiement partiel / facture scindée ?)', facId);
+        addAnomalie('doublon_potentiel', 'basse', `Facture ${nfx} (${ttc}) identique à une autre — GARDÉE et à vérifier (paiement partiel / scindée ?).`, facId);
+      }
       result.imported++;
       result.totals.ttc = round2(result.totals.ttc + (ttc || 0));
       if (c.aDeclarer) { result.totals.aDeclarer++; result.totals.montantTtcRetard = round2(result.totals.montantTtcRetard + (ttc || 0)); result.totals.amende = round2(result.totals.amende + (c.montantAmende || 0)); }
@@ -527,16 +538,19 @@ function classifyGrid(grid, { headerRow, mapping, entrepriseId, annee, trimestre
 
     if (rejets.length) { stats.rejetees++; lignes.push({ ligne: r + 1, statut: 'rejetee', motif: rejets.map(x => x.motif).join(' ; '), champ: rejets[0].champ, brut, valeur: brut[col(rejets[0].champ)] }); continue; }
 
+    // DOUBLON POTENTIEL : on ne rejette plus (paiement partiel / facture scindée). On GARDE la
+    // ligne (statut valide) et on la SIGNALE pour revue.
     const fp = fingerprint(entrepriseId, nom, numero, iso(dfac), ttc);
     const dbDup = db.prepare(`SELECT id FROM facture WHERE entreprise_id=? AND numero IS ? AND ttc=? AND date_facture IS ?`).get(entrepriseId, numero != null ? String(numero) : null, ttc, iso(dfac));
-    if (seen.has(fp) || dbDup) { stats.doublons++; lignes.push({ ligne: r + 1, statut: 'doublon', motif: 'facture déjà présente (même fournisseur, n°, date, montant)', brut }); continue; }
+    const doublonPot = seen.has(fp) || !!dbDup;
     seen.add(fp);
+    if (doublonPot) { stats.doublons++; warns.push('doublon potentiel (facture identique) — gardée, à vérifier (paiement partiel / scindée ?)'); }
 
     const qFac = dfac ? calc.trimestreOf(dfac) : null, yFac = dfac ? dfac.getFullYear() : null;
     if (annee != null && trimestre != null) { if (yFac === +annee && qFac === +trimestre) stats.memePeriode++; else stats.autrePeriode++; }
     if (warns.length) stats.avertissements++;
     stats.valides++; stats.totalTtc = round2(stats.totalTtc + ttc);
-    lignes.push({ ligne: r + 1, statut: 'valide', avertissements: warns, brut,
+    lignes.push({ ligne: r + 1, statut: 'valide', avertissements: warns, brut, doublonPotentiel: doublonPot,
       data: { nom: notEmpty(nom) ? String(nom) : null, ice, iff: notEmpty(iff) ? String(iff) : null,
         numero: notEmpty(numero) ? String(numero) : null, mht: mht || null, tva: tva || null, ttc,
         taux_tva: num(cell(row, 'taux_tva')) || null, mode_reglement: notEmpty(cell(row, 'mode_reglement')) ? String(cell(row, 'mode_reglement')) : null,
@@ -606,6 +620,7 @@ function confirmImport(buffer, opts) {
         d.yFac || null, d.qFac || null,
         delai, c.delaiEcoule, c.dateLimite, c.retardJours, c.nMois, c.aDeclarer ? 1 : 0,
         c.tauxBam, c.tauxTotal, c.baseAmende, c.montantAmende, c.couleurRisque);
+      if (l.doublonPotentiel) db.prepare('UPDATE facture SET doublon_potentiel=1, motif_doublon=? WHERE id=?').run('Facture identique déjà présente — gardée pour vérification (paiement partiel / facture scindée ?)', facId);
       insLigne.run(uid('il'), importId, cabinetId, entrepriseId, l.ligne, name, JSON.stringify(l.brut || []), JSON.stringify(d), 'valide', (l.avertissements || []).join(' ; ') || null, null, facId);
       if (c.delaiEcoule != null && c.delaiEcoule > 60 && !hasValidConvention(entrepriseId, four.id)) {
         result.convAbsente++;

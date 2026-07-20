@@ -183,6 +183,9 @@ for (const stmt of [
   "ALTER TABLE fournisseur ADD COLUMN statut_classification TEXT",         // 'propose' | 'confirme' | 'a_verifier'
   "ALTER TABLE fournisseur ADD COLUMN date_validation TEXT",
   "ALTER TABLE fournisseur ADD COLUMN utilisateur_validation TEXT",
+  // Doublon POTENTIEL : facture identique gardée (paiement partiel / facture scindée) et signalée pour revue.
+  "ALTER TABLE facture ADD COLUMN doublon_potentiel INTEGER DEFAULT 0",
+  "ALTER TABLE facture ADD COLUMN motif_doublon TEXT",
 ]) { try { db.exec(stmt); } catch (_) {} }
 
 db.exec(`

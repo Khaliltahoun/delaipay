@@ -57,9 +57,13 @@ test('périodes verrouillées', () => {
 test('CADOZAT DELAI.xlsx T1 2026 ≈ 7025,33 DH (non-régression)', { skip: !fs.existsSync(path.join(DOCS, 'DELAI.xlsx')) }, () => {
   const { cab, ent } = seedCab();
   const r = importer.importWorkbook(fs.readFileSync(path.join(DOCS, 'DELAI.xlsx')), { cabinetId: cab, entrepriseId: ent, sourceName: 'DELAI.xlsx', periode: { annee: 2026, trimestre: 1 } });
-  assert.equal(r.imported, 34);
+  // 36 (et non 34) : 2 lignes « doublon potentiel » (même facture, dates de paiement différentes) sont désormais GARDÉES et signalées (paiement partiel / scindé), au
+  // lieu d'être supprimées. Évolution LÉGITIME de la règle. L'AMENDE reste 7 025,33 DH (ces 2 factures
+  // sont réglées dans les délais → 0 amende), donc la non-régression du moteur légal est préservée.
+  assert.equal(r.imported, 36);
+  assert.equal(r.duplicates, 2, '2 doublons potentiels gardés + signalés');
   const amende = db.prepare('SELECT ROUND(SUM(montant_amende),2) s FROM facture WHERE entreprise_id=?').get(ent).s;
-  assert.ok(Math.abs(amende - 7025.33) < 0.5, `amende ${amende} attendue ~7025.33`);
+  assert.ok(Math.abs(amende - 7025.33) < 0.5, `amende ${amende} attendue ~7025.33 (inchangée)`);
 });
 
 /* -------------------- MOTEUR DE CALCUL (règle mois calendaire) -------------------- */
@@ -141,9 +145,14 @@ test('confirm transactionnel + ré-import = doublons (dédoublonnage)', { skip: 
   assert.ok(r1.imported > 0);
   const nb = db.prepare('SELECT COUNT(*) n FROM facture WHERE entreprise_id=?').get(ent).n;
   assert.equal(nb, r1.imported, 'factures en base = importées');
+  // Nouvelle règle : les doublons sont GARDÉS et SIGNALÉS (paiement partiel / facture scindée),
+  // pas supprimés. Un ré-import recrée donc les lignes, toutes marquées « doublon potentiel ».
   const r2 = importer.confirmImport(buf, { ...opts, sourceName: 'ferma2.xlsx' });
-  assert.equal(r2.imported, 0, 'ré-import : 0 nouvelle facture');
-  assert.ok(r2.duplicates > 0, 'ré-import : doublons détectés');
+  assert.equal(r2.imported, r1.imported, 'ré-import : lignes gardées (non supprimées)');
+  assert.ok(r2.duplicates > 0, 'ré-import : doublons potentiels signalés');
+  const flag = db.prepare('SELECT COUNT(*) n FROM facture WHERE entreprise_id=? AND doublon_potentiel=1').get(ent).n;
+  assert.ok(flag >= r2.duplicates, 'factures ré-importées marquées doublon potentiel');
+  assert.equal(db.prepare('SELECT COUNT(*) n FROM facture WHERE entreprise_id=?').get(ent).n, r1.imported + r2.imported, 'les deux imports coexistent (rien perdu)');
   // import_ligne tracées
   const ligne = db.prepare('SELECT COUNT(*) n FROM import_ligne WHERE import_lot_id=?').get(r1.importId).n;
   assert.ok(ligne > 0);

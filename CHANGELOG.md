@@ -1,5 +1,12 @@
 # Changelog — DelaiPay
 
+## Doublons conservés (paiements partiels / factures scindées) (juillet 2026)
+
+### Modifié
+- Les factures détectées comme **doublons** (même n°, date, montant TTC) ne sont **plus supprimées** à l'import : elles peuvent représenter un **paiement partiel** ou une **facture scindée**. Elles sont désormais **conservées dans les tableaux de factures** et **signalées** (`doublon_potentiel`, motif) pour revue par l'expert-comptable — badge « doublon ? » dans la feuille de délais, anomalie de gravité basse, colonne exposée par l'API.
+- S'applique aux 3 chemins d'import (assistant/`confirmImport`, import direct/`importExcel`, relevé XML). Les splits à **montants distincts** étaient déjà conservés (le TTC fait partie de la clé) ; ce changement concerne les répétitions au **montant identique** (différant par la date de paiement).
+- **Impact CADOZAT** : l'import passe de 34 à **36 factures** (2 lignes : mêmes factures à dates de paiement différentes, désormais gardées). **L'amende reste 7 025,33 DH** (ces factures sont réglées dans les délais → 0 amende), donc le moteur légal est inchangé. Attendu de test mis à jour et documenté. Suite 60/60.
+
 ## Règle spéciale « opérateurs de réseau » — délai 30 j + exclusion déclarative (juillet 2026)
 
 ### Ajouté

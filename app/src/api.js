@@ -643,6 +643,7 @@ router.get('/clients/:id/delais', (req, res) => {
       operateur_reseau: rd.sourceRegle === 'operateur_reseau', categorie: f.categorie_fournisseur || 'standard', hors_tableau: rd.horsTableauDeclaratif, source_regle: rd.sourceRegle,
       retard, n_mois: f.n_mois, a_declarer: !!f.a_declarer, has_conv: !!f.has_conv,
       taux_bam: f.taux_bam, taux_total: f.taux_total, amende: f.montant_amende, risk: f.couleur_risque,
+      doublon_potentiel: !!f.doublon_potentiel, motif_doublon: f.motif_doublon || null,
       incidence: false,
     };
   });
