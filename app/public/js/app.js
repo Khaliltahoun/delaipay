@@ -594,7 +594,11 @@ async function renderDelais() {
       <td class="mono dh">${dateFr(f.date_facture)}</td>
       <td class="mono dh">${dateFr(f.date_paiement)}</td>
       <td class="num">${f.delai_ecoule != null ? f.delai_ecoule + ' j' : '—'}</td>
-      <td><span class="badge ${f.delai_applicable >= 120 ? 'b120' : 'b60'}">${f.delai_applicable} j</span>${f.delai_ecoule > 60 ? (f.has_conv ? ' <span class="pill pill-ok" style="font-size:10px;padding:1px 7px" title="Convention disponible">conv.</span>' : ' <span class="pill pill-red" style="font-size:10px;padding:1px 7px" title="Aucune convention pour ce fournisseur">sans conv.</span>') : ''}</td>
+      <td><span class="badge ${f.delai_applicable >= 120 ? 'b120' : 'b60'}">${f.delai_applicable} j</span>${f.delai_ecoule > 60 ? (f.has_conv
+        ? ' <span class="pill pill-ok" style="font-size:10px;padding:1px 7px" title="Convention disponible">conv.</span>'
+        : (f.four_id
+          ? ` <button class="btn btn-ghost btn-sm" style="font-size:10px;padding:2px 8px;color:var(--primary);border-color:rgba(14,77,100,.3)" title="Ce fournisseur a une convention signée : l'enregistrer en un clic" data-four="${f.four_id}" data-fournom="${esc(f.four || '')}" data-delai="${f.delai_ecoule}" onclick="event.stopPropagation();convExpress(this)">+ Convention présente</button>`
+          : ' <span class="pill pill-red" style="font-size:10px;padding:1px 7px" title="Aucune convention pour ce fournisseur">sans conv.</span>')) : ''}</td>
       <td class="retard ${f.retard > 0 ? 'pos' : 'neg'}">${f.retard > 0 ? '+' + f.retard : f.retard}</td>
       <td>${f.a_declarer ? '<span class="pill pill-red" style="font-size:11px"><span class="dot"></span>Oui</span>' : '<span class="tag-no">—</span>'}</td>
       <td class="num" style="font-weight:700">${f.amende ? money(f.amende) : '—'}</td>
@@ -625,6 +629,33 @@ function factureDrawer(f) {
     <div class="dh" style="font-size:12px">Modèle trimestriel apporté (mois calendaire) : 1ᵉʳ mois de retard au taux directeur BAM, mois suivants à 0,85 %, seuls les mois du trimestre déclaré sont facturés.</div>
   </div>`);
 }
+
+// Enregistrement express d'une convention depuis la feuille de délais : le comptable
+// sait que le fournisseur a une convention signée → 1 clic pour la créer (PDF différé).
+window.convExpress = function (btn) {
+  const fourId = btn.dataset.four, nom = btn.dataset.fournom || 'ce fournisseur', ecoule = btn.dataset.delai;
+  modal(`<div class="modal-h"><h3>Convention présente</h3><button class="x" onclick="closeOverlay()">${XICO}</button></div>
+  <div class="modal-b">
+    <p class="dh" style="margin-bottom:12px">Enregistrer la convention de délai de paiement signée avec <b>${esc(nom)}</b>.
+    Le document PDF pourra être ajouté ensuite dans la rubrique <b>Conventions</b> (statut « Document manquant »).</p>
+    <div class="form-grid"><div><label class="fld-lbl">Délai convenu (jours)</label>
+      <input class="input-fld" id="ce_delai" type="number" min="1" max="180" value="120">
+      <div class="dh" style="font-size:11.5px;margin-top:4px">Délai réellement écoulé sur cette facture : <b>${esc(ecoule)} j</b>. Indiquez le délai figurant dans la convention (180 j maximum).</div>
+    </div></div>
+  </div>
+  <div class="modal-f"><button class="btn btn-ghost" onclick="closeOverlay()">Annuler</button><button class="btn btn-primary" id="ce_save">Créer la convention</button></div>`);
+  $('#ce_save').onclick = async () => {
+    const d = parseInt($('#ce_delai').value, 10);
+    if (!(d > 0 && d <= 180)) { toast('Indiquez un délai valide entre 1 et 180 jours.', 'err'); return; }
+    const b = $('#ce_save'); b.disabled = true; b.textContent = 'Création…';
+    try {
+      await api(`/clients/${state.clientId}/conventions`, { method: 'POST', body: { fournisseur_id: fourId, delai: d } });
+      closeOverlay();
+      toast(`Convention (${d} j) enregistrée pour ${nom}. Ajoutez le PDF dans « Conventions ».`, 'ok', 'Convention créée');
+      renderDelais(); refreshAlertsBadge();
+    } catch (e) { toast(e.message, 'err'); b.disabled = false; b.textContent = 'Créer la convention'; }
+  };
+};
 
 /* ============================== IMPORT ============================== */
 /* ============================== ASSISTANT D'IMPORT (6 étapes) ============================== */

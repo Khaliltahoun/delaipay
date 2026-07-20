@@ -582,7 +582,7 @@ router.get('/clients/:id/delais', (req, res) => {
       WHERE f.entreprise_id=? AND f.annee=? AND f.trimestre=? ORDER BY f.montant_amende DESC, f.retard_jours DESC`)
     .all(e.id, p.annee, p.trimestre);
   const list = rows.map(f => ({
-    id: f.id, numero: f.numero, four: f.four_nom, four_if: f.four_if, four_ice: f.four_ice, nature: f.designation,
+    id: f.id, numero: f.numero, four: f.four_nom, four_id: f.fournisseur_id, four_if: f.four_if, four_ice: f.four_ice, nature: f.designation,
     ttc: f.ttc, mht: f.mht, tva: f.tva, date_facture: f.date_facture, date_paiement: f.date_paiement,
     delai_ecoule: f.delai_ecoule, delai_applicable: f.delai_applicable, date_limite: f.date_limite,
     retard: f.retard_jours, n_mois: f.n_mois, a_declarer: !!f.a_declarer, has_conv: !!f.has_conv,
@@ -591,7 +591,7 @@ router.get('/clients/:id/delais', (req, res) => {
   }));
   // Incidence reportée (factures d'un trimestre antérieur qui pèsent encore sur Q)
   const inc = incidenceFactures(req.cabinetId, e.id, p.annee, p.trimestre).map(({ f, c }) => ({
-    id: f.id, numero: f.numero, four: f.four_nom, four_if: f.four_if, four_ice: f.four_ice, nature: f.designation,
+    id: f.id, numero: f.numero, four: f.four_nom, four_id: f.fournisseur_id, four_if: f.four_if, four_ice: f.four_ice, nature: f.designation,
     ttc: f.ttc, mht: f.mht, tva: f.tva, date_facture: f.date_facture, date_paiement: f.date_paiement,
     delai_ecoule: c.delaiEcoule, delai_applicable: f.delai_applicable, date_limite: c.dateLimite,
     retard: c.retardJours, n_mois: c.nMois, a_declarer: true, has_conv: !!f.has_conv,

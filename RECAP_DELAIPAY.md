@@ -172,7 +172,8 @@ Vue consolidée du portefeuille, par période (trimestre) :
 
 ### 6.7 Feuille de calcul des délais (`#delais`)
 - Tableau par facture : **N° facture**, fournisseur (IF/ICE), nature, TTC, date facture, date paiement, **délai appliqué**, date limite, **retard (jours)**, nombre de mois, taux BAM, taux total, **amende**, risque.
-- Badge **conv. / sans conv.** (quand délai ≥ 120).
+- Badge **conv. / sans conv.** (quand délai écoulé > 60 j).
+- **Action express « + Convention présente »** : sur une ligne dont le fournisseur n'a pas de convention (délai écoulé > 60 j), un clic ouvre une mini-fenêtre (délai proposé 120 j, éditable, plafond 180 j) et **crée la convention** pour ce fournisseur (PDF différé → « Document manquant »). Recalcul immédiat : toutes les lignes du fournisseur passent en « conv. ». Réutilise `POST /clients/:id/conventions` avec `fournisseur_id` (appartenance vérifiée, anti-IDOR). `four_id` exposé dans `GET /clients/:id/delais`.
 - **KPIs** : factures analysées, montant TTC concerné, retard moyen, amende du trimestre.
 - **Filtres** : toutes / en retard (retard > 0) / convention absente.
 - **Détail du calcul** par facture (panneau latéral).

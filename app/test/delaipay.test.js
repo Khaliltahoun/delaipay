@@ -339,3 +339,45 @@ test('conv/HTTP : import sans authentification refusé (401)', async () => {
   const r = await postFile(`/api/clients/${t.ent}/conventions/import`, null, convBuf([['Y', '000000000000406', '', '', 'OUI', 90]]), 'l.xlsx');
   assert.equal(r.status, 401);
 });
+
+/* ============== BOUTON « Convention présente » (feuille de délais) ============== */
+async function postJson(pathUrl, cookie, body) {
+  const res = await fetch(baseUrl() + pathUrl, { method: 'POST', headers: { Cookie: cookie, 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+  let b = null; try { b = await res.json(); } catch (_) {}
+  return { status: res.status, body: b };
+}
+function seedFactureFrs(t, { delaiEcoule = 90 } = {}) {
+  const fid = uid('four');
+  db.prepare('INSERT INTO fournisseur (id,cabinet_id,entreprise_id,raison_sociale,ice,delai_applicable) VALUES (?,?,?,?,?,60)')
+    .run(fid, t.cab, t.ent, 'FRS DELAIS SARL', '000000000000701');
+  db.prepare(`INSERT INTO facture (id,cabinet_id,entreprise_id,fournisseur_id,numero,ttc,annee,trimestre,delai_applicable,delai_ecoule,retard_jours,a_declarer)
+              VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`)
+    .run(uid('fac'), t.cab, t.ent, fid, 'F-1', 10000, 2026, 1, 60, delaiEcoule, delaiEcoule - 60, 1);
+  return fid;
+}
+test('délais/HTTP : la réponse expose four_id (id fournisseur) pour l\'action express', async () => {
+  const t = newTenant(); const fid = seedFactureFrs(t);
+  const res = await fetch(baseUrl() + `/api/clients/${t.ent}/delais?annee=2026&trimestre=1`, { headers: { Cookie: cookieOf(t.u) } });
+  const data = await res.json();
+  assert.equal(res.status, 200);
+  const row = data.rows.find(r => r.numero === 'F-1');
+  assert.ok(row, 'ligne facture présente');
+  assert.equal(row.four_id, fid, 'four_id exposé');
+  assert.equal(row.has_conv, false);
+});
+test('délais/HTTP : « Convention présente » crée la convention pour ce fournisseur', async () => {
+  const t = newTenant(); const fid = seedFactureFrs(t);
+  const r = await postJson(`/api/clients/${t.ent}/conventions`, cookieOf(t.u), { fournisseur_id: fid, delai: 120 });
+  assert.equal(r.status, 200);
+  const c = db.prepare(`SELECT * FROM convention WHERE entreprise_id=? AND fournisseur_id=? AND statut='valide'`).get(t.ent, fid);
+  assert.ok(c, 'convention créée');
+  assert.equal(c.delai_convenu, 120);
+  assert.equal(db.prepare('SELECT delai_applicable FROM fournisseur WHERE id=?').get(fid).delai_applicable, 120, 'délai fournisseur mis à jour');
+});
+test('délais/HTTP : action express refusée pour un fournisseur d\'un autre tenant (anti-IDOR)', async () => {
+  const a = newTenant('A'), b = newTenant('B'); const fidB = seedFactureFrs(b);
+  // Utilisateur A tente de créer une convention sur SON entreprise avec le fournisseur de B.
+  const r = await postJson(`/api/clients/${a.ent}/conventions`, cookieOf(a.u), { fournisseur_id: fidB, delai: 120 });
+  assert.equal(r.status, 400, 'fournisseur hors entreprise → rejeté');
+  assert.equal(db.prepare(`SELECT COUNT(*) n FROM convention WHERE fournisseur_id=?`).get(fidB).n, 0, 'aucune convention créée chez B');
+});

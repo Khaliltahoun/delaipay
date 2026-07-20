@@ -38,6 +38,12 @@ Menu **Conventions**. Cela permet d'enregistrer, en une fois, la liste des fourn
 7. **Gérer un conflit** — si le fichier propose un délai/des dates **différents** d'une convention déjà enregistrée, la ligne est marquée **« Conflit à vérifier »**. L'appli **ne remplace jamais** automatiquement : vérifiez, puis modifiez la convention à la main si besoin.
 8. **Consulter ou remplacer un PDF** — bouton **Voir le PDF** pour l'ouvrir ; bouton **Remplacer** (avec confirmation) pour joindre une nouvelle version. L'ancien document n'est jamais écrasé sans votre confirmation.
 
+## 2 ter. Raccourci « Convention présente » (feuille de calcul des délais)
+Dans **Feuille de calcul des délais**, une facture payée au-delà de 60 jours dont le fournisseur n'a **pas encore** de convention affiche un bouton **« + Convention présente »** (colonne Convention).
+- Si vous savez qu'une convention a bien été signée avec ce fournisseur, cliquez ce bouton : une petite fenêtre s'ouvre avec le **délai convenu** (120 j par défaut, modifiable, 180 j maximum).
+- Validez : la convention est **créée immédiatement** pour ce fournisseur et le calcul des retards est mis à jour. Toutes les factures de ce fournisseur affichent alors « conv. ».
+- Le **PDF** n'est pas requis ici : la convention porte le statut **« Document manquant »** et vous ajouterez le document plus tard depuis la rubrique **Conventions**.
+
 ## 3. Clôturer une période (administrateur)
 Une fois la déclaration faite, un administrateur peut **clôturer** la période : elle passe alors en **lecture seule** (plus d'import ni de modification). Une **réouverture exceptionnelle** est possible avec un **motif** (tracé dans le journal d'audit).
 
