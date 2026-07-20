@@ -63,7 +63,10 @@ function detectHeader(grid) {
 /* ---------------- détection par le CONTENU (colonnes sans titre) ---------------- */
 function isDateVal(v) {
   if (v instanceof Date) return !isNaN(v);
-  if (typeof v === 'number') return v >= 40000 && v <= 60000; // série Excel ≈ 2009–2064
+  // Les classeurs sont lus avec cellDates:true → une vraie date est un objet Date.
+  // Un NOMBRE n'est une date (n° de série Excel) que s'il est ENTIER : un montant
+  // décimal comme 56 303,86 tombe dans la plage 40000–60000 mais n'est PAS une date.
+  if (typeof v === 'number') return Number.isInteger(v) && v >= 40000 && v <= 60000; // série Excel ≈ 2009–2064
   const s = String(v).trim();
   return /^\d{1,2}[\/\-.]\d{1,2}[\/\-.]\d{2,4}$/.test(s) || /^\d{4}-\d{2}-\d{2}/.test(s);
 }
@@ -446,9 +449,18 @@ function analyzeWorkbook(buffer) {
     const grid = XLSX.utils.sheet_to_json(wb.Sheets[name], { header: 1, blankrows: false, raw: true });
     if (!grid.length) continue;
     const am = autoMapGrid(grid);
-    const cols = (grid[am.headerRow] || []).map((c, i) => ({ index: i, label: String(c == null ? '' : c).replace(/\s+/g, ' ').trim() || `Colonne ${i + 1}` }));
+    // IMPORTANT : sheet_to_json renvoie des tableaux CREUX (trous) quand des cellules
+    // sont vides au milieu d'une ligne (fréquent sur les exports type Crystal Reports).
+    // .map() conserve les trous → ils deviennent `null` en JSON et font planter le
+    // front (« Cannot read properties of null »). On construit donc un tableau DENSE.
+    const headerCells = grid[am.headerRow] || [];
     const maxCol = grid.reduce((m, r) => Math.max(m, r ? r.length : 0), 0);
-    for (let i = cols.length; i < maxCol; i++) cols.push({ index: i, label: `Colonne ${i + 1}` });
+    const width = Math.max(maxCol, headerCells.length);
+    const cols = [];
+    for (let i = 0; i < width; i++) {
+      const c = headerCells[i];
+      cols.push({ index: i, label: String(c == null ? '' : c).replace(/\s+/g, ' ').trim() || `Colonne ${i + 1}` });
+    }
     const mapping = {};
     for (const [f, m] of Object.entries(am.mapping)) mapping[f] = { ...m, colLabel: (cols[m.col] || {}).label || '', apercu: sampleValues(grid, am.startRow, m.col) };
     feuilles.push({

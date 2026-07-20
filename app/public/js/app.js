@@ -715,6 +715,7 @@ async function wizAnalyze(file) {
       return wizPreview(); // preview gérera le cas XML côté serveur ? → on route vers confirm direct
     }
     const sug = a.feuilles.find(f => f.nom === a.suggestion) || a.feuilles[0];
+    if (!sug) { toast('Aucune feuille exploitable détectée dans ce fichier. Vérifiez qu\'il contient un tableau de factures.', 'err', 'Fichier non reconnu'); state.wiz = { step: 'upload' }; drawWizard(); return; }
     state.wiz = { step: 'map', token: a.token, sourceName: a.sourceName, analyse: a, sheet: sug.nom, headerRow: sug.ligneEntete, mapping: sheetMapping(sug), requireNumero: false };
     drawWizard();
   } catch (e) { toast(e.message, 'err'); state.wiz = { step: 'upload' }; drawWizard(); }
@@ -724,7 +725,8 @@ function curSheet() { return state.wiz.analyse.feuilles.find(f => f.nom === stat
 function wizMapHtml() {
   const a = state.wiz.analyse, sheet = curSheet();
   const champs = a.champs;
-  const colOpts = (sel) => `<option value="">— non mappé —</option>` + sheet.colonnes.map(c => `<option value="${c.index}" ${sel == c.index ? 'selected' : ''}>${esc(c.label)}</option>`).join('');
+  // .filter(Boolean) : tolérance aux colonnes vides/nulles (en-têtes lacunaires).
+  const colOpts = (sel) => `<option value="">— non mappé —</option>` + (sheet.colonnes || []).filter(Boolean).map(c => `<option value="${c.index}" ${sel == c.index ? 'selected' : ''}>${esc(c.label || ('Colonne ' + (c.index + 1)))}</option>`).join('');
   const autoM = sheet.mapping || {};
   return `<div class="card"><div class="card-h"><div><h3>Feuille & correspondance des colonnes</h3><div class="sub">Vérifiez le mapping proposé — les champs requis sont marqués ✱</div></div>
       <div class="selctb"><select id="wizSheet">${a.feuilles.map(f => `<option value="${esc(f.nom)}" ${f.nom === state.wiz.sheet ? 'selected' : ''}>${esc(f.nom)}${f.ignoree ? ' (grand-livre — ignorée)' : ''} · ${f.nbLignes} lignes</option>`).join('')}</select></div></div>

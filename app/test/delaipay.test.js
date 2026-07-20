@@ -98,6 +98,28 @@ test('confirm transactionnel + ré-import = doublons (dédoublonnage)', { skip: 
   assert.ok(ligne > 0);
 });
 
+/* -------------------- TOLÉRANCE FICHIERS (en-têtes lacunaires / montants) -------------------- */
+test('tolérance : en-tête lacunaire → colonnes DENSES (pas de null) et dates bien détectées', () => {
+  const X = require('../node_modules/xlsx');
+  // En-tête avec trous (cols 1,3,5,8 vides) + une colonne « Ecart » de MONTANTS décimaux
+  // tombant dans la plage des n° de série Excel (40000–60000) : ne doit PAS être vue comme une date.
+  const aoa = [
+    ['Date', '', 'N°', '', 'Fournisseur', '', 'Ecart', 'MontantTtc', '', 'Date'],
+    ['2026-01-05', '', 'F1', '', 'FRS A', '', 45000.50, 1200, '', '2026-02-10'],
+    ['2026-01-06', '', 'F2', '', 'FRS B', '', 52000.75, 2400, '', '2026-02-11'],
+    ['2026-01-07', '', 'F3', '', 'FRS C', '', 48000.20, 3600, '', '2026-02-12'],
+    ['2026-01-08', '', 'F4', '', 'FRS D', '', 41000.10, 4800, '', '2026-02-13'],
+  ];
+  const ws = X.utils.aoa_to_sheet(aoa); const wb = X.utils.book_new(); X.utils.book_append_sheet(wb, ws, 'S');
+  const buf = X.write(wb, { type: 'buffer', bookType: 'xlsx' });
+  const a = importer.analyzeWorkbook(buf);                    // ne doit pas lever
+  const f = a.feuilles[0];
+  assert.ok(!JSON.stringify(f.colonnes).includes('null'), 'aucune colonne null (dense)');
+  assert.ok(f.colonnes.every(c => c && Number.isInteger(c.index)), 'chaque colonne a un index');
+  assert.equal(f.mapping.date_facture.col, 0, 'date facture = colonne 0');
+  assert.equal(f.mapping.date_paiement.col, 9, 'date paiement = colonne 9 (pas la colonne de montants 40000–60000)');
+});
+
 /* -------------------- DÉTECTION LIGNES TOTAL/VIDES -------------------- */
 test('lignes total/sous-total/vides ignorées, facture impayée acceptée', () => {
   const { cab, ent } = seedCab();
