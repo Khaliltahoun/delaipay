@@ -44,6 +44,7 @@ Implémenté dans `app/src/calc.js`.
 - **Date d'arrêté** (`calc.getDateArreteFacture`, source unique) : paiement si payée au plus tard le dernier jour du trimestre, sinon **dernier jour du trimestre** (impayée ou payée après la clôture). T1→31/03, T2→30/06, T3→30/09, T4→31/12 (année N, même si T4 traité en janvier N+1). La date du jour n'arrête jamais un trimestre.
 - **Délai constaté** = date d'arrêté − date de facture (jours calendaires). **Retard** = délai constaté − délai autorisé (jamais négatif). Ces trois valeurs restent distinctes.
 - **Retard facturé** = mois de retard tombant dans le trimestre déclaré, entre la date limite et la date d'arrêté.
+- **Opérateurs de réseau** (télécom / eau / électricité / régies-SRM, module `reseau.js`) : délai autorisé **30 j** (via `resolveDelaiAutorise`, prioritaire) et **exclusion des tableaux déclaratifs** (dans `buildDeclaration`, avec résumé des exclusions ; factures conservées et visibles en interne). Classification par alias + ICE/IF/RC prioritaires ; match par nom seul = *proposé*, à confirmer. Endpoints : `PATCH …/fournisseurs/:fid/classification`, `GET …/reseau/simulation`.
 - Le **tout premier mois de retard** (sur la vie de la facture) est taxé au **taux directeur Bank Al-Maghrib** en vigueur ce mois (2,25 % en 2026) ; **chaque mois calendaire suivant** = **0,85 %**.
 - On ne facture que les **mois de retard tombant DANS le trimestre déclaré**.
 - **Base** = montant TTC réglé hors délai + montant non réglé.

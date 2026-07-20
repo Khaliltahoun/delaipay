@@ -62,6 +62,13 @@ Les trois indicateurs restent distincts dans la feuille de délais :
 
 Dates de fin retenues : T1 → 31/03, T2 → 30/06, T3 → 30/09, T4 → 31/12 (année N, même si T4 est traité en janvier N+1).
 
+## 3 ter. Opérateurs de réseau (télécom, eau, électricité)
+Les factures des **opérateurs de télécommunications, d'eau, d'électricité et des sociétés régionales multiservices** sont soumises à un **délai spécifique de 30 jours**. Elles **restent visibles dans le suivi interne** (feuille de délais) mais sont **exclues des tableaux déclaratifs** concernés — un résumé « factures exclues » figure dans la déclaration pour vérification.
+
+- Un fournisseur reconnu par son **nom seul** est *proposé* : il faut le **confirmer** (l'ICE, l'IF ou le RC priment sur le nom). Tant qu'il n'est pas confirmé, ni le délai de 30 j ni l'exclusion ne s'appliquent.
+- Dans la feuille de délais, un badge **« Réseau — 30 j »** et **« Hors tableau déclaratif »** signale ces factures.
+- Aucune donnée historique n'est modifiée automatiquement : un rapport de simulation liste les fournisseurs candidats avant toute application.
+
 ## 4. Une facture impayée sur plusieurs trimestres
 Si une facture reste impayée, son amende est **reportée automatiquement** sur chaque trimestre concerné (mois par mois), **sans déplacer le fichier d'origine**. Vous la retrouvez dans la feuille de délais du trimestre, marquée « incidence reportée ».
 

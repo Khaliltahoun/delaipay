@@ -1,5 +1,18 @@
 # Changelog — DelaiPay
 
+## Règle spéciale « opérateurs de réseau » — délai 30 j + exclusion déclarative (juillet 2026)
+
+### Ajouté
+- **Catégorie « opérateur de réseau »** (télécom, eau, électricité, régies / SRM) : **délai autorisé = 30 jours**, prioritaire sur le standard 60 j, la convention et les valeurs d'import (fonction centrale unique `reseau.resolveDelaiAutorise`, backend = vérité).
+- **Exclusion des tableaux DÉCLARATIFS** (déclaration DGI, `ligne_declaration`, export CSV/XML, visa) via l'unique `buildDeclaration`, avec **résumé des exclusions** (nombre, TTC, fournisseurs) — les factures ne sont **jamais supprimées** et restent visibles dans le **suivi interne** (feuille de délais, dashboard, fournisseurs, anomalies).
+- **Classification robuste et confirmée** : reconnaissance par **alias normalisés** (Maroc Telecom/IAM/Itissalat, Orange/Médi Telecom, inwi/Wana, SRM/régies…), **ICE/IF/RC prioritaires** sur le nom. Un match par **nom seul** est *proposé* et **doit être confirmé** (jamais de classement définitif ni d'exclusion automatique sur un nom ambigu).
+- Fournisseur enrichi : `categorie_fournisseur`, `operateur_reseau`, `delai_special`, `hors_tableau_declaratif`, `statut_classification` (propose/confirme/à vérifier), `classification_source`, `date_validation`, `utilisateur_validation` (migration idempotente).
+- **API** : `PATCH /clients/:id/fournisseurs/:fid/classification` (confirmer/modifier, audité, recalcul des périodes **non clôturées** uniquement) ; `GET /clients/:id/reseau/simulation` (rapport d'impact **lecture seule** — candidats, factures, périodes, délai actuel→30, confiance).
+- **Feuille de délais** : badge « Réseau — 30 j » + « Hors tableau déclaratif » + infobulle ; délai autorisé résolu par le backend.
+
+### Préservé / sécurité
+- Aucune donnée historique modifiée automatiquement : reclassification et recalcul **uniquement après confirmation explicite**, jamais sur une période clôturée. Trois indicateurs distincts (constaté / autorisé / retard). **CADOZAT = 7 025,33 DH** inchangé — suite 60/60.
+
 ## Délai constaté arrêté au dernier jour du trimestre (juillet 2026)
 
 ### Ajouté / corrigé

@@ -576,6 +576,12 @@ function etatMini(f) {
   const e = m[f.etat_paiement];
   return e ? `<div style="margin-top:2px"><span class="pill ${e[0]}" style="font-size:9.5px;padding:1px 6px">${e[1]}</span></div>` : '';
 }
+// Badge « opérateur de réseau » (délai 30 j + exclusion déclarative).
+function reseauBadge(f) {
+  if (!f.operateur_reseau) return '';
+  const tip = "Cette facture appartient à un opérateur de télécommunications, d'eau ou d'électricité. Son délai applicable est de 30 jours et elle est exclue des tableaux déclaratifs concernés.";
+  return ` <span class="pill pill-app" style="font-size:9.5px;padding:1px 6px" title="${tip}">Réseau — 30 j</span>${f.hors_tableau ? ' <span class="pill pill-orange" style="font-size:9.5px;padding:1px 6px" title="Facture volontairement exclue des tableaux déclaratifs (conservée en suivi interne).">Hors tableau déclaratif</span>' : ''}`;
+}
 async function renderDelais() {
   if (!state.clientId) return noClient();
   const periods = await ensurePeriod();
@@ -622,7 +628,7 @@ async function renderDelais() {
         ? ' <span class="pill pill-ok" style="font-size:10px;padding:1px 7px" title="Convention disponible">conv.</span>'
         : (f.four_id
           ? ` <button class="btn btn-ghost btn-sm" style="font-size:10px;padding:2px 8px;color:var(--primary);border-color:rgba(14,77,100,.3)" title="Ce fournisseur a une convention signée : l'enregistrer en un clic" data-four="${f.four_id}" data-fournom="${esc(f.four || '')}" data-delai="${f.delai_ecoule}" onclick="event.stopPropagation();convExpress(this)">+ Convention présente</button>`
-          : ' <span class="pill pill-red" style="font-size:10px;padding:1px 7px" title="Aucune convention pour ce fournisseur">sans conv.</span>')) : ''}</td>
+          : ' <span class="pill pill-red" style="font-size:10px;padding:1px 7px" title="Aucune convention pour ce fournisseur">sans conv.</span>')) : ''}${reseauBadge(f)}</td>
       <td class="retard ${f.retard > 0 ? 'pos' : 'neg'}">${f.retard == null ? '—' : (f.retard > 0 ? '+' + f.retard : f.retard)}</td>
       <td>${f.a_declarer ? '<span class="pill pill-red" style="font-size:11px"><span class="dot"></span>Oui</span>' : '<span class="tag-no">—</span>'}</td>
       <td class="num" style="font-weight:700">${f.amende ? money(f.amende) : '—'}</td>
@@ -1035,6 +1041,8 @@ async function renderDecl() {
       <div class="table-wrap" style="box-shadow:none"><table style="min-width:640px"><thead><tr><th>IF fournisseur</th><th>Raison sociale</th><th class="num">TTC</th><th class="num">Non payé</th><th class="num">Payé hors délai</th><th class="num">Retard</th><th class="num">Amende</th></tr></thead>
       <tbody>${L.length ? L.map(l => `<tr><td class="mono dh">${esc(l.if || '—')}</td><td><b>${esc(l.nom || '—')}</b></td><td class="num">${money(l.ttc)}</td><td class="num">${money(l.non_paye)}</td><td class="num">${money(l.hors_delai)}</td><td class="num" style="color:var(--r-red)">+${l.retard} j</td><td class="num" style="font-weight:700">${money(l.amende)}</td></tr>`).join('') : '<tr><td colspan="7" class="dh" style="text-align:center;padding:24px">Aucune facture hors délai sur la période — déclaration « néant ».</td></tr>'}</tbody>
       <tfoot><tr><td colspan="2">Total</td><td class="num">${money(dec.montant_total_ttc)}</td><td class="num">${money(dec.montant_non_paye)}</td><td class="num">${money(dec.montant_paye_hors_delai)}</td><td></td><td class="num" style="color:var(--r-red)">${money(dec.montant_total_amende)}</td></tr></tfoot></table></div></div>
+    ${d.exclusions && d.exclusions.nbFactures ? `<div class="doc-sec"><h4>Factures d'opérateurs de réseau exclues du tableau (non comptées dans les totaux)</h4>
+      <div class="dh" style="font-size:12.5px">${d.exclusions.nbFactures} facture(s) · ${d.exclusions.nbFournisseurs} fournisseur(s) · TTC ${money(d.exclusions.ttc)} DH — <b>${esc(d.exclusions.motif)}</b>. Ces factures restent visibles dans le suivi interne (feuille de délais) mais sont volontairement exclues des tableaux déclaratifs.</div></div>` : ''}
     <div class="pay-band">
       <div><div class="dh" style="font-size:12px;font-weight:600;text-transform:uppercase;letter-spacing:.05em">Montant à verser</div><div class="amt">${money(dec.montant_a_verser)} DH</div><div class="dh" style="font-size:11.5px">amende ${money(dec.montant_total_amende)} + sanctions ${money(dec.sanctions_retard)}</div></div>
       <div class="visa-box"><div class="st"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M9 12l2 2 4-4"/></svg></div>

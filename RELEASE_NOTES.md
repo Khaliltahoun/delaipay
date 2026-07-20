@@ -5,6 +5,12 @@ Version candidate à la validation métier (Mme Zahra) et au déploiement de pro
 
 ---
 
+## 🆕 Nouveau (opérateurs de réseau)
+
+- **Délai spécifique de 30 jours** pour les opérateurs de télécom, eau, électricité et régies / SRM, et **exclusion des tableaux déclaratifs** (déclaration, exports, visa) avec **résumé des exclusions** — factures conservées et visibles en suivi interne.
+- **Classification confirmée** : alias (Maroc Telecom/IAM, Orange/Médi Telecom, inwi/Wana, SRM…), ICE/IF/RC prioritaires ; un match par nom seul est *proposé* et doit être confirmé (pas d'exclusion automatique sur nom ambigu).
+- API de classification (confirmer, audité) + rapport de simulation d'impact (lecture seule). Badges « Réseau — 30 j » / « Hors tableau déclaratif » dans la feuille de délais.
+
 ## 🆕 Nouveau (délai constaté à la clôture)
 
 - **Délai constaté arrêté au dernier jour du trimestre** : une facture **impayée** (ou **payée après la clôture**) est désormais calculée jusqu'au dernier jour du trimestre déclaré, et non plus jusqu'à la date du jour ni jusqu'à un paiement postérieur. Exemple : facture du **15/04** non payée au **30/06** → **76 jours** en T2 ; si payée le **10/07**, le calcul T2 **reste arrêté au 30/06**.

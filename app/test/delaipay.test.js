@@ -546,3 +546,66 @@ test('arrêté #17 : période clôturée → même résultat quelle que soit la 
   assert.equal(a.montantAmende, b.montantAmende, 'amende reproductible');
   assert.equal(a.arreteAu, '2026-06-30'); assert.equal(b.arreteAu, '2026-06-30');
 });
+
+/* ==================================================================================
+ * RÈGLE SPÉCIALE — OPÉRATEURS DE RÉSEAU (télécom / eau / électricité) : délai 30 j + exclusion déclarative
+ * ================================================================================== */
+const reseau = require('../src/reseau');
+const C = (nom) => reseau.classifyReseau({ nom });
+test('reseau #1-8 : reconnaissance par alias (télécom / SRM)', () => {
+  assert.equal(C('MAROC TELECOM').categorie, 'telecom');
+  assert.ok(C('IAM').isOperateur && C('IAM').ambigu, 'IAM = alias ambigu');
+  assert.ok(C('ITISSALAT AL MAGHRIB').isOperateur);
+  assert.equal(C('ORANGE MAROC').categorie, 'telecom');
+  assert.ok(C('MEDI TELECOM').isOperateur);
+  assert.ok(C('INWI').isOperateur);
+  assert.ok(C('WANA CORPORATE').isOperateur);
+  assert.ok(C('SRM').isOperateur && C('SRM').ambigu, 'SRM = ambigu');
+});
+test('reseau #9 : nom vague NON reconnu automatiquement (pas de faux positif)', () => {
+  assert.equal(C('SOCIETE DES EAUX MINERALES ATLAS').isOperateur, false); // « eau » seul ne classe pas
+  assert.equal(C('ENERGIE SOLAIRE SARL').isOperateur, false);
+  assert.equal(C('RESEAUX ET TRAVAUX SARL').isOperateur, false);
+});
+test('reseau #10 : ICE d\'un opérateur confirmé prioritaire sur le nom (import)', () => {
+  const { cab, ent } = seedCab();
+  // opérateur confirmé avec un ICE connu
+  db.prepare(`INSERT INTO fournisseur (id,cabinet_id,entreprise_id,raison_sociale,ice,operateur_reseau,statut_classification,hors_tableau_declaratif,delai_special,categorie_fournisseur,delai_applicable) VALUES (?,?,?,?,?,1,'confirme',1,30,'telecom',30)`)
+    .run(uid('four'), cab, ent, 'MAROC TELECOM', '000000000000010');
+  const r = importer.upsertFournisseur ? null : null; // upsert interne : on passe par un import
+  const X = require('../node_modules/xlsx');
+  const aoa = [['N°', 'Date', 'Fournisseur', 'ICE', 'TTC'], ['F1', '2026-04-15', 'LIBELLE DIFFERENT', '000000000000010', 1000]];
+  const ws = X.utils.aoa_to_sheet(aoa); const wb = X.utils.book_new(); X.utils.book_append_sheet(wb, ws, 'S');
+  importer.confirmImport(X.write(wb, { type: 'buffer', bookType: 'xlsx' }), { sheetName: 'S', headerRow: 0, mapping: { numero: 0, date_facture: 1, four_nom: 2, four_ice: 3, ttc: 4 }, cabinetId: cab, entrepriseId: ent, annee: 2026, trimestre: 2, sourceName: 's.xlsx', userId: 'u' });
+  // le même ICE ne doit pas dupliquer et reste opérateur confirmé
+  const f = db.prepare("SELECT * FROM fournisseur WHERE entreprise_id=? AND ice='000000000000010'").get(ent);
+  assert.equal(f.operateur_reseau, 1); assert.equal(f.statut_classification, 'confirme');
+});
+test('reseau #11-14 : délai 30 j, constaté jusqu\'à la clôture, retard = 46 (15/04→30/06)', () => {
+  const rd = reseau.resolveDelaiAutorise({ fournisseur: { operateur_reseau: 1, statut_classification: 'confirme', hors_tableau_declaratif: 1 } });
+  assert.equal(rd.delaiAutorise, 30); assert.equal(rd.horsTableauDeclaratif, true); assert.equal(rd.sourceRegle, 'operateur_reseau');
+  const c = calc.computeFacture({ dateFacture: '2026-04-15', datePaiement: null, ttc: 100000, delaiApplicable: 30, periode: { annee: 2026, trimestre: 2 }, tauxProvider: () => 0.0225 });
+  assert.equal(c.delaiEcoule, 76); assert.equal(c.delaiApplicable, 30); assert.equal(c.retardJours, 46);
+});
+test('reseau : classification proposée par le nom N\'EST PAS confirmée (ni 30 j ni exclusion tant que non confirmée)', () => {
+  const rd = reseau.resolveDelaiAutorise({ fournisseur: { operateur_reseau: 1, statut_classification: 'propose', delai_applicable: 60 } });
+  assert.notEqual(rd.delaiAutorise, 30); assert.equal(rd.horsTableauDeclaratif, false);
+  assert.equal(reseau.estHorsTableauDeclaratif({ operateur_reseau: 1, statut_classification: 'propose', hors_tableau_declaratif: 0 }), false);
+});
+test('reseau/HTTP #18-20 : opérateur exclu du tableau déclaratif, visible en interne, dans le résumé', async () => {
+  const t = newTenant();
+  db.prepare(`INSERT INTO fournisseur (id,cabinet_id,entreprise_id,raison_sociale,ice,delai_applicable,operateur_reseau,statut_classification,hors_tableau_declaratif,delai_special,categorie_fournisseur) VALUES (?,?,?,?,?,30,1,'confirme',1,30,'telecom')`)
+    .run(uid('four'), t.cab, t.ent, 'MAROC TELECOM', '000000000000010');
+  const st = uid('four'); db.prepare('INSERT INTO fournisseur (id,cabinet_id,entreprise_id,raison_sociale,delai_applicable) VALUES (?,?,?,?,60)').run(st, t.cab, t.ent, 'FRS STANDARD');
+  const op = db.prepare("SELECT id FROM fournisseur WHERE entreprise_id=? AND raison_sociale='MAROC TELECOM'").get(t.ent).id;
+  for (const [fid, num] of [[op, 'OP-1'], [st, 'ST-1']])
+    db.prepare(`INSERT INTO facture (id,cabinet_id,entreprise_id,fournisseur_id,numero,ttc,date_facture,annee,trimestre,a_declarer) VALUES (?,?,?,?,?,?,?,?,?,1)`).run(uid('fac'), t.cab, t.ent, fid, num, 100000, '2026-04-15', 2026, 2);
+  const dec = await (await fetch(baseUrl() + `/api/clients/${t.ent}/declaration?annee=2026&trimestre=2`, { headers: { Cookie: cookieOf(t.u) } })).json();
+  assert.ok(!dec.lignes.some(l => l.nom === 'MAROC TELECOM'), 'opérateur EXCLU du tableau déclaratif');
+  assert.ok(dec.lignes.some(l => l.nom === 'FRS STANDARD'), 'standard présent');
+  assert.ok(dec.exclusions.nbFactures >= 1 && dec.exclusions.nbFournisseurs >= 1, 'résumé des exclusions renseigné');
+  const del = await (await fetch(baseUrl() + `/api/clients/${t.ent}/delais?annee=2026&trimestre=2`, { headers: { Cookie: cookieOf(t.u) } })).json();
+  const opRow = del.rows.find(x => x.numero === 'OP-1');
+  assert.ok(opRow, 'opérateur VISIBLE en suivi interne');
+  assert.equal(opRow.delai_applicable, 30); assert.equal(opRow.operateur_reseau, true); assert.equal(opRow.hors_tableau, true);
+});

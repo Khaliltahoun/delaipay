@@ -141,12 +141,11 @@ function inferByContent(grid, startRow, idx) {
 
 /* ------------------------------------------------------------------ helpers métier */
 function lookupDelai(entrepriseId, fournisseurId) {
-  // Toute valeur lue est ramenée à [1, 120] j (garde-fou contre des données corrompues).
+  // Délai AUTORISÉ résolu par la fonction centrale (opérateur réseau 30 j → convention → standard 60 j).
   if (fournisseurId) {
+    const f = db.prepare('SELECT * FROM fournisseur WHERE id=?').get(fournisseurId);
     const conv = db.prepare(`SELECT delai_convenu FROM convention WHERE entreprise_id=? AND fournisseur_id=? AND statut='valide' ORDER BY created_at DESC LIMIT 1`).get(entrepriseId, fournisseurId);
-    if (conv && conv.delai_convenu != null) return calc.saneDelai(conv.delai_convenu);
-    const f = db.prepare('SELECT delai_applicable FROM fournisseur WHERE id=?').get(fournisseurId);
-    if (f && f.delai_applicable) return calc.saneDelai(f.delai_applicable);
+    return require('./reseau').resolveDelaiAutorise({ fournisseur: f, convention: conv }).delaiAutorise;
   }
   return 60;
 }
@@ -168,6 +167,18 @@ function upsertFournisseur(cabinetId, entrepriseId, { nom, ice, iff }) {
   const id = uid('four');
   db.prepare(`INSERT INTO fournisseur (id, cabinet_id, entreprise_id, raison_sociale, ice, if_fiscal, delai_applicable) VALUES (?,?,?,?,?,?,60)`)
     .run(id, cabinetId, entrepriseId, nom ? String(nom) : null, iceN, iff ? String(iff) : null);
+  // Proposition (jamais confirmée automatiquement) de classification « opérateur de réseau ».
+  // Si un opérateur DÉJÀ CONFIRMÉ partage le même ICE → on reprend sa classification (identifiant prioritaire).
+  const reseau = require('./reseau');
+  let cls = null;
+  if (iceN) { const known = db.prepare(`SELECT categorie_fournisseur, motif_regle_speciale FROM fournisseur WHERE ice=? AND operateur_reseau=1 AND statut_classification='confirme' LIMIT 1`).get(iceN); if (known) cls = { categorie: known.categorie_fournisseur, statut: 'confirme', source: 'auto_ice' }; }
+  if (!cls) { const p = reseau.classifyReseau({ nom }); if (p.isOperateur) cls = { categorie: p.categorie, statut: 'propose', source: 'auto_nom' }; }
+  if (cls) {
+    const confirme = cls.statut === 'confirme';
+    db.prepare(`UPDATE fournisseur SET categorie_fournisseur=?, operateur_reseau=1, statut_classification=?, classification_source=?,
+      hors_tableau_declaratif=?, delai_special=?, motif_regle_speciale=? WHERE id=?`)
+      .run(cls.categorie, cls.statut, cls.source, confirme ? 1 : 0, confirme ? reseau.DELAI_RESEAU : null, reseau.MOTIF_RESEAU, id);
+  }
   return { id, created: true };
 }
 

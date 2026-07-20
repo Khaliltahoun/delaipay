@@ -7,6 +7,7 @@ const { db, tauxAt, audit } = require('./db');
 const calc = require('./calc');
 const periode = require('./periode');
 const { importWorkbook } = require('./importer');
+const reseau = require('./reseau');
 const auth = require('./auth');
 const visa = require('./visa');
 const { rateLimit } = require('./security');
@@ -122,9 +123,9 @@ function recomputePeriod(cabinetId, entrepriseId, annee, trimestre) {
     retard_jours=?, n_mois=?, a_declarer=?, taux_bam=?, taux_total=?, base_amende=?, montant_amende=?, couleur_risque=? WHERE id=?`);
   for (const f of rows) {
     const conv = db.prepare(`SELECT delai_convenu FROM convention WHERE entreprise_id=? AND fournisseur_id=? AND statut='valide' ORDER BY created_at DESC LIMIT 1`).get(entrepriseId, f.fournisseur_id);
-    const fRow = db.prepare('SELECT delai_applicable FROM fournisseur WHERE id=?').get(f.fournisseur_id);
-    // Garde-fou LÉGAL : délai appliqué toujours ramené à [1, 120] j (données corrompues neutralisées).
-    const delai = calc.saneDelai(conv ? conv.delai_convenu : (fRow && fRow.delai_applicable ? fRow.delai_applicable : f.delai_applicable));
+    const fRow = db.prepare('SELECT * FROM fournisseur WHERE id=?').get(f.fournisseur_id);
+    // Délai AUTORISÉ résolu centralement (opérateur réseau 30 j → convention → standard 60 j), borné [1,120].
+    const delai = reseau.resolveDelaiAutorise({ fournisseur: fRow, convention: conv }).delaiAutorise;
     const c = calc.computeFacture({ dateFacture: f.date_facture, datePaiement: f.date_paiement, ttc: f.ttc,
       delaiApplicable: delai, periode: { annee, trimestre }, tauxProvider: (y, m) => tauxAt(y, m, cabinetId) });
     upd.run(delai, c.delaiEcoule, c.dateLimite, c.retardJours, c.nMois, c.aDeclarer ? 1 : 0,
@@ -552,6 +553,47 @@ router.get('/conventions/template.xlsx', (req, res) => {
   res.send(require('./importer').buildConventionsTemplate());
 });
 
+/* ============================================================ RÈGLE OPÉRATEUR DE RÉSEAU */
+// Classer / confirmer un fournisseur (règle de paiement applicable). Audité. Ne touche pas aux périodes clôturées.
+router.patch('/clients/:id/fournisseurs/:fid/classification', (req, res) => {
+  const e = ownedEntreprise(req, req.params.id); if (!e) return res.status(404).json({ error: 'Introuvable.' });
+  const f = db.prepare('SELECT * FROM fournisseur WHERE id=? AND entreprise_id=?').get(req.params.fid, e.id);
+  if (!f) return res.status(404).json({ error: 'Fournisseur introuvable.' });
+  const b = req.body || {};
+  const op = b.operateur_reseau ? 1 : 0;
+  const statut = b.statut === 'confirme' ? 'confirme' : (b.statut === 'a_verifier' ? 'a_verifier' : 'propose');
+  const cat = b.categorie_fournisseur || (op ? 'autre_operateur_reseau' : 'standard');
+  const hors = (op && statut === 'confirme' && b.hors_tableau_declaratif !== false) ? 1 : 0;
+  db.prepare(`UPDATE fournisseur SET categorie_fournisseur=?, operateur_reseau=?, statut_classification=?, classification_source='manuelle',
+     hors_tableau_declaratif=?, delai_special=?, motif_regle_speciale=?, date_validation=datetime('now'), utilisateur_validation=? WHERE id=?`)
+    .run(cat, op, statut, hors, (op && statut === 'confirme') ? reseau.DELAI_RESEAU : null, op ? reseau.MOTIF_RESEAU : null, req.user.id, f.id);
+  // Recalcul des périodes NON clôturées où ce fournisseur a des factures (jamais les périodes verrouillées).
+  let recompute = 0;
+  for (const p of db.prepare('SELECT DISTINCT annee, trimestre FROM facture WHERE entreprise_id=? AND fournisseur_id=? AND annee IS NOT NULL').all(e.id, f.id)) {
+    const row = ensurePeriode(req.cabinetId, e.id, p.annee, p.trimestre);
+    if (!periode.isLocked(row.statut)) { recomputePeriod(req.cabinetId, e.id, p.annee, p.trimestre); recompute++; }
+  }
+  audit(req.cabinetId, req.user.id, 'classification_fournisseur', 'fournisseur', { id: f.id, operateur_reseau: op, statut, hors_tableau: hors }, req.ip);
+  res.json({ ok: true, recompute });
+});
+// Rapport de SIMULATION (lecture seule) — candidats « opérateur de réseau » et impact. NE modifie rien.
+router.get('/clients/:id/reseau/simulation', (req, res) => {
+  const e = ownedEntreprise(req, req.params.id); if (!e) return res.status(404).json({ error: 'Introuvable.' });
+  const candidats = [];
+  for (const f of db.prepare('SELECT * FROM fournisseur WHERE entreprise_id=?').all(e.id)) {
+    if (f.operateur_reseau && f.statut_classification === 'confirme') continue; // déjà appliqué
+    const p = reseau.classifyReseau({ nom: f.raison_sociale });
+    if (!p.isOperateur) continue;
+    const a = db.prepare(`SELECT COUNT(*) nb, ROUND(SUM(ttc),2) ttc, ROUND(SUM(montant_amende),2) amende,
+       COUNT(DISTINCT annee||'-'||trimestre) periodes FROM facture WHERE entreprise_id=? AND fournisseur_id=?`).get(e.id, f.id);
+    candidats.push({ fournisseur_id: f.id, fournisseur: f.raison_sociale, ice: f.ice, if_fiscal: f.if_fiscal, rc: f.rc,
+      alias: p.alias, categorie: p.categorie, ambigu: !!p.ambigu, confidence: p.confidence,
+      nbFactures: a.nb, ttc: a.ttc, amende: a.amende, periodes: a.periodes,
+      delaiActuel: calc.saneDelai(f.delai_applicable), delaiPropose: reseau.DELAI_RESEAU, statutActuel: f.statut_classification || 'non_classe' });
+  }
+  res.json({ candidats, total: candidats.length });
+});
+
 /* ============================================================ DELAIS (calc table) */
 // Incidence reportée : factures d'un trimestre ANTÉRIEUR, non soldées avant Q, dont des mois de
 // retard tombent dans Q → recalculées POUR Q. Additif : ne modifie pas les lignes stockées (CADOZAT intact).
@@ -579,7 +621,9 @@ router.get('/clients/:id/delais', (req, res) => {
   const e = ownedEntreprise(req, req.params.id); if (!e) return res.status(404).json({ error: 'Introuvable.' });
   const p = req.query.annee ? { annee: +req.query.annee, trimestre: +req.query.trimestre } : latestPeriod(e.id);
   const rows = db.prepare(`SELECT f.*, fo.raison_sociale four_nom, fo.ice four_ice, fo.if_fiscal four_if,
-      (SELECT COUNT(*) FROM convention c WHERE c.fournisseur_id=f.fournisseur_id AND c.statut='valide') has_conv
+      fo.operateur_reseau, fo.statut_classification, fo.hors_tableau_declaratif, fo.categorie_fournisseur, fo.delai_applicable fo_delai,
+      (SELECT COUNT(*) FROM convention c WHERE c.fournisseur_id=f.fournisseur_id AND c.statut='valide') has_conv,
+      (SELECT delai_convenu FROM convention c WHERE c.fournisseur_id=f.fournisseur_id AND c.statut='valide' ORDER BY created_at DESC LIMIT 1) conv_delai
       FROM facture f LEFT JOIN fournisseur fo ON fo.id=f.fournisseur_id
       WHERE f.entreprise_id=? AND f.annee=? AND f.trimestre=? ORDER BY f.montant_amende DESC, f.retard_jours DESC`)
     .all(e.id, p.annee, p.trimestre);
@@ -587,13 +631,16 @@ router.get('/clients/:id/delais', (req, res) => {
     // Délai CONSTATÉ + date d'arrêté recalculés à la volée (source de vérité = moteur), pour
     // que la feuille soit toujours correcte selon la règle « arrêté au dernier jour du trimestre ».
     const arr = calc.getDateArreteFacture({ dateFacture: f.date_facture, datePaiement: f.date_paiement, annee: p.annee, trimestre: p.trimestre });
-    const delaiApp = calc.saneDelai(f.delai_applicable);
+    // Délai AUTORISÉ résolu centralement (opérateur réseau 30 j prioritaire).
+    const rd = reseau.resolveDelaiAutorise({ fournisseur: { operateur_reseau: f.operateur_reseau, statut_classification: f.statut_classification, hors_tableau_declaratif: f.hors_tableau_declaratif, motif_regle_speciale: f.motif_regle_speciale, delai_applicable: f.fo_delai }, convention: f.conv_delai != null ? { delai_convenu: f.conv_delai } : null });
+    const delaiApp = rd.delaiAutorise;
     const retard = arr.delaiConstate == null ? null : Math.max(0, arr.delaiConstate - delaiApp);
     return {
       id: f.id, numero: f.numero, four: f.four_nom, four_id: f.fournisseur_id, four_if: f.four_if, four_ice: f.four_ice, nature: f.designation,
       ttc: f.ttc, mht: f.mht, tva: f.tva, date_facture: f.date_facture, date_paiement: f.date_paiement,
       delai_ecoule: arr.delaiConstate, delai_applicable: delaiApp, date_limite: f.date_limite,
       arrete_au: arr.dateArreteIso, etat_paiement: arr.etat,
+      operateur_reseau: rd.sourceRegle === 'operateur_reseau', categorie: f.categorie_fournisseur || 'standard', hors_tableau: rd.horsTableauDeclaratif, source_regle: rd.sourceRegle,
       retard, n_mois: f.n_mois, a_declarer: !!f.a_declarer, has_conv: !!f.has_conv,
       taux_bam: f.taux_bam, taux_total: f.taux_total, amende: f.montant_amende, risk: f.couleur_risque,
       incidence: false,
@@ -912,10 +959,22 @@ router.delete('/clients/:id/conventions/:convId', (req, res) => {
 /* ============================================================ DECLARATIONS */
 function buildDeclaration(cabinetId, entreprise, annee, trimestre) {
   recomputePeriod(cabinetId, entreprise.id, annee, trimestre);
-  const facs = db.prepare(`SELECT f.*, fo.raison_sociale four_nom, fo.if_fiscal four_if
+  const allFacs = db.prepare(`SELECT f.*, fo.raison_sociale four_nom, fo.if_fiscal four_if,
+       fo.operateur_reseau, fo.statut_classification, fo.hors_tableau_declaratif, fo.categorie_fournisseur
      FROM facture f LEFT JOIN fournisseur fo ON fo.id=f.fournisseur_id
      WHERE f.entreprise_id=? AND f.annee=? AND f.trimestre=? AND f.a_declarer=1
      ORDER BY f.montant_amende DESC`).all(entreprise.id, annee, trimestre);
+  // EXCLUSION DÉCLARATIVE explicite et tracée des opérateurs de réseau CONFIRMÉS (jamais supprimées).
+  const facs = [], exclues = [];
+  for (const f of allFacs) (reseau.estHorsTableauDeclaratif(f) ? exclues : facs).push(f);
+  const excludedFournisseurs = new Set(exclues.map(f => f.fournisseur_id));
+  const exclusions = {
+    nbFactures: exclues.length,
+    ttc: round2(exclues.reduce((s, f) => s + (f.ttc || 0), 0)),
+    amende: round2(exclues.reduce((s, f) => s + (f.montant_amende || 0), 0)),
+    nbFournisseurs: excludedFournisseurs.size,
+    motif: reseau.MOTIF_RESEAU,
+  };
   const tot = { ttc: 0, nonPaye: 0, horsDelai: 0, amende: 0, litiges: 0 };
   const lignes = facs.map(f => {
     const nonPaye = f.date_paiement ? 0 : f.ttc, hors = f.date_paiement ? f.ttc : 0;
@@ -945,13 +1004,13 @@ function buildDeclaration(cabinetId, entreprise, annee, trimestre) {
   db.prepare('DELETE FROM ligne_declaration WHERE declaration_id=?').run(d.id);
   const ins = db.prepare(`INSERT INTO ligne_declaration (id,declaration_id,facture_id,fournisseur_if,fournisseur_nom,ttc,non_paye,paye_hors_delai,retard_jours,montant_amende) VALUES (?,?,?,?,?,?,?,?,?,?)`);
   for (const l of lignes) ins.run(uid('lgn'), d.id, l.facture_id, l.if, l.nom, l.ttc, l.non_paye, l.hors_delai, l.retard, l.amende);
-  return { declaration: d, lignes };
+  return { declaration: d, lignes, exclusions };
 }
 router.get('/clients/:id/declaration', (req, res) => {
   const e = ownedEntreprise(req, req.params.id); if (!e) return res.status(404).json({ error: 'Introuvable.' });
   const p = req.query.annee ? { annee: +req.query.annee, trimestre: +req.query.trimestre } : latestPeriod(e.id);
-  const { declaration, lignes } = buildDeclaration(req.cabinetId, e, p.annee, p.trimestre);
-  res.json({ entreprise: shapeEnt(e), declaration, lignes });
+  const { declaration, lignes, exclusions } = buildDeclaration(req.cabinetId, e, p.annee, p.trimestre);
+  res.json({ entreprise: shapeEnt(e), declaration, lignes, exclusions });
 });
 function shapeEnt(e) { return { id: e.id, raison_sociale: e.raison_sociale, ice: e.ice, if_fiscal: e.if_fiscal, rc: e.rc, adresse: e.adresse, ville: e.ville, ca_ht: e.ca_ht, secteur: e.secteur, type_visa: visaOf(e.ca_ht) }; }
 

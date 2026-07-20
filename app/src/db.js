@@ -173,6 +173,16 @@ for (const stmt of [
   "ALTER TABLE convention ADD COLUMN commentaire TEXT",
   "ALTER TABLE convention ADD COLUMN source_import TEXT",
   "ALTER TABLE import_lot ADD COLUMN source_type TEXT",   // ex. 'conventions_xlsx' vs import de factures
+  // Règle spéciale « opérateur de réseau » (télécom / eau / électricité / régies) — délai 30 j + exclusion déclarative.
+  "ALTER TABLE fournisseur ADD COLUMN categorie_fournisseur TEXT DEFAULT 'standard'",
+  "ALTER TABLE fournisseur ADD COLUMN operateur_reseau INTEGER DEFAULT 0",
+  "ALTER TABLE fournisseur ADD COLUMN delai_special INTEGER",              // 30 pour opérateur réseau confirmé
+  "ALTER TABLE fournisseur ADD COLUMN hors_tableau_declaratif INTEGER DEFAULT 0",
+  "ALTER TABLE fournisseur ADD COLUMN motif_regle_speciale TEXT",
+  "ALTER TABLE fournisseur ADD COLUMN classification_source TEXT",         // 'auto' | 'import' | 'manuelle'
+  "ALTER TABLE fournisseur ADD COLUMN statut_classification TEXT",         // 'propose' | 'confirme' | 'a_verifier'
+  "ALTER TABLE fournisseur ADD COLUMN date_validation TEXT",
+  "ALTER TABLE fournisseur ADD COLUMN utilisateur_validation TEXT",
 ]) { try { db.exec(stmt); } catch (_) {} }
 
 db.exec(`
