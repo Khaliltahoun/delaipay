@@ -1,5 +1,16 @@
 # Changelog — DelaiPay
 
+## Export Excel de la feuille de délais, par filtre (juillet 2026)
+
+### Ajouté
+- **Bouton « Excel » par filtre** dans la feuille de calcul des délais (**Toutes**, **Retard > 0**, **Convention absente**) : chaque filtre exporte exactement ses factures dans un **classeur `.xlsx` formaté** (titre, sous-titre période/filtre/date, en-têtes clairs, largeurs de colonnes, montants au format `#,##0.00`, **ligne TOTAL** TTC + amende).
+- **Endpoint `GET /clients/:id/delais/export.xlsx?annee=&trimestre=&filter=all|retard|conv`** : authentifié, isolé par tenant (404 hors périmètre), filtre inconnu → « toutes », audité. Colonnes exportées : N° facture, fournisseur (IF/ICE), nature, TTC, dates facture/paiement/arrêté, délai constaté/autorisé, retard, à déclarer, amende, revue doublon, risque, incidence reportée.
+- Le calcul de la feuille est factorisé (`delaisData`) et **partagé** entre l'API JSON et l'export → même source de vérité (aucun double comptage).
+- Frontend : téléchargement via `blob` (état de chargement sur le bouton, toast de succès/erreur), nom de fichier `delais_<client>_T<t>_<annee>_<filtre>.xlsx`.
+
+### Préservé
+- **CADOZAT** : l'export « Retard » = 16 factures, **TOTAL amende 7 025,33 DH** (inchangé). Suite de tests **92/92**.
+
 ## Revue non destructive des doublons potentiels (juillet 2026)
 
 > **DelaiPay conserve les factures ressemblant à des doublons. Elles sont signalées pour vérification afin de ne pas supprimer par erreur des paiements partiels, factures scindées ou échéances multiples.**

@@ -5,6 +5,11 @@ Version candidate à la validation métier (Mme Zahra) et au déploiement de pro
 
 ---
 
+## 🆕 Nouveau (export Excel de la feuille de délais)
+
+- Dans la **feuille de calcul des délais**, chaque filtre (**Toutes**, **Retard > 0**, **Convention absente**) dispose de son **bouton « Excel »** pour exporter les factures correspondantes.
+- Le fichier Excel est **formaté et organisé** : titre, période et filtre, en-têtes clairs, colonnes dimensionnées, montants formatés et **ligne de total** (TTC + amende).
+
 ## 🆕 Nouveau (revue des doublons)
 
 - **DelaiPay conserve les factures ressemblant à des doublons. Elles sont signalées pour vérification afin de ne pas supprimer par erreur des paiements partiels, factures scindées ou échéances multiples.**

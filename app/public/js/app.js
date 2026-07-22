@@ -593,6 +593,26 @@ function reseauBadge(f) {
   const tip = "Cette facture appartient à un opérateur de télécommunications, d'eau ou d'électricité. Son délai applicable est de 30 jours et elle est exclue des tableaux déclaratifs concernés.";
   return ` <span class="pill pill-app" style="font-size:9.5px;padding:1px 6px" title="${tip}">Réseau — 30 j</span>${f.hors_tableau ? ' <span class="pill pill-orange" style="font-size:9.5px;padding:1px 6px" title="Facture volontairement exclue des tableaux déclaratifs (conservée en suivi interne).">Hors tableau déclaratif</span>' : ''}`;
 }
+// Export Excel de la feuille de délais pour un filtre donné (toutes / retard / convention absente).
+async function exportDelais(filter, btn) {
+  const orig = btn ? btn.innerHTML : '';
+  if (btn) { btn.disabled = true; btn.innerHTML = 'Export…'; }
+  try {
+    const qs = perQuery(), sep = qs ? '&' : '?';
+    const res = await fetch(`/api/clients/${state.clientId}/delais/export.xlsx${qs}${sep}filter=${filter}`, { credentials: 'same-origin' });
+    if (res.status === 401) { window.location.href = '/login'; return; }
+    if (!res.ok) throw new Error('Export impossible.');
+    const blob = await res.blob();
+    const m = (res.headers.get('content-disposition') || '').match(/filename="?([^"]+)"?/);
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = m ? m[1] : `delais_${filter}.xlsx`;
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(a.href), 1500);
+    toast('Fichier Excel généré.', 'ok', 'Export feuille de délais');
+  } catch (e) { toast(e.message || 'Export impossible.', 'err'); }
+  finally { if (btn) { btn.disabled = false; btn.innerHTML = orig; } }
+}
 async function renderDelais() {
   if (!state.clientId) return noClient();
   const periods = await ensurePeriod();
@@ -611,10 +631,12 @@ async function renderDelais() {
     <div class="kpi"><div class="lbl">Retard moyen</div><div class="val">${t.retardMoyen} <small>j</small></div><div class="sub">au-delà de la convention</div></div>
     <div class="kpi accent"><div class="lbl">Amende du trimestre</div><div class="val" style="color:var(--r-red)">${money(t.amende)} <small>DH</small></div><div class="sub">à déclarer à la DGI</div></div>
   </div>
-  <div class="filters" style="margin-bottom:14px">
-    <button class="fpill" data-f="all" aria-pressed="${filt === 'all'}">Toutes<span class="c">${data.rows.length}</span></button>
-    <button class="fpill" data-f="retard" aria-pressed="${filt === 'retard'}">Retard &gt; 0<span class="c">${t.aDeclarer}</span></button>
-    <button class="fpill" data-f="conv" aria-pressed="${filt === 'conv'}">Convention absente<span class="c">${t.sansConvention}</span></button>
+  <div class="filters" style="margin-bottom:14px;display:flex;gap:16px;flex-wrap:wrap;align-items:center">
+    ${[['all', 'Toutes', data.rows.length], ['retard', 'Retard &gt; 0', t.aDeclarer], ['conv', 'Convention absente', t.sansConvention]].map(([k, label, count]) => `
+      <span style="display:inline-flex;align-items:center;gap:6px">
+        <button class="fpill" data-f="${k}" aria-pressed="${filt === k}">${label}<span class="c">${count}</span></button>
+        <button class="btn btn-ghost btn-sm xls-export" data-x="${k}" title="Exporter « ${label.replace('&gt;', '>')} » en Excel" style="font-size:11px;padding:4px 10px;color:#137333;border-color:rgba(19,115,51,.35)"><svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.9" style="margin-right:4px;vertical-align:-2px"><path d="M12 3v11m0 0l-4-4m4 4l4-4M5 17v2a2 2 0 002 2h10a2 2 0 002-2v-2"/></svg>Excel</button>
+      </span>`).join('')}
   </div>
   ${rows.length ? `<div style="font-size:12px;color:var(--muted);margin:-4px 0 10px">💡 Pour une facture non payée à la clôture, le délai est calculé jusqu'au dernier jour du trimestre.</div>
   <div class="table-wrap"><table style="min-width:1120px"><thead><tr>
@@ -624,6 +646,7 @@ async function renderDelais() {
     <tfoot><tr><td colspan="3">Total — ${rows.length} facture(s)</td><td class="num">${money(rows.reduce((s, x) => s + (x.ttc || 0), 0))}</td><td colspan="5"></td><td></td><td></td><td class="num" style="color:var(--r-red)">${money(rows.reduce((s, x) => s + (x.amende || 0), 0))}</td><td></td></tr></tfoot>
   </table></div><div id="pgMore" style="text-align:center;margin:14px 0"></div>` : emptyBox('Aucune facture', 'Importez un journal d\'achats (Excel) pour ce client et cette période.', 'import')}`;
   $$('.fpill').forEach(b => b.onclick = () => { state._filter = b.dataset.f; renderDelais(); });
+  $$('.xls-export').forEach(b => b.onclick = () => exportDelais(b.dataset.x, b));
   wireClientBar(renderDelais);
   $('#recompute').onclick = async () => { await api(`/clients/${state.clientId}/recompute${perQuery()}`, { method: 'POST' }); toast('Recalcul effectué.', 'ok'); renderDelais(); };
   if (rows.length) mountPaged(rows, f => `<tr class="clickable" data-id="${f.id}">

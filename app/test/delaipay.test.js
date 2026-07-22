@@ -836,6 +836,76 @@ test('doublon/D24-D26 frontend : badge + actions appellent la bonne route', () =
   assert.ok(/factures\/\$\{fid\}\/doublon/.test(src) && /method: 'PATCH'/.test(src), 'appel PATCH sur la bonne route');
   assert.ok(/data-act="\$\{act\}"/.test(src) && /statut: act/.test(src), 'le statut choisi est transmis à la route');
   assert.ok(/A\('confirme'/.test(src), 'action confirmer'); assert.ok(/A\('faux_positif'/.test(src), 'action faux positif');
+  // Export Excel par filtre présent dans le frontend
+  assert.ok(/xls-export/.test(src) && /function exportDelais/.test(src), 'boutons d\'export Excel présents');
+  assert.ok(/delais\/export\.xlsx/.test(src), 'appel à la route d\'export xlsx');
+});
+
+/* -------------------- D' . EXPORT EXCEL DE LA FEUILLE DE DÉLAIS -------------------- */
+// Seed : 3 factures — 1 en retard (a_declarer), 1 sans convention à 120 j, 1 normale.
+function seedDelaisMix(t) {
+  const f1 = uid('four'); db.prepare('INSERT INTO fournisseur (id,cabinet_id,entreprise_id,raison_sociale,delai_applicable) VALUES (?,?,?,?,60)').run(f1, t.cab, t.ent, 'FRS RETARD');
+  const f2 = uid('four'); db.prepare('INSERT INTO fournisseur (id,cabinet_id,entreprise_id,raison_sociale,delai_applicable) VALUES (?,?,?,?,120)').run(f2, t.cab, t.ent, 'FRS 120 SANS CONV');
+  const f3 = uid('four'); db.prepare('INSERT INTO fournisseur (id,cabinet_id,entreprise_id,raison_sociale,delai_applicable) VALUES (?,?,?,?,60)').run(f3, t.cab, t.ent, 'FRS OK');
+  db.prepare(`INSERT INTO facture (id,cabinet_id,entreprise_id,fournisseur_id,numero,ttc,date_facture,annee,trimestre,delai_applicable,delai_ecoule,retard_jours,a_declarer,montant_amende) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
+    .run(uid('fac'), t.cab, t.ent, f1, 'R-1', 100000, '2026-01-05', 2026, 1, 60, 120, 60, 1, 3000);
+  db.prepare(`INSERT INTO facture (id,cabinet_id,entreprise_id,fournisseur_id,numero,ttc,date_facture,date_paiement,annee,trimestre,delai_applicable,delai_ecoule,retard_jours,a_declarer,montant_amende) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
+    .run(uid('fac'), t.cab, t.ent, f2, 'C-1', 50000, '2026-01-06', '2026-01-20', 2026, 1, 120, 14, 0, 0, 0);
+  db.prepare(`INSERT INTO facture (id,cabinet_id,entreprise_id,fournisseur_id,numero,ttc,date_facture,date_paiement,annee,trimestre,delai_applicable,delai_ecoule,retard_jours,a_declarer,montant_amende) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
+    .run(uid('fac'), t.cab, t.ent, f3, 'OK-1', 20000, '2026-01-07', '2026-01-15', 2026, 1, 60, 8, 0, 0, 0);
+}
+async function getXlsx(pathUrl, cookie) {
+  const res = await fetch(baseUrl() + pathUrl, { headers: cookie ? { Cookie: cookie } : {} });
+  const buf = res.ok ? Buffer.from(await res.arrayBuffer()) : null;
+  return { status: res.status, ct: res.headers.get('content-type') || '', cd: res.headers.get('content-disposition') || '', buf };
+}
+function xlsxRows(buf) {
+  const wb = XLSX.read(buf, { type: 'buffer' });
+  const ws = wb.Sheets[wb.SheetNames[0]];
+  return XLSX.utils.sheet_to_json(ws, { header: 1, blankrows: false });
+}
+test('export/délais : xlsx « toutes » — 3 factures, en-têtes, total, format', async () => {
+  const t = newTenant(); seedDelaisMix(t);
+  const r = await getXlsx(`/api/clients/${t.ent}/delais/export.xlsx?annee=2026&trimestre=1&filter=all`, cookieOf(t.u));
+  assert.equal(r.status, 200);
+  assert.match(r.ct, /spreadsheetml/); assert.match(r.cd, /\.xlsx/); assert.match(r.cd, /_all\.xlsx/);
+  const rows = xlsxRows(r.buf);
+  assert.match(String(rows[0][0]), /Feuille de calcul des délais/, 'titre');
+  const head = rows.find(row => row[0] === 'N° facture');
+  assert.ok(head, 'ligne d\'en-tête présente');
+  assert.ok(head.includes('Montant TTC (DH)') && head.includes('Amende (DH)') && head.includes('Revue doublon'), 'colonnes formatées');
+  const nums = rows.filter(row => /^(R-1|C-1|OK-1)$/.test(String(row[0])));
+  assert.equal(nums.length, 3, '3 factures exportées (toutes)');
+  const total = rows.find(row => row[0] === 'TOTAL');
+  assert.ok(total, 'ligne TOTAL présente');
+  assert.equal(total[5], 170000, 'total TTC exact');
+  assert.equal(total[13], 3000, 'total amende exact');
+});
+test('export/délais : xlsx « retard » — seules les factures à déclarer', async () => {
+  const t = newTenant(); seedDelaisMix(t);
+  const r = await getXlsx(`/api/clients/${t.ent}/delais/export.xlsx?annee=2026&trimestre=1&filter=retard`, cookieOf(t.u));
+  assert.equal(r.status, 200); assert.match(r.cd, /_retard\.xlsx/);
+  const rows = xlsxRows(r.buf);
+  const nums = rows.filter(row => /^(R-1|C-1|OK-1)$/.test(String(row[0]))).map(row => row[0]);
+  assert.deepEqual(nums, ['R-1'], 'seule la facture en retard');
+});
+test('export/délais : xlsx « convention absente » — délai 120 sans convention', async () => {
+  const t = newTenant(); seedDelaisMix(t);
+  const r = await getXlsx(`/api/clients/${t.ent}/delais/export.xlsx?annee=2026&trimestre=1&filter=conv`, cookieOf(t.u));
+  assert.equal(r.status, 200); assert.match(r.cd, /_conv\.xlsx/);
+  const rows = xlsxRows(r.buf);
+  const nums = rows.filter(row => /^(R-1|C-1|OK-1)$/.test(String(row[0]))).map(row => row[0]);
+  assert.deepEqual(nums, ['C-1'], 'seule la facture 120 j sans convention');
+});
+test('export/délais : filtre inconnu → « toutes » ; isolation tenant (404) ; non authentifié (401)', async () => {
+  const a = newTenant('A'), b = newTenant('B'); seedDelaisMix(a);
+  const bad = await getXlsx(`/api/clients/${a.ent}/delais/export.xlsx?annee=2026&trimestre=1&filter=zzz`, cookieOf(a.u));
+  assert.equal(bad.status, 200); const nums = xlsxRows(bad.buf).filter(row => /^(R-1|C-1|OK-1)$/.test(String(row[0])));
+  assert.equal(nums.length, 3, 'filtre inconnu = toutes');
+  const cross = await getXlsx(`/api/clients/${a.ent}/delais/export.xlsx?annee=2026&trimestre=1`, cookieOf(b.u));
+  assert.equal(cross.status, 404, 'autre tenant → introuvable');
+  const noauth = await getXlsx(`/api/clients/${a.ent}/delais/export.xlsx?annee=2026&trimestre=1`, null);
+  assert.equal(noauth.status, 401, 'non authentifié refusé');
 });
 
 /* -------------------- E. NON-RÉGRESSION MÉTIER -------------------- */

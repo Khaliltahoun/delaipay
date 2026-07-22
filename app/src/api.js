@@ -1,6 +1,7 @@
 'use strict';
 const express = require('express');
 const multer = require('multer');
+const XLSX = require('xlsx');
 const path = require('path');
 const fs = require('fs');
 const { db, tauxAt, audit } = require('./db');
@@ -617,9 +618,9 @@ function incidenceFactures(cabinetId, entrepriseId, annee, trimestre) {
   return out;
 }
 
-router.get('/clients/:id/delais', (req, res) => {
-  const e = ownedEntreprise(req, req.params.id); if (!e) return res.status(404).json({ error: 'Introuvable.' });
-  const p = req.query.annee ? { annee: +req.query.annee, trimestre: +req.query.trimestre } : latestPeriod(e.id);
+// Données de la feuille de délais (factures de la période + incidences reportées + totaux).
+// Fonction unique réutilisée par l'API JSON et par l'export Excel — même source de vérité.
+function delaisData(cabinetId, e, p) {
   const rows = db.prepare(`SELECT f.*, fo.raison_sociale four_nom, fo.ice four_ice, fo.if_fiscal four_if,
       fo.operateur_reseau, fo.statut_classification, fo.hors_tableau_declaratif, fo.categorie_fournisseur, fo.delai_applicable fo_delai,
       (SELECT COUNT(*) FROM convention c WHERE c.fournisseur_id=f.fournisseur_id AND c.statut='valide') has_conv,
@@ -652,7 +653,7 @@ router.get('/clients/:id/delais', (req, res) => {
     };
   });
   // Incidence reportée (factures d'un trimestre antérieur qui pèsent encore sur Q)
-  const inc = incidenceFactures(req.cabinetId, e.id, p.annee, p.trimestre).map(({ f, c }) => ({
+  const inc = incidenceFactures(cabinetId, e.id, p.annee, p.trimestre).map(({ f, c }) => ({
     id: f.id, numero: f.numero, four: f.four_nom, four_id: f.fournisseur_id, four_if: f.four_if, four_ice: f.four_ice, nature: f.designation,
     ttc: f.ttc, mht: f.mht, tva: f.tva, date_facture: f.date_facture, date_paiement: f.date_paiement,
     delai_ecoule: c.delaiEcoule, delai_applicable: calc.saneDelai(f.delai_applicable), date_limite: c.dateLimite,
@@ -676,8 +677,83 @@ router.get('/clients/:id/delais', (req, res) => {
     retardMoyen: (() => { const r = all.filter(x => x.a_declarer); return r.length ? Math.round(r.reduce((s, x) => s + x.retard, 0) / r.length) : 0; })(),
     sansConvention: all.filter(x => !x.has_conv && x.delai_applicable >= 120).length,
   };
-  res.json({ periode: p, rows: all, totals });
+  return { periode: p, rows: all, totals };
+}
+
+// Filtres de la feuille de délais (mêmes critères que le frontend).
+const DELAIS_FILTRES = {
+  all:    { label: 'Toutes les factures',      test: () => true },
+  retard: { label: 'Factures en retard',       test: r => !!r.a_declarer },
+  conv:   { label: 'Convention absente',       test: r => !r.has_conv && r.delai_applicable >= 120 },
+};
+
+router.get('/clients/:id/delais', (req, res) => {
+  const e = ownedEntreprise(req, req.params.id); if (!e) return res.status(404).json({ error: 'Introuvable.' });
+  const p = req.query.annee ? { annee: +req.query.annee, trimestre: +req.query.trimestre } : latestPeriod(e.id);
+  res.json(delaisData(req.cabinetId, e, p));
 });
+
+// Export Excel formaté de la feuille de délais, filtré (toutes / retard / convention absente).
+router.get('/clients/:id/delais/export.xlsx', (req, res) => {
+  const e = ownedEntreprise(req, req.params.id); if (!e) return res.status(404).send('Introuvable');
+  const p = req.query.annee ? { annee: +req.query.annee, trimestre: +req.query.trimestre } : latestPeriod(e.id);
+  const filtre = DELAIS_FILTRES[req.query.filter] ? req.query.filter : 'all';
+  const { rows } = delaisData(req.cabinetId, e, p);
+  const filtered = rows.filter(DELAIS_FILTRES[filtre].test);
+  const buf = buildDelaisXlsx(e, p, filtre, filtered);
+  res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+  res.setHeader('Content-Disposition', `attachment; filename="delais_${slugify(e.raison_sociale)}_T${p.trimestre}_${p.annee}_${filtre}.xlsx"`);
+  audit(req.cabinetId, req.user.id, 'export', 'delais', { format: 'xlsx', filtre, entreprise: e.id, nb: filtered.length }, req.ip);
+  res.send(buf);
+});
+
+// Construit un classeur Excel clair et organisé (titre, en-têtes, totaux, largeurs, formats de nombre).
+function buildDelaisXlsx(e, p, filtre, rows) {
+  const fLabel = DELAIS_FILTRES[filtre].label;
+  const dfr = iso => { if (!iso) return ''; const m = String(iso).match(/^(\d{4})-(\d{2})-(\d{2})/); return m ? `${m[3]}/${m[2]}/${m[1]}` : iso; };
+  const DOUBLON = { potentiel: 'À vérifier', confirme: 'Confirmé', faux_positif: 'Faux positif', aucun: '' };
+  const RISK = { ok: 'Normal', app: 'Approche', orange: 'Attention', red: 'Retard', dred: 'Pénalités' };
+  const HEAD = ['N° facture', 'Fournisseur', 'IF fournisseur', 'ICE fournisseur', 'Nature', 'Montant TTC (DH)',
+    'Date facture', 'Date paiement', 'Arrêté au', 'Délai constaté (j)', 'Délai autorisé (j)', 'Retard (j)',
+    'À déclarer', 'Amende (DH)', 'Revue doublon', 'Risque', 'Incidence reportée'];
+  const dataRows = rows.map(r => [
+    r.numero || '', r.four || '', r.four_if || '', r.four_ice || '', r.nature || '',
+    r.ttc == null ? '' : Number(r.ttc),
+    dfr(r.date_facture), dfr(r.date_paiement), dfr(r.arrete_au),
+    r.delai_ecoule == null ? '' : r.delai_ecoule,
+    r.delai_applicable == null ? '' : r.delai_applicable,
+    r.retard == null ? '' : r.retard,
+    r.a_declarer ? 'Oui' : 'Non',
+    r.amende ? Number(r.amende) : 0,
+    DOUBLON[r.statut_doublon || 'aucun'] || '',
+    RISK[r.risk] || '',
+    r.incidence ? (r.periode_origine || 'Oui') : '',
+  ]);
+  const totalTtc = round2(rows.reduce((s, x) => s + (x.ttc || 0), 0));
+  const totalAmende = round2(rows.reduce((s, x) => s + (x.amende || 0), 0));
+  const nbRetard = rows.filter(x => x.a_declarer).length;
+  const title = `Feuille de calcul des délais — ${e.raison_sociale}`;
+  const subtitle = `Période T${p.trimestre} ${p.annee} · Filtre : ${fLabel} · ${rows.length} facture(s) · ${nbRetard} en retard · Édité le ${dfr(calc.iso(new Date()))}`;
+  const totalRow = ['TOTAL', '', '', '', '', totalTtc, '', '', '', '', '', '', '', totalAmende, '', '', ''];
+  const aoa = [[title], [subtitle], [], HEAD, ...dataRows, [], totalRow];
+  const ws = XLSX.utils.aoa_to_sheet(aoa);
+  ws['!cols'] = [{ wch: 16 }, { wch: 30 }, { wch: 14 }, { wch: 18 }, { wch: 22 }, { wch: 16 }, { wch: 12 }, { wch: 12 },
+    { wch: 12 }, { wch: 15 }, { wch: 15 }, { wch: 9 }, { wch: 10 }, { wch: 14 }, { wch: 13 }, { wch: 11 }, { wch: 16 }];
+  ws['!merges'] = [
+    { s: { r: 0, c: 0 }, e: { r: 0, c: HEAD.length - 1 } },
+    { s: { r: 1, c: 0 }, e: { r: 1, c: HEAD.length - 1 } },
+  ];
+  // Formats de nombre pour TTC (col 5) et Amende (col 13), en-têtes de données à partir de la ligne 5 (index 4).
+  for (let r = 4; r < aoa.length; r++) {
+    for (const c of [5, 13]) {
+      const cell = ws[XLSX.utils.encode_cell({ r, c })];
+      if (cell && typeof cell.v === 'number') { cell.t = 'n'; cell.z = '#,##0.00'; }
+    }
+  }
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, `Délais T${p.trimestre} ${p.annee}`.slice(0, 31));
+  return XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
+}
 router.post('/clients/:id/recompute', (req, res) => {
   const e = ownedEntreprise(req, req.params.id); if (!e) return res.status(404).json({ error: 'Introuvable.' });
   const p = req.query.annee ? { annee: +req.query.annee, trimestre: +req.query.trimestre } : latestPeriod(e.id);

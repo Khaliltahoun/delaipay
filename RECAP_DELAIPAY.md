@@ -178,7 +178,7 @@ Vue consolidée du portefeuille, par période (trimestre) :
 - Badge **conv. / sans conv.** (quand délai écoulé > 60 j).
 - **Action express « + Convention présente »** : sur une ligne dont le fournisseur n'a pas de convention (délai écoulé > 60 j), un clic ouvre une mini-fenêtre (délai proposé 120 j, éditable, plafond 180 j) et **crée la convention** pour ce fournisseur (PDF différé → « Document manquant »). Recalcul immédiat : toutes les lignes du fournisseur passent en « conv. ». Réutilise `POST /clients/:id/conventions` avec `fournisseur_id` (appartenance vérifiée, anti-IDOR). `four_id` exposé dans `GET /clients/:id/delais`.
 - **KPIs** : factures analysées, montant TTC concerné, retard moyen, amende du trimestre.
-- **Filtres** : toutes / en retard (retard > 0) / convention absente.
+- **Filtres** : toutes / en retard (retard > 0) / convention absente. **Chaque filtre a un bouton « Excel »** qui exporte ses factures dans un classeur `.xlsx` formaté (titre, période/filtre, en-têtes, largeurs, montants `#,##0.00`, ligne TOTAL) — `GET /clients/:id/delais/export.xlsx?filter=all|retard|conv` (calcul factorisé `delaisData`, partagé avec l'API JSON).
 - **Revue des doublons (non destructive)** : badge **« Doublon ? »** (potentiel) → dans le détail, **Confirmer le doublon** (badge « Doublon confirmé ») ou **Marquer comme faux positif** (alerte principale masquée, indication discrète « Alerte vérifiée — faux positif »). Endpoint `PATCH /clients/:id/factures/:factureId/doublon` (audité avant/après). **Aucune facture n'est supprimée ni fusionnée** ; elle reste incluse dans les calculs. `statut_doublon` (`aucun`/`potentiel`/`confirme`/`faux_positif`), `date_revue_doublon`, `utilisateur_revue_doublon` exposés par l'API.
 - **Détail du calcul** par facture (panneau latéral).
 - Bouton **Recalculer** la période + accès direct à « Préparer la déclaration ».
@@ -249,7 +249,7 @@ Vue consolidée du portefeuille, par période (trimestre) :
 - `POST /clients/:id/conventions/import` (liste Excel → conventions, PDF différé) · `POST /clients/:id/conventions/:convId/file` (PDF, remplacement confirmé) · `GET /conventions/template.xlsx` (modèle 2 feuilles)
 
 **Délais / factures**
-- `GET /clients/:id/delais` · `POST /clients/:id/recompute` · `POST /clients/:id/factures` (saisie manuelle)
+- `GET /clients/:id/delais` · `GET /clients/:id/delais/export.xlsx?filter=all|retard|conv` (export Excel formaté par filtre) · `POST /clients/:id/recompute` · `POST /clients/:id/factures` (saisie manuelle)
 - `PATCH /clients/:id/factures/:factureId/doublon` (revue de doublon : `confirme` / `faux_positif` / `potentiel` — non destructif, audité)
 
 **Import & documents**
@@ -344,7 +344,7 @@ Voir le détail dans **CHANGELOG.md** et le **GUIDE_UTILISATEUR_PERIODES.md**.
 - **Assistant d'import 6 étapes** : analyse → feuille & **mapping** (auto + confiance, corrigeable) → **prévisualisation** (valides/ignorées/rejetées/doublons, sans écriture) → **confirmation transactionnelle** → **annulation** + rapport de rejets CSV. **Modèles de mapping** réutilisables.
 - **Incidence reportée** : facture impayée → amende calculée pour chaque trimestre concerné, sans déplacer le fichier source (traçabilité vers la période d'origine).
 - **Nouvelles tables** : `periode_declaration`, `import_lot`, `import_ligne`, `modele_mapping`. Migration idempotente : `npm run migrate` (sauvegarde préalable recommandée).
-- **Tests automatisés** : `npm test` — **88/88** (calendrier, non-régression CADOZAT 7 025,33, classification d'import, revue non destructive des doublons, endpoint de revue, lignes total).
+- **Tests automatisés** : `npm test` — **92/92** (calendrier, non-régression CADOZAT 7 025,33, classification d'import, revue non destructive des doublons, endpoint de revue, export Excel par filtre, lignes total).
 - **Revue des doublons potentiels** : les doublons sont conservés et signalés (jamais supprimés), avec un statut de revue (`potentiel`/`confirme`/`faux_positif`) modifiable via `PATCH …/doublon` (audité). *Les doublons supprimés par d'anciennes versions ne peuvent être récupérés qu'en réimportant la source originale.*
 - **Nouvelles routes** : `/clients/:id/periods[...]` (summary/close/reopen), `/clients/:id/import/analyze|preview|confirm`, `/clients/:id/import/:id/impact|cancel`, `/imports/:id/rejections[.csv]`, `/mapping-templates`.
 
