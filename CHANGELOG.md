@@ -1,5 +1,10 @@
 # Changelog — DelaiPay
 
+## Correctif — délai conventionnel robuste aux formats Excel réels (juillet 2026)
+
+### Corrigé
+- **Régression `parseConvDelaiStrict` trop strict** : les cellules réelles comme « 90JOURS », « 120JOURS », « 90 jours », « 90 J », « 30J », « 90.0 » étaient **rejetées à tort** (« le délai conventionnel doit être un entier compris entre 1 et 120 jours. »). Le parseur **extrait** désormais le nombre (unité J/JOUR/JOURS, casse, espaces multiples, tabulations ignorés) puis applique la **règle métier inchangée** : entier **1..120**, enregistré **exactement** (90JOURS → 90, 120JOURS → 120). Refus conservés pour : aucun nombre (« abc »), plusieurs nombres différents (« 90/120 », « 90 et 120 »), décimal non entier (« 90.5 »), 0, négatif, > 120 (« 121JOURS »). S'applique au flux mappé (assistant), à la prévisualisation et à la confirmation ; l'import auto legacy (`parseDelai`) était déjà tolérant. Suite de tests **108/108**.
+
 ## Import des conventions unifié (mapping libre) + matching & délais robustes (juillet 2026)
 
 ### Ajouté

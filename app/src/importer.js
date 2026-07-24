@@ -800,25 +800,31 @@ function parseDelai(v) {
 // Délai convenu lu dans un fichier de FACTURES → nombre sain (1..120) ou null (jamais de valeur aberrante).
 function convDelaiFromCell(v) { const p = parseDelai(v); return p.ok ? p.delai : null; }
 
-// Validation STRICTE du délai conventionnel (flux d'import mappé des conventions).
-// N'accepte QU'UN entier positif dans [1,120], enregistré EXACTEMENT (aucun arrondi, aucune
-// conversion, aucune normalisation, aucune plage). Tout le reste est refusé avec un motif explicite.
+// Validation du délai conventionnel (flux d'import mappé des conventions).
+// ROBUSTE aux formats Excel réels (« 90 », « 90JOURS », « 90 jours », « 90J », « 90.0 »,
+// casse/espaces multiples/tabulations) : on EXTRAIT le nombre puis on applique la règle MÉTIER
+// STRICTE inchangée (entier, 1..120, enregistré EXACTEMENT — aucun arrondi/conversion/plage).
+// Refuse : aucun nombre, plusieurs nombres différents, décimal non entier, 0, négatif, > 120.
 const DELAI_CONV_MSG = 'le délai conventionnel doit être un entier compris entre 1 et 120 jours.';
 function parseConvDelaiStrict(v) {
   if (v == null) return { ok: false, reason: 'absent' };
-  if (typeof v === 'number') {
-    if (!Number.isInteger(v)) return { ok: false, reason: 'decimal', raw: v };
-    if (v < 1) return { ok: false, reason: 'invalide', raw: v };
-    if (v > DELAI_MAX) return { ok: false, reason: 'superieur_max', raw: v };
-    return { ok: true, delai: v };
-  }
+  const check = (n, raw) => {
+    if (!Number.isFinite(n)) return { ok: false, reason: 'texte', raw };
+    if (!Number.isInteger(n)) return { ok: false, reason: 'decimal', raw }; // 90.5 refusé ; 90.0 accepté (=90)
+    if (n < 1) return { ok: false, reason: 'invalide', raw };               // 0 et négatifs
+    if (n > DELAI_MAX) return { ok: false, reason: 'superieur_max', raw };  // > 120
+    return { ok: true, delai: n };
+  };
+  if (typeof v === 'number') return check(v, v);
   const raw = (v instanceof Date) ? calc.iso(v) : String(v).trim();
   if (raw === '') return { ok: false, reason: 'absent' };
-  if (!/^\d+$/.test(raw)) return { ok: false, reason: /[.,]/.test(raw) ? 'decimal' : 'texte', raw }; // décimal, plage, texte, négatif
-  const d = parseInt(raw, 10);
-  if (d < 1) return { ok: false, reason: 'invalide', raw };
-  if (d > DELAI_MAX) return { ok: false, reason: 'superieur_max', raw };
-  return { ok: true, delai: d };
+  // Extraction : tous les nombres (entier/décimal, signe éventuel) — le suffixe d'unité (J/JOUR/JOURS),
+  // la casse, les espaces multiples et les tabulations sont ignorés.
+  const tokens = raw.match(/-?\d+(?:[.,]\d+)?/g);
+  if (!tokens || !tokens.length) return { ok: false, reason: 'texte', raw };          // texte sans nombre
+  const distinct = [...new Set(tokens.map(t => parseFloat(t.replace(',', '.'))))];
+  if (distinct.length > 1) return { ok: false, reason: 'multiple', raw };             // plusieurs nombres différents (« 90 et 120 », « 90/120 »)
+  return check(distinct[0], raw);
 }
 function parseConv(v) {
   const cv = normCell(v);

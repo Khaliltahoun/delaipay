@@ -1018,12 +1018,30 @@ test('conv/OBJ3 parseConvDelaiStrict : entier 1..120 accepté EXACTEMENT', () =>
   }
 });
 test('conv/OBJ7 parseConvDelaiStrict : refus vide/0/négatif/>120/décimal/texte', () => {
-  const bad = { '': 'absent', 0: 'invalide', '-5': 'texte', 121: 'superieur_max', 200: 'superieur_max', '79.5': 'decimal', '60,5': 'decimal', '60 à 120': 'texte', abc: 'texte' };
+  const bad = { '': 'absent', 0: 'invalide', '-5': 'invalide', 121: 'superieur_max', 200: 'superieur_max', '79.5': 'decimal', '60,5': 'decimal', '60 à 120': 'multiple', abc: 'texte' };
   for (const [v, reason] of Object.entries(bad)) {
     const raw = v === '0' ? 0 : (v === '121' ? 121 : (v === '200' ? 200 : v));
     const p = importer.parseConvDelaiStrict(raw); assert.ok(!p.ok, `${JSON.stringify(raw)} refusé`); assert.equal(p.reason, reason, `${JSON.stringify(raw)} → ${reason}`);
   }
   assert.ok(!importer.parseConvDelaiStrict(79.5).ok, '79.5 (nombre décimal) refusé');
+});
+test('conv/OBJ-robuste parseConvDelaiStrict : formats Excel réels (90JOURS, 90 J, 90.0…)', () => {
+  // Formats VALIDES → nombre extrait, casse/espaces/tabulations/unité ignorés.
+  const okCases = {
+    '90': 90, '90.0': 90, '90,0': 90, '90 J': 90, '90J': 90, '90 Jour': 90, '90 Jours': 90,
+    '90JOUR': 90, '90JOURS': 90, '90 jours': 90, ' 90 JOURS ': 90, '\t90\tJOURS ': 90,
+    '120JOURS': 120, '60 jours': 60, '30J': 30, '45 Jour': 45, '79 jours': 79, '1 jour': 1, '120 J': 120,
+  };
+  for (const [v, exp] of Object.entries(okCases)) {
+    const p = importer.parseConvDelaiStrict(v);
+    assert.ok(p.ok, `"${v}" accepté`); assert.equal(p.delai, exp, `"${v}" → ${exp}`);
+  }
+  // Formats INVALIDES → refus (règle métier 1..120 inchangée).
+  const badCases = { '121JOURS': 'superieur_max', '0JOURS': 'invalide', abc: 'texte', '90/120': 'multiple', '90 et 120': 'multiple', '90.5 jours': 'decimal', '-5 jours': 'invalide', '200 J': 'superieur_max' };
+  for (const [v, reason] of Object.entries(badCases)) {
+    const p = importer.parseConvDelaiStrict(v);
+    assert.ok(!p.ok, `"${v}" refusé`); assert.equal(p.reason, reason, `"${v}" → ${reason}`);
+  }
 });
 test('conv/OBJ3 import mappé : délais 17..120 enregistrés EXACTEMENT (aucune conversion)', () => {
   const t = newTenant();
@@ -1053,6 +1071,24 @@ test('conv/OBJ7 import mappé : valeurs invalides rejetées avec message explici
   const rejets = r.lignes.filter(l => l.statut === 'rejetee');
   assert.ok(rejets.every(l => /entier compris entre 1 et 120/.test(l.motif)), 'message explicite unique');
   assert.equal(db.prepare('SELECT delai_convenu FROM convention c JOIN fournisseur f ON f.id=c.fournisseur_id WHERE f.entreprise_id=? AND f.raison_sociale=?').get(t.ent, 'FRS OK').delai_convenu, 79);
+});
+test('conv/OBJ-robuste import mappé : fichier réel type « 90JOURS / 120JOURS / 60 jours » importé sans rejet', () => {
+  const t = newTenant();
+  // Reproduit « ETATS CONVENTIONS.xlsx » : colonne « Délai de paiement convenu » avec suffixes texte.
+  const rows = [['Fournisseur', 'ICE', 'Convention OUI/NON', 'Délai de paiement convenu'],
+    ['FRS A', '000000000009301', 'OUI', '90JOURS'],
+    ['FRS B', '000000000009302', 'OUI', '120JOURS'],
+    ['FRS C', '000000000009303', 'OUI', '60 jours'],
+    ['FRS D', '000000000009304', 'OUI', '30J'],
+    ['FRS E', '000000000009305', 'OUI', '45 Jour'],
+    ['FRS TROP', '000000000009306', 'OUI', '121JOURS'],   // seule ligne réellement invalide
+  ];
+  const r = importer.importConventions(aoaBuf(rows, 'Conv'), { cabinetId: t.cab, entrepriseId: t.ent, mapping: { nom: 0, ice: 1, conv: 2, delai: 3 }, sheetName: 'Conv', headerRow: 0 });
+  assert.equal(r.conventionsCreated, 5, 'les lignes valides ne sont plus rejetées');
+  assert.equal(r.rejected, 1, 'seule « 121JOURS » rejetée');
+  const del = nom => db.prepare('SELECT delai_convenu FROM convention c JOIN fournisseur f ON f.id=c.fournisseur_id WHERE f.entreprise_id=? AND f.raison_sociale=?').get(t.ent, nom).delai_convenu;
+  assert.equal(del('FRS A'), 90); assert.equal(del('FRS B'), 120); assert.equal(del('FRS C'), 60);
+  assert.equal(del('FRS D'), 30); assert.equal(del('FRS E'), 45);
 });
 
 /* -------------------- OBJ 5 : VRAI numéro de ligne Excel -------------------- */
