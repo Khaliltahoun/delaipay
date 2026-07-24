@@ -1,5 +1,17 @@
 # Changelog — DelaiPay
 
+## LOT 1 (P0) — Sécurisation de l'auto-mapping des imports (corruption silencieuse) (juillet 2026)
+
+### Corrigé / Ajouté
+- **Corruption silencieuse de l'auto-mapping** (reproduite sur `BANKAI RELEV DED TVA 005`) : le Fournisseur était mappé sur `M_TTC` (montants → noms) et le Montant TTC sur `ORDRE` (n° de ligne → montants), à seulement 60 % de confiance, sans blocage. **Cause** : le mapping par titre ne reconnaissait pas les en-têtes EDI `M_TTC` / `LIB_FRSS` / `ICE_FRS` / `FACT_NUM`, qui tombaient dans l'inférence par contenu (fragile). **Correctifs génériques** (aucun code spécifique BANKAI) :
+  - reconnaissance des en-têtes EDI standard (SIMPL/DGI) par titre → 004 **et** 005 mappent `Fournisseur→LIB_FRSS` et `TTC→M_TTC` à **92 %** de façon déterministe ;
+  - **détection des colonnes séquentielles** (1, 2, 3… `ORDRE`) → jamais retenues comme Montant TTC ;
+  - **`profileColumn(values)`** : profil réel d'une colonne (taux numérique/texte/date, distinct, longueur, séquentiel, montant, identifiant, min/max, exemples) ;
+  - **`validateImportMapping({mapping, columnProfiles, requiredFields})`** : erreurs bloquantes (Fournisseur sur colonne numérique, TTC sur séquence/ORDRE, type incompatible, colonne partagée par des champs incompatibles, champ obligatoire absent), avertissements et confiance globale ;
+  - **blocage dur** : `confirmImport` REFUSE tout mapping incohérent (aucune écriture) ; la prévisualisation expose la validation, la somme brute de la colonne TTC mappée, et l'assistant **désactive « Confirmer »** avec un message explicite tant que les erreurs bloquantes ne sont pas corrigées ;
+  - **`isValidSupplierDisplayName(name)`** : une raison sociale purement numérique / au format d'un montant (7596, « 28 200,00 ») n'est jamais acceptée ; un vrai nom avec chiffres (SOCIETE 3D, MAROC 24) l'est.
+- **Non-régression** : CADOZAT inchangé (36 factures / 7 025,33 DH), imports 004 déjà corrects préservés. Suite de tests **116/116**.
+
 ## Correctif — délai conventionnel robuste aux formats Excel réels (juillet 2026)
 
 ### Corrigé

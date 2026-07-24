@@ -1187,3 +1187,64 @@ test('conv/OBJ8 legacy auto (sans mapping) : « 60 à 120 » → 120 inchangé',
   assert.equal(r.conventionsCreated, 1);
   assert.equal(convOfEnt(t.ent)[0].delai_convenu, 120, 'mode auto legacy : plage → plus grand (inchangé)');
 });
+
+/* ==================================================================================
+ * LOT 1 (P0) — SÉCURISATION DE L'AUTO-MAPPING (corruption silencieuse BANKAI 005)
+ * ================================================================================== */
+const BANKAI_DIR = path.join(DOCS, '..', 'DELAI DE PAIEMENT', '02-2026', 'BANKAI');
+const bankaiFile = n => path.join(BANKAI_DIR, `BANKAI RELEV DED TVA ${n}-2026.xlsm`);
+function autoMap(file) {
+  const a = importer.analyzeWorkbook(fs.readFileSync(file), 'factures');
+  const s = a.feuilles.find(x => x.nom === a.suggestion) || a.feuilles[0];
+  const m = {}; for (const [k, v] of Object.entries(s.mapping)) m[k] = { label: (s.colonnes[v.col] || {}).label, conf: v.confidence };
+  return { a, sheet: s, m };
+}
+test('automap/L1 BANKAI 004 : Fournisseur→LIB_FRSS, TTC→M_TTC (titre, 92%)', { skip: !fs.existsSync(bankaiFile('004')) }, () => {
+  const { m } = autoMap(bankaiFile('004'));
+  assert.equal(m.four_nom.label, 'LIB_FRSS'); assert.equal(m.ttc.label, 'M_TTC');
+  assert.ok(m.four_nom.conf >= 0.9 && m.ttc.conf >= 0.9, 'confiance élevée par titre');
+});
+test('automap/L1 BANKAI 005 : Fournisseur ne mappe JAMAIS M_TTC, TTC jamais ORDRE', { skip: !fs.existsSync(bankaiFile('005')) }, () => {
+  const { m } = autoMap(bankaiFile('005'));
+  assert.equal(m.four_nom.label, 'LIB_FRSS', 'Fournisseur = LIB_FRSS (pas M_TTC)');
+  assert.equal(m.ttc.label, 'M_TTC', 'TTC = M_TTC (pas ORDRE)');
+  assert.notEqual(m.four_nom.label, 'M_TTC'); assert.notEqual(m.ttc.label, 'ORDRE');
+});
+test('automap/L1 validation BLOQUE un mapping forcé incohérent (four_nom=M_TTC, ttc=ORDRE)', { skip: !fs.existsSync(bankaiFile('005')) }, () => {
+  const wb = XLSX.read(fs.readFileSync(bankaiFile('005')), { cellDates: true });
+  const grid = XLSX.utils.sheet_to_json(wb.Sheets['EDI'], { header: 1, blankrows: true, raw: true });
+  const v = importer.validateImportMapping({ grid, headerRow: 7, startRow: 8, mapping: { four_nom: 5, ttc: 0, date_facture: 12 } });
+  assert.equal(v.ok, false, 'mapping incohérent refusé');
+  assert.ok(v.errors.some(e => e.code === 'four_numerique'), 'Fournisseur numérique bloqué');
+  assert.ok(v.errors.some(e => e.code === 'ttc_sequence'), 'TTC séquentiel bloqué');
+});
+test('automap/L1 confirmImport REFUSE un mapping incohérent (aucune écriture)', () => {
+  const { cab, ent } = seedCab();
+  // Colonne 0 = séquence (ttc forcé), colonne 1 = montants (four_nom forcé)
+  const buf = aoaBuf([['ORDRE', 'M_TTC', 'FRS', 'DATE'],
+    [1, 15600, 'A', '2026-01-05'], [2, 7596, 'B', '2026-01-06'], [3, 530000, 'C', '2026-01-07']], 'S');
+  assert.throws(() => importer.confirmImport(buf, { sheetName: 'S', headerRow: 0, mapping: { ttc: 0, four_nom: 1, date_facture: 3 }, cabinetId: cab, entrepriseId: ent, annee: 2026, trimestre: 1, sourceName: 'x' }), /Mapping refusé/);
+  assert.equal(db.prepare('SELECT COUNT(*) n FROM facture WHERE entreprise_id=?').get(ent).n, 0, 'aucune facture écrite');
+});
+test('automap/L1 colonne séquentielle 1,2,3… refusée comme TTC ; colonne monétaire refusée comme Fournisseur', () => {
+  const grid = [['SEQ', 'MONTANT', 'NOM', 'DATE'],
+    [1, 1200.5, 'ALPHA', '2026-01-05'], [2, 3400, 'BETA', '2026-01-06'], [3, 5600.75, 'GAMMA', '2026-01-07'], [4, 890, 'DELTA', '2026-01-08']];
+  const seqAsTtc = importer.validateImportMapping({ grid, headerRow: 0, startRow: 1, mapping: { ttc: 0, four_nom: 2, date_facture: 3 } });
+  assert.ok(seqAsTtc.errors.some(e => e.code === 'ttc_sequence'), 'séquence refusée comme TTC');
+  const amtAsNom = importer.validateImportMapping({ grid, headerRow: 0, startRow: 1, mapping: { ttc: 1, four_nom: 1, date_facture: 3 } });
+  assert.ok(!amtAsNom.ok, 'colonne monétaire refusée comme Fournisseur / conflit');
+});
+test('automap/L1 conflit de colonnes (même colonne pour four_nom et ttc)', () => {
+  const grid = [['A', 'B'], [10, 'x'], [20, 'y']];
+  const v = importer.validateImportMapping({ grid, headerRow: 0, startRow: 1, mapping: { ttc: 0, four_nom: 0, date_facture: 1 } });
+  assert.ok(v.errors.some(e => e.code === 'conflit_colonne'), 'conflit détecté');
+});
+test('automap/L1 isValidSupplierDisplayName : rejette numérique, accepte noms réels', () => {
+  for (const bad of ['7596', '5400', '55771.91', '28 200,00', '  120,00 ', '']) assert.equal(importer.isValidSupplierDisplayName(bad), false, `"${bad}" refusé`);
+  for (const ok of ['SCHINDLER MAROC', 'SOCIETE 3D', 'CABINET 2000', 'MAROC 24', 'BATLUXE BUSINESS']) assert.equal(importer.isValidSupplierDisplayName(ok), true, `"${ok}" accepté`);
+});
+test('automap/L1 profileColumn : séquence vs montant vs texte vs date', () => {
+  const seq = importer.profileColumn([1, 2, 3, 4, 5, 6]); assert.ok(seq.isSequential, 'séquence détectée');
+  const amt = importer.profileColumn([1200.5, 3400, 56000, 890.25]); assert.ok(amt.numericRate >= 0.7 && amt.looksAmount, 'montant détecté'); assert.equal(amt.isSequential, false);
+  const txt = importer.profileColumn(['ALPHA SARL', 'BETA', 'GAMMA SA']); assert.ok(txt.textRate >= 0.9, 'texte détecté');
+});

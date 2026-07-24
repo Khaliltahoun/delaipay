@@ -77,15 +77,17 @@ const CONCEPTS = [
   ['retard', { short: ['retard'], sub: ['joursderetard', 'nbjoursretard', 'joursretard', 'nombredejoursretard'] }],
   ['mht', { short: ['mht', 'ht'], sub: ['montantht', 'montanthorstaxe', 'baseht', 'totalht', 'montantht'] }],
   ['tva', { short: ['tva'], sub: ['montanttva', 'montantdelatva', 'tvamontant'] }],
-  ['ttc', { short: ['ttc', 'montant', 'total'], sub: ['montantttc', 'totalttc', 'montanttoutestaxe', 'montanttoutetaxe', 'montanttotal', 'totaltoutestaxes', 'montantfacturettc', 'montantfacture', 'montantdelafacture', 'montantdela facture', 'montantfact'] }],
-  ['four_ice', { short: ['ice'], sub: ['icefournisseur', 'iceclient', 'identifiantcommun', 'numeroice', 'icetiers'] }],
-  ['four_if', { short: ['if', 'nif', 'numif'], sub: ['iffournisseur', 'iffour', 'numeroif', 'identifiantfiscalfournisseur', 'identifiantfiscaltiers'] }],
-  ['four_nom', { short: ['nom', 'tiers', 'raisonsociale'], sub: ['raisonsociale', 'nomfournisseur', 'fournisseur', 'beneficiaire', 'denomination', 'nomdufournisseur', 'nomraisonsociale', 'nometprenom'] }],
+  ['ttc', { short: ['ttc', 'mttc', 'montant', 'total'], sub: ['montantttc', 'totalttc', 'montanttoutestaxe', 'montanttoutetaxe', 'montanttotal', 'totaltoutestaxes', 'montantfacturettc', 'montantfacture', 'montantdelafacture', 'montantdela facture', 'montantfact', 'mttc'] }],
+  ['four_ice', { short: ['ice', 'icefrs'], sub: ['icefournisseur', 'iceclient', 'identifiantcommun', 'numeroice', 'icetiers', 'icefrs', 'icefrss'] }],
+  ['four_if', { short: ['if', 'nif', 'numif'], sub: ['iffournisseur', 'iffour', 'numeroif', 'identifiantfiscalfournisseur', 'identifiantfiscaltiers', 'iffrs', 'iffrss'] }],
+  ['four_nom', { short: ['nom', 'tiers', 'raisonsociale', 'libfrss', 'libfrs', 'libfour'], sub: ['raisonsociale', 'nomfournisseur', 'fournisseur', 'beneficiaire', 'denomination', 'nomdufournisseur', 'nomraisonsociale', 'nometprenom', 'libfrss', 'libfrs', 'libfour', 'libellefournisseur'] }],
   ['taux_tva', { short: ['tx', 'taux'], sub: ['tauxtva', 'tauxdetva', 'tauxdetaxe', 'txtva'] }],
   ['mode_reglement', { short: ['id', 'mode'], sub: ['modereglement', 'modepaiement', 'moyenpaiement', 'modedereglement', 'moyendepaiement', 'modedepaiement'] }],
   ['designation', { short: ['des', 'nature', 'objet', 'libelle'], sub: ['designation', 'naturedesmarchandises', 'naturemarchandise', 'libelle', 'description', 'prestation', 'naturecharge', 'marchandise'] }],
-  ['numero', { short: ['num', 'numero', 'facture', 'facturen', 'ref', 'piece', 'nfacture', 'nfact', 'factn', 'nofacture', 'ndefacture', 'reference', 'n', 'no', 'ndf'], sub: ['numerofacture', 'numfacture', 'nfacture', 'nofacture', 'referencefacture', 'numerodefacture', 'ndefacture', 'numdefacture', 'numfact', 'facturen', 'referencedelafacture', 'nfact', 'numpiece', 'reference'] }],
+  ['numero', { short: ['num', 'numero', 'facture', 'facturen', 'factnum', 'ref', 'piece', 'nfacture', 'nfact', 'factn', 'nofacture', 'ndefacture', 'reference', 'n', 'no', 'ndf'], sub: ['numerofacture', 'numfacture', 'nfacture', 'nofacture', 'referencefacture', 'numerodefacture', 'ndefacture', 'numdefacture', 'numfact', 'facturen', 'factnum', 'referencedelafacture', 'nfact', 'numpiece', 'reference'] }],
 ];
+// En-têtes « colonne d'ordre / index / rang » — JAMAIS un montant TTC (repère anti-corruption).
+const ORDER_HEADER_RE = /^(ordre|index|ligne|lignes|rang|seq|sequence)$/;
 function conceptOf(h) {
   if (!h) return null;
   for (const [f, kw] of CONCEPTS) if (kw.short && kw.short.includes(h)) return f;
@@ -155,6 +157,14 @@ function analyzeColumn(grid, startRow, c) {
   const n = vals.length, f = x => x / n;
   const avgDate = dateN ? dateSum / dateN : 0, avgMag = magN ? magSum / magN : 0;
   const avgLen = lens.length ? lens.reduce((a, b) => a + b, 0) / lens.length : 0;
+  // Colonne SÉQUENTIELLE (1,2,3… — n° d'ordre/ligne) : entiers non décimaux, quasi tous distincts et
+  // consécutifs, démarrant bas. JAMAIS un montant TTC (empêche la corruption « ORDRE → TTC »).
+  const ints = vals.map(v => num(v)).filter(x => Number.isInteger(x));
+  if (!anyDecimal && ints.length >= Math.min(n, 5) && ints.length / n >= 0.9) {
+    const uniq = [...new Set(ints)].sort((a, b) => a - b);
+    const consecutive = uniq.length >= 3 && (uniq[uniq.length - 1] - uniq[0]) <= uniq.length + 1 && uniq[0] <= 2;
+    if (consecutive) return { type: 'sequence', avgDate, avgMag };
+  }
   if (f(date) >= 0.6) return { type: 'date', avgDate, avgMag };
   if (f(ice) >= 0.5) return { type: 'ice', avgDate, avgMag };
   if (!anyDecimal && f(idn) >= 0.6 && avgLen >= 5 && avgLen <= 9 && f(amount) < 0.2) return { type: 'if', avgDate, avgMag };
@@ -192,6 +202,105 @@ function inferByContent(grid, startRow, idx) {
     else if (idx.tva === undefined) idx.tva = col.c;
   }
   for (const col of cols) if (col.type === 'text') { if (idx.four_nom === undefined) idx.four_nom = col.c; else if (idx.designation === undefined) idx.designation = col.c; }
+}
+
+/* ============================================================================
+ * SÉCURISATION DE L'AUTO-MAPPING (LOT 1) — profilage, validation métier, noms fournisseurs.
+ * Générique : fondé sur le TYPE RÉEL des cellules, jamais sur un fichier/client précis.
+ * ============================================================================ */
+// Profil statistique d'une colonne (échantillon jusqu'à 200 valeurs).
+function profileColumn(values) {
+  const vals = (values || []).slice(0, 200);
+  const nonEmpty = vals.filter(v => v !== undefined && v !== null && String(v).trim() !== '');
+  const n = nonEmpty.length;
+  const p = { n, total: vals.length, emptyRate: vals.length ? (vals.length - n) / vals.length : 1,
+    numericRate: 0, textRate: 0, dateRate: 0, distinctRate: 0, avgLen: 0, isSequential: false,
+    looksAmount: false, looksId: false, min: null, max: null, samples: nonEmpty.slice(0, 5).map(v => v instanceof Date ? calc.iso(v) : String(v).slice(0, 30)) };
+  if (!n) return p;
+  let numeric = 0, text = 0, date = 0, lenSum = 0, anyDecimal = false, magSum = 0, magN = 0, idLike = 0;
+  const nums = [];
+  for (const v of nonEmpty) {
+    const s = String(v).trim(); lenSum += s.length;
+    if (isDateVal(v)) { date++; continue; }
+    const digits = s.replace(/\D/g, '');
+    const nv = num(v);
+    const isNumStr = (typeof v === 'number') || /^[\d\s.,\-]+$/.test(s);
+    const pureDigits = /^[0-9]+$/.test(s);
+    if (pureDigits && digits.length >= 10) { idLike++; text++; continue; }        // ICE/IF/compte long : ni montant ni texte libre
+    if (isNumStr && nv !== 0 || (isNumStr && /0/.test(s))) {
+      numeric++; if (/[.,]\d/.test(s) || (typeof v === 'number' && !Number.isInteger(v))) anyDecimal = true;
+      if (Math.abs(nv) < 5e8) { magSum += Math.abs(nv); magN++; nums.push(nv); }
+    } else text++;
+  }
+  p.numericRate = numeric / n; p.textRate = text / n; p.dateRate = date / n;
+  p.distinctRate = new Set(nonEmpty.map(v => String(v).trim())).size / n;
+  p.avgLen = lenSum / n;
+  p.looksAmount = p.numericRate >= 0.6 && (anyDecimal || (magN && magSum / magN > 100));
+  p.looksId = idLike / n >= 0.6;
+  if (nums.length) { p.min = Math.min(...nums); p.max = Math.max(...nums); }
+  // Séquence 1,2,3… (n° d'ordre) : entiers consécutifs quasi tous distincts démarrant bas.
+  const ints = nonEmpty.map(v => num(v)).filter(x => Number.isInteger(x));
+  if (!anyDecimal && ints.length / n >= 0.9) {
+    const u = [...new Set(ints)].sort((a, b) => a - b);
+    p.isSequential = u.length >= 3 && (u[u.length - 1] - u[0]) <= u.length + 1 && u[0] <= 2;
+  }
+  return p;
+}
+
+// Une raison sociale purement numérique / au format d'un montant n'est JAMAIS un vrai nom de fournisseur.
+// Accepte un vrai nom contenant des chiffres (SOCIETE 3D, CABINET 2000, MAROC 24).
+function isValidSupplierDisplayName(name) {
+  const s = String(name == null ? '' : name).trim();
+  if (!s) return false;
+  if (!/[A-Za-zÀ-ÿ]/.test(s)) return false;                          // aucune lettre → refusé (7596, 55771.91, « 28 200,00 »)
+  if (/^[\d\s.,\-]+$/.test(s)) return false;                          // purement numérique/format montant
+  return true;
+}
+
+// Libellé d'en-tête normalisé d'une colonne (pour repérer ORDRE/INDEX/…).
+function headerNormOf(grid, headerRow, col) { return normHead((grid[headerRow] || [])[col]); }
+
+/**
+ * VALIDATION MÉTIER du mapping avant prévisualisation/confirmation.
+ * Bloque tout mapping incohérent (Fournisseur numérique, TTC séquentiel/ORDRE, type incompatible,
+ * colonne partagée par des champs incompatibles, champ obligatoire absent).
+ * @returns {{ok, errors:[], warnings:[], fields:{}, confidence:number}}
+ */
+function validateImportMapping({ grid, headerRow = 0, startRow, mapping = {}, requiredFields = ['four_nom', 'date_facture', 'ttc'] }) {
+  const sr = startRow != null ? startRow : headerRow + 1;
+  const colValues = (c) => { const out = []; for (let r = sr; r < grid.length && out.length < 200; r++) { const v = grid[r] && grid[r][c]; if (v !== undefined && v !== null && String(v).trim() !== '') out.push(v); } return out; };
+  const errors = [], warnings = [], fields = {};
+  const num2 = v => (v == null || v === '' ? undefined : Number(v));
+  // Exclusivité : une colonne utilisée par des champs INCOMPATIBLES → conflit bloquant.
+  const INCOMPAT = [['four_nom', 'ttc'], ['four_nom', 'mht'], ['four_nom', 'tva'], ['four_ice', 'ttc'], ['four_if', 'ttc'], ['date_facture', 'date_paiement'], ['ttc', 'numero']];
+  const colOf = {}; for (const [fld, c] of Object.entries(mapping)) { const cc = num2(c); if (cc != null && !Number.isNaN(cc)) (colOf[cc] = colOf[cc] || []).push(fld); }
+  for (const [col, flds] of Object.entries(colOf)) {
+    for (const [a, b] of INCOMPAT) if (flds.includes(a) && flds.includes(b))
+      errors.push({ field: a, code: 'conflit_colonne', message: `Les champs « ${a} » et « ${b} » pointent la même colonne (${headerNormOf(grid, headerRow, +col) || 'col ' + col}). Choisissez des colonnes distinctes.` });
+  }
+  for (const fld of requiredFields) {
+    const c = num2(mapping[fld]);
+    if (c == null || Number.isNaN(c)) { errors.push({ field: fld, code: 'requis_absent', message: `Champ obligatoire « ${fld} » non mappé.` }); continue; }
+    const prof = profileColumn(colValues(c)); const hdr = headerNormOf(grid, headerRow, c);
+    fields[fld] = { col: c, header: hdr, profile: prof };
+    if (prof.n === 0) { errors.push({ field: fld, code: 'colonne_vide', message: `La colonne « ${hdr || 'col ' + c} » du champ obligatoire « ${fld} » ne contient aucune donnée exploitable.` }); continue; }
+    if (fld === 'ttc') {
+      if (prof.isSequential || ORDER_HEADER_RE.test(hdr))
+        errors.push({ field: 'ttc', code: 'ttc_sequence', message: `Le champ Montant TTC est associé à « ${hdr || 'col ' + c} », qui ressemble à une séquence de lignes (${prof.samples.join(', ')}). Sélectionnez une colonne monétaire.` });
+      else if (prof.numericRate < 0.6)
+        errors.push({ field: 'ttc', code: 'ttc_non_numerique', message: `Le champ Montant TTC est associé à « ${hdr || 'col ' + c} », qui n'est pas majoritairement numérique (${Math.round(prof.numericRate * 100)} %). Sélectionnez une colonne monétaire.` });
+    }
+    if (fld === 'four_nom') {
+      if (prof.numericRate >= 0.6 && prof.textRate < 0.5 && !prof.looksId)
+        errors.push({ field: 'four_nom', code: 'four_numerique', message: `Le champ Fournisseur est associé à « ${hdr || 'col ' + c} », qui contient ${Math.round(prof.numericRate * 100)} % de valeurs numériques (${prof.samples.join(', ')}). Sélectionnez une colonne contenant les raisons sociales.` });
+      else if (prof.textRate < 0.4)
+        warnings.push({ field: 'four_nom', code: 'four_peu_textuel', message: `La colonne « ${hdr || 'col ' + c} » du Fournisseur semble peu textuelle (${Math.round(prof.textRate * 100)} % de texte) — vérifiez le mapping.` });
+    }
+    if ((fld === 'date_facture' || fld === 'date_paiement') && prof.dateRate < 0.5)
+      warnings.push({ field: fld, code: 'date_incompatible', message: `La colonne « ${hdr || 'col ' + c} » du champ « ${fld} » ne ressemble pas majoritairement à des dates (${Math.round(prof.dateRate * 100)} %).` });
+  }
+  const confidence = errors.length ? 0 : (warnings.length ? 0.7 : 0.95);
+  return { ok: errors.length === 0, errors, warnings, fields, confidence };
 }
 
 /* ------------------------------------------------------------------ helpers métier */
@@ -676,9 +785,14 @@ function previewImport(buffer, opts) {
   const { grid, name, rowBase } = gridOfSheet(buffer, opts.sheetName);
   if (!grid.length) throw new Error('Feuille vide.');
   const headerRow = opts.headerRow != null ? +opts.headerRow : detectHeader(grid).row;
+  const validation = validateImportMapping({ grid, headerRow, startRow: headerRow + 1, mapping: opts.mapping || {}, requiredFields: opts.requireNumero ? ['four_nom', 'date_facture', 'ttc', 'numero'] : ['four_nom', 'date_facture', 'ttc'] });
   const { lignes, stats } = classifyGrid(grid, { ...opts, headerRow, rowBase });
+  // Somme BRUTE de la colonne TTC mappée (contrôle de cohérence — LOT 1.7).
+  const ttcCol = opts.mapping && opts.mapping.ttc != null && opts.mapping.ttc !== '' ? Number(opts.mapping.ttc) : null;
+  let sommeBruteTtc = 0;
+  if (ttcCol != null) for (let r = headerRow + 1; r < grid.length; r++) { const v = grid[r] && grid[r][ttcCol]; const nv = num(v); if (Math.abs(nv) < 5e8) sommeBruteTtc = round2(sommeBruteTtc + nv); }
   const ech = st => lignes.filter(l => l.statut === st).slice(0, 12);
-  return { feuille: name, ligneEntete: headerRow, stats,
+  return { feuille: name, ligneEntete: headerRow, stats, validation, sommeBruteTtc,
     apercu: { valides: ech('valide'), ignorees: ech('ignoree'), rejetees: ech('rejetee'), doublons: ech('doublon') } };
 }
 
@@ -688,6 +802,9 @@ function confirmImport(buffer, opts) {
   const { grid, name, rowBase } = gridOfSheet(buffer, opts.sheetName);
   if (!grid.length) throw new Error('Feuille vide.');
   const headerRow = opts.headerRow != null ? +opts.headerRow : detectHeader(grid).row;
+  // LOT 1.5 — BLOCAGE DUR : un mapping incohérent ne peut JAMAIS être confirmé silencieusement.
+  const validation = validateImportMapping({ grid, headerRow, startRow: headerRow + 1, mapping: opts.mapping || {}, requiredFields: opts.requireNumero ? ['four_nom', 'date_facture', 'ttc', 'numero'] : ['four_nom', 'date_facture', 'ttc'] });
+  if (!validation.ok) { const e = new Error('Mapping refusé : ' + validation.errors.map(x => x.message).join(' | ')); e.validation = validation; throw e; }
   const { lignes, stats } = classifyGrid(grid, { ...opts, headerRow, rowBase });
   const importId = uid('imp');
   const today = new Date();
@@ -1125,4 +1242,5 @@ module.exports = {
   importConventions, parseDelai, parseConvDelaiStrict, parseConv, normName, buildConventionsTemplate,
   CONV_TEMPLATE_HEADERS, FIELDS, CONV_FIELDS, DELAI_CONV_MSG,
   markPotentialDuplicate, DUP_MOTIF, DUP_ANO_MSG,
+  profileColumn, validateImportMapping, isValidSupplierDisplayName,
 };

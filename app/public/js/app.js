@@ -909,9 +909,21 @@ function wizPreviewHtml() {
   if (wizIsConv()) return wizConvPreviewHtml();
   const pv = state.wiz.preview || { stats: {}, apercu: {} }; const s = pv.stats;
   const mism = s.autrePeriode > 0;
+  const val = pv.validation || { ok: true, errors: [], warnings: [] };
+  const blocked = !val.ok;
   const rowsHtml = (arr, cls) => (arr || []).slice(0, 8).map(l => `<tr class="${cls}"><td class="mono">${l.ligne}</td><td>${esc(l.statut)}</td><td>${esc(l.motif || (l.avertissements || []).join(', ') || '—')}</td><td class="dh">${esc((l.brut || []).filter(Boolean).slice(0, 5).join(' · ')).slice(0, 90)}</td></tr>`).join('');
+  const valBox = (blocked || (val.warnings && val.warnings.length))
+    ? `<div class="lock-note" style="background:${blocked ? 'rgba(210,69,47,.12);border-color:rgba(210,69,47,.5)' : 'rgba(214,158,46,.12);border-color:rgba(214,158,46,.4)'};margin-bottom:12px">
+        <b>${blocked ? '⛔ Mapping incohérent — import bloqué' : '⚠ Avertissements de mapping'}</b>
+        <ul style="margin:6px 0 0 18px">${[...(val.errors || []), ...(val.warnings || [])].map(e => `<li>${esc(e.message)}</li>`).join('')}</ul>
+        ${blocked ? '<div style="margin-top:6px;font-size:12px">Revenez au mapping et sélectionnez les bonnes colonnes.</div>' : ''}</div>`
+    : '';
+  const cohBox = (pv.sommeBruteTtc != null && !blocked)
+    ? `<div class="dh" style="font-size:12px;margin-bottom:10px">💡 Vérifiez quelques lignes avant de confirmer. Total TTC retenu (valides) : <b>${money(s.totalTtc)}</b> · somme brute de la colonne TTC mappée : <b>${money(pv.sommeBruteTtc)}</b>.</div>`
+    : '';
   return `<div class="card"><div class="card-h"><h3>Prévisualisation — ${esc(state.wiz.sourceName)}</h3><div class="sub">Feuille « ${esc(pv.feuille || '')} » · période ${state.period.annee} T${state.period.trimestre}</div></div>
     <div class="card-b">
+      ${valBox}${cohBox}
       <div class="kpi-grid" style="margin-bottom:12px">
         <div class="kpi"><div class="lbl">Lignes analysées</div><div class="val">${s.total || 0}</div></div>
         <div class="kpi"><div class="lbl">Valides</div><div class="val" style="color:var(--r-green)">${s.valides || 0}</div></div>
@@ -924,7 +936,7 @@ function wizPreviewHtml() {
       ${s.rejetees ? `<h4 style="margin:14px 0 6px">Lignes rejetées (extrait)</h4><div class="table-wrap" style="box-shadow:none;border:1px solid var(--line)"><table><thead><tr><th>Ligne</th><th>Statut</th><th>Motif</th><th>Données</th></tr></thead><tbody>${rowsHtml(pv.apercu.rejetees, 'rej')}</tbody></table></div>` : ''}
       ${s.ignorees ? `<details style="margin-top:10px"><summary>${s.ignorees} ligne(s) ignorée(s) (total/sous-total/vide…)</summary><div class="table-wrap" style="box-shadow:none;border:1px solid var(--line);margin-top:8px"><table><thead><tr><th>Ligne</th><th>Statut</th><th>Motif</th><th>Données</th></tr></thead><tbody>${rowsHtml(pv.apercu.ignorees, 'ign')}</tbody></table></div></details>` : ''}
       <div class="wiz-actions"><button class="btn btn-ghost" id="wizBack2">← Mapping</button>
-        <button class="btn btn-primary" id="wizConfirm" ${!s.valides ? 'disabled' : ''}>Confirmer l'import (${s.valides || 0} facture${(s.valides || 0) > 1 ? 's' : ''})</button></div>
+        <button class="btn btn-primary" id="wizConfirm" ${(!s.valides || blocked) ? 'disabled' : ''} title="${blocked ? 'Corrigez le mapping incohérent pour continuer' : ''}">Confirmer l'import (${s.valides || 0} facture${(s.valides || 0) > 1 ? 's' : ''})</button></div>
     </div></div>`;
 }
 // Prévisualisation de l'import des CONVENTIONS (mapping libre) — vrais numéros de ligne dans les erreurs.
