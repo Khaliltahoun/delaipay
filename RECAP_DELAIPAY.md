@@ -188,10 +188,11 @@ Vue consolidée du portefeuille, par période (trimestre) :
 - **Upload** de la convention (PDF / scan) + **téléchargement**.
 - **Ajout** (upsert du fournisseur si nécessaire) et **suppression** (repli au délai 60 j + recalcul).
 - Contrôle métier : **délai > 60 j → convention requise** (sinon anomalie `convention_absente`).
-- **Import Excel d'une liste de conventions** (`POST /clients/:id/conventions/import`) — crée fournisseurs + conventions **sans le PDF** (document différé) :
+- **Import Excel d'une liste de conventions via l'ASSISTANT (mapping libre)** — **réutilise le composant de mapping de l'import TVA** : analyse → mapping des colonnes (Nom, ICE, IF, RC, Convention, Délai conventionnel, dates, réf., commentaire) → prévisualisation (dry-run, aucune écriture) → confirmation. Endpoints `POST /clients/:id/conventions/preview` et `/confirm` ; `POST /clients/:id/import/analyze` avec `kind=conventions`. L'import auto (sans mapping, `POST /clients/:id/conventions/import`) reste disponible.
   - **Modèle** téléchargeable à 2 feuilles (Instructions + Conventions, 10 colonnes, exemples fictifs) : `GET /conventions/template.xlsx`.
-  - **Identification** fournisseur : ICE → IF → RC → nom normalisé (accents/casse/ponctuation/formes juridiques).
-  - **Délais** : plage → plus grand (« 60 A 120 J » → 120) ; **> 180 j** → à vérifier ; nul/illisible → rejeté ; **NON** → aucune convention (60 j légal) ; vide/ambigu → à vérifier.
+  - **Identification** fournisseur : ICE → IF → RC → **nom normalisé** via `util.normalizeSupplierName` (fonction unique : casse/accents/espaces/tabs/tirets/underscores/ponctuation/formes juridiques). Le **nom affiché n'est jamais modifié**.
+  - **Délai conventionnel** — flux mappé : entier **1..120 enregistré exactement** (aucun arrondi/conversion) ; vide/0/négatif/décimal/texte/>120 **rejeté** avec message explicite (vrai n° de ligne Excel). Flux auto legacy : plage → plus grand (« 60 A 120 J » → 120), inchangé.
+  - **Recalcul automatique** des factures des **périodes non clôturées** des fournisseurs concernés après import (les périodes clôturées restent intactes).
   - **Dédoublonnage** : identique → doublon ; délai/dates différents → conflit (aucun écrasement, PDF préservé).
   - **Transaction unique** (`BEGIN/COMMIT/ROLLBACK`) ; **lot d'import** tracé (`import_lot.source_type='conventions_xlsx'`, SHA-256) + `convention.import_lot_id`.
   - **Rapport** (écran + CSV) : analysées / créées / fournisseurs créés-existants / doublons / conflits / sans convention / à vérifier / rejetées / ignorées, avec motif par ligne.
@@ -246,7 +247,7 @@ Vue consolidée du portefeuille, par période (trimestre) :
 **Conventions**
 - `GET /clients/:id/conventions` · `POST /clients/:id/conventions` (upload) · `DELETE /clients/:id/conventions/:convId`
 - `GET /conventions/:id/file`
-- `POST /clients/:id/conventions/import` (liste Excel → conventions, PDF différé) · `POST /clients/:id/conventions/:convId/file` (PDF, remplacement confirmé) · `GET /conventions/template.xlsx` (modèle 2 feuilles)
+- `POST /clients/:id/conventions/import` (liste Excel auto → conventions, PDF différé) · `POST /clients/:id/conventions/preview` + `/confirm` (assistant, mapping libre) · `POST /clients/:id/conventions/:convId/file` (PDF, remplacement confirmé) · `GET /conventions/template.xlsx` (modèle 2 feuilles)
 
 **Délais / factures**
 - `GET /clients/:id/delais` · `GET /clients/:id/delais/export.xlsx?filter=all|retard|conv` (export Excel formaté par filtre) · `POST /clients/:id/recompute` · `POST /clients/:id/factures` (saisie manuelle)
@@ -344,7 +345,7 @@ Voir le détail dans **CHANGELOG.md** et le **GUIDE_UTILISATEUR_PERIODES.md**.
 - **Assistant d'import 6 étapes** : analyse → feuille & **mapping** (auto + confiance, corrigeable) → **prévisualisation** (valides/ignorées/rejetées/doublons, sans écriture) → **confirmation transactionnelle** → **annulation** + rapport de rejets CSV. **Modèles de mapping** réutilisables.
 - **Incidence reportée** : facture impayée → amende calculée pour chaque trimestre concerné, sans déplacer le fichier source (traçabilité vers la période d'origine).
 - **Nouvelles tables** : `periode_declaration`, `import_lot`, `import_ligne`, `modele_mapping`. Migration idempotente : `npm run migrate` (sauvegarde préalable recommandée).
-- **Tests automatisés** : `npm test` — **92/92** (calendrier, non-régression CADOZAT 7 025,33, classification d'import, revue non destructive des doublons, endpoint de revue, export Excel par filtre, lignes total).
+- **Tests automatisés** : `npm test` — **106/106** (calendrier, non-régression CADOZAT 7 025,33, classification d'import, revue des doublons, export Excel, import conventions mappé, `normalizeSupplierName`, délai strict 1..120, recalcul des périodes ouvertes, vrai n° de ligne Excel).
 - **Revue des doublons potentiels** : les doublons sont conservés et signalés (jamais supprimés), avec un statut de revue (`potentiel`/`confirme`/`faux_positif`) modifiable via `PATCH …/doublon` (audité). *Les doublons supprimés par d'anciennes versions ne peuvent être récupérés qu'en réimportant la source originale.*
 - **Nouvelles routes** : `/clients/:id/periods[...]` (summary/close/reopen), `/clients/:id/import/analyze|preview|confirm`, `/clients/:id/import/:id/impact|cancel`, `/imports/:id/rejections[.csv]`, `/mapping-templates`.
 

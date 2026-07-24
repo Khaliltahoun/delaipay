@@ -1,5 +1,20 @@
 # Changelog — DelaiPay
 
+## Import des conventions unifié (mapping libre) + matching & délais robustes (juillet 2026)
+
+### Ajouté
+- **Import des conventions via l'assistant** (mapping libre des colonnes) — **réutilise exactement le composant de mapping de l'import TVA** : analyse → feuille & mapping (auto + confiance, corrigeable) → prévisualisation (aucune écriture) → confirmation. Champs mappables : Nom fournisseur, ICE, IF, RC, Convention (OUI/NON), Délai conventionnel, Date début/fin, Référence, Commentaire. Endpoints `POST /clients/:id/conventions/preview` (dry-run) et `/confirm` ; `POST /clients/:id/import/analyze` accepte `kind=conventions`. L'import auto historique (sans mapping) reste disponible (rétro-compatibilité).
+- **`util.normalizeSupplierName`** — fonction **centralisée et unique** de rapprochement des noms (comparaison uniquement) : ignore casse, accents, espaces (début/fin/multiples), tabulations, tirets, underscores, ponctuation ; neutralise les formes juridiques. Priorité d'identification **ICE → IF → RC → nom normalisé**. Le **nom affiché n'est JAMAIS modifié** (jamais écrasé ; rempli seulement s'il était vide). Utilisée par l'import des conventions ET des factures.
+- **Délai conventionnel variable et strict (1..120)** dans le flux mappé : n'importe quel entier de 1 à 120 est enregistré **exactement** (aucun arrondi, aucune conversion, aucune normalisation — 79 reste 79, 103 reste 103). Toute valeur invalide (vide, 0, négative, décimale, texte, > 120) est **rejetée** avec un message explicite : *« le délai conventionnel doit être un entier compris entre 1 et 120 jours. »* — jamais corrigée automatiquement.
+- **Recalcul automatique des factures** après import/suppression d'une convention : **toutes les périodes NON clôturées** des fournisseurs concernés sont recalculées (le délai autorisé de la feuille de délais reflète immédiatement le nouveau délai) ; les **périodes clôturées ne sont jamais modifiées**.
+
+### Corrigé
+- **Vrai numéro de ligne Excel** dans tous les messages d'erreur d'import (TVA, conventions, factures, assistant) : la lecture des feuilles préserve désormais la position réelle (`blankrows` + origine de plage) — le numéro affiché correspond à la ligne du fichier Excel (ex. « Ligne 15 »), jamais recalculé à partir des lignes ignorées/vides/en-têtes/du mapping.
+- La colonne `resolue_le` des anomalies est présente (déjà corrigée précédemment).
+
+### Préservé
+- **CADOZAT = 36 factures / 7 025,33 DH** inchangé. Import auto legacy des conventions inchangé (« 60 à 120 » → 120). Suite de tests **106/106**.
+
 ## Export Excel de la feuille de délais, par filtre (juillet 2026)
 
 ### Ajouté

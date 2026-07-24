@@ -133,6 +133,23 @@ function recomputePeriod(cabinetId, entrepriseId, annee, trimestre) {
       c.tauxBam, c.tauxTotal, c.baseAmende, c.montantAmende, c.couleurRisque, f.id);
   }
 }
+// Recalcule TOUTES les périodes NON clôturées où les fournisseurs donnés ont des factures.
+// Les périodes verrouillées (clôturées / déclarées) ne sont JAMAIS modifiées (OBJ 4).
+function recomputeOpenPeriodsForFournisseurs(cabinetId, entrepriseId, fournisseurIds) {
+  const ids = [...new Set((fournisseurIds || []).filter(Boolean))];
+  if (!ids.length) return 0;
+  const q = db.prepare('SELECT DISTINCT annee, trimestre FROM facture WHERE entreprise_id=? AND fournisseur_id=? AND annee IS NOT NULL AND trimestre IS NOT NULL');
+  const seen = new Set(); let n = 0;
+  for (const fid of ids) {
+    for (const p of q.all(entrepriseId, fid)) {
+      const key = p.annee + '-' + p.trimestre;
+      if (seen.has(key)) continue; seen.add(key);
+      const row = ensurePeriode(cabinetId, entrepriseId, p.annee, p.trimestre);
+      if (!periode.isLocked(row.statut)) { recomputePeriod(cabinetId, entrepriseId, p.annee, p.trimestre); n++; }
+    }
+  }
+  return n;
+}
 
 /* ============================================================ AUTH */
 router.post('/auth/login', loginLimiter, (req, res) => {
@@ -479,7 +496,9 @@ router.post('/clients/:id/conventions', upload.single('file'), (req, res) => {
       b.date_signature || null, b.date_debut || null, b.date_fin || null, 'valide',
       1, req.file ? req.file.filename : null, req.file ? req.file.originalname : null);
   if (fournisseurId) db.prepare('UPDATE fournisseur SET delai_applicable=? WHERE id=?').run(delaiConv, fournisseurId);
-  const p = latestPeriod(e.id); recomputePeriod(req.cabinetId, e.id, p.annee, p.trimestre);
+  // Recalcul de toutes les périodes NON clôturées de ce fournisseur (jamais les périodes verrouillées).
+  if (fournisseurId) recomputeOpenPeriodsForFournisseurs(req.cabinetId, e.id, [fournisseurId]);
+  else { const p = latestPeriod(e.id); recomputePeriod(req.cabinetId, e.id, p.annee, p.trimestre); }
   audit(req.cabinetId, req.user.id, 'create', 'convention', { id, entreprise: e.id }, req.ip);
   res.json({ ok: true, id });
 });
@@ -518,12 +537,45 @@ router.post('/clients/:id/conventions/import', heavyLimiter, upload.single('file
       sourceName: req.file.originalname, empreinte,
     });
     cleanupUploads(req);
-    // Recalcul de la période représentative (les nouveaux délais s'appliquent aux retards).
-    const p = latestPeriod(e.id); recomputePeriod(req.cabinetId, e.id, p.annee, p.trimestre);
+    // Recalcul de TOUTES les périodes NON clôturées des fournisseurs affectés (les nouveaux délais s'appliquent aux retards).
+    const recompute = recomputeOpenPeriodsForFournisseurs(req.cabinetId, e.id, r.affectedFournisseurs);
     audit(req.cabinetId, req.user.id, 'import_conventions', 'convention',
-      { file: req.file.originalname, batch: r.batchId, created: r.conventionsCreated, conflicts: r.conflicts, rejected: r.rejected }, req.ip);
-    res.json({ ok: true, ...r });
+      { file: req.file.originalname, batch: r.batchId, created: r.conventionsCreated, conflicts: r.conflicts, rejected: r.rejected, recompute }, req.ip);
+    res.json({ ok: true, recompute, ...r });
   } catch (err) { cleanupUploads(req); res.status(400).json({ error: err.message }); }
+});
+
+// Assistant conventions (mapping libre, réutilise le token d'analyse) — PRÉVISUALISATION (aucune écriture).
+router.post('/clients/:id/conventions/preview', (req, res) => {
+  const e = ownedEntreprise(req, req.params.id); if (!e) return res.status(404).json({ error: 'Introuvable.' });
+  const b = req.body || {};
+  const tmp = safeUploadPath(b.token); if (!tmp) return res.status(400).json({ error: 'Fichier expiré ou introuvable — relancez l\'analyse.' });
+  try {
+    const r = importer.importConventions(fs.readFileSync(tmp), {
+      cabinetId: req.cabinetId, entrepriseId: e.id, userId: req.user.id,
+      sourceName: b.sourceName || 'conventions.xlsx', mapping: b.mapping || {}, sheetName: b.sheetName, headerRow: b.headerRow, dryRun: true,
+    });
+    res.json({ ok: true, ...r });
+  } catch (err) { res.status(400).json({ error: err.message }); }
+});
+// Assistant conventions — CONFIRMATION (écrit en transaction, recalcule les périodes ouvertes).
+router.post('/clients/:id/conventions/confirm', (req, res) => {
+  const e = ownedEntreprise(req, req.params.id); if (!e) return res.status(404).json({ error: 'Introuvable.' });
+  const b = req.body || {};
+  const tmp = safeUploadPath(b.token); if (!tmp) return res.status(400).json({ error: 'Fichier expiré ou introuvable — relancez l\'analyse.' });
+  try {
+    const crypto = require('crypto');
+    const buf = fs.readFileSync(tmp);
+    const empreinte = crypto.createHash('sha256').update(buf).digest('hex');
+    const r = importer.importConventions(buf, {
+      cabinetId: req.cabinetId, entrepriseId: e.id, userId: req.user.id, empreinte,
+      sourceName: b.sourceName || 'conventions.xlsx', mapping: b.mapping || {}, sheetName: b.sheetName, headerRow: b.headerRow,
+    });
+    const recompute = recomputeOpenPeriodsForFournisseurs(req.cabinetId, e.id, r.affectedFournisseurs);
+    audit(req.cabinetId, req.user.id, 'import_conventions', 'convention',
+      { file: b.sourceName, batch: r.batchId, created: r.conventionsCreated, conflicts: r.conflicts, rejected: r.rejected, recompute, mapped: true }, req.ip);
+    res.json({ ok: true, recompute, ...r });
+  } catch (err) { res.status(400).json({ error: err.message }); }
 });
 
 // Ajout (ou remplacement EXPLICITE) du PDF de convention. PDF uniquement, jamais d'écrasement silencieux.
@@ -896,8 +948,9 @@ router.post('/clients/:id/import/analyze', upload.single('file'), (req, res) => 
     const buf = fs.readFileSync(req.file.path);
     const token = 'tmp_' + path.basename(req.file.path);
     fs.renameSync(req.file.path, path.join(UP_DIR, token));
-    const analyse = importer.analyzeWorkbook(buf);
-    audit(req.cabinetId, req.user.id, 'import_analyse', 'import', { file: req.file.originalname, entreprise: e.id }, req.ip);
+    const kind = (req.body && req.body.kind === 'conventions') ? 'conventions' : 'factures';
+    const analyse = importer.analyzeWorkbook(buf, kind);
+    audit(req.cabinetId, req.user.id, 'import_analyse', 'import', { file: req.file.originalname, entreprise: e.id, kind }, req.ip);
     res.json({ ...analyse, token, sourceName: req.file.originalname, taille: req.file.size });
   } catch (err) { try { fs.unlinkSync(req.file.path); } catch (_) {} res.status(400).json({ error: err.message }); }
 });
@@ -1076,7 +1129,9 @@ router.delete('/clients/:id/conventions/:convId', (req, res) => {
     const rest = db.prepare(`SELECT COUNT(*) n FROM convention WHERE fournisseur_id=? AND statut='valide'`).get(c.fournisseur_id).n;
     if (!rest) db.prepare('UPDATE fournisseur SET delai_applicable=60 WHERE id=?').run(c.fournisseur_id);
   }
-  const p = latestPeriod(e.id); recomputePeriod(req.cabinetId, e.id, p.annee, p.trimestre);
+  // Recalcul de toutes les périodes NON clôturées du fournisseur concerné.
+  if (c.fournisseur_id) recomputeOpenPeriodsForFournisseurs(req.cabinetId, e.id, [c.fournisseur_id]);
+  else { const p = latestPeriod(e.id); recomputePeriod(req.cabinetId, e.id, p.annee, p.trimestre); }
   audit(req.cabinetId, req.user.id, 'delete', 'convention', { id: c.id }, req.ip);
   res.json({ ok: true });
 });

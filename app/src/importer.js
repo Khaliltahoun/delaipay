@@ -3,7 +3,20 @@ const XLSX = require('xlsx');
 const xmljs = require('xml-js');
 const { db, tauxAt } = require('./db');
 const calc = require('./calc');
-const { uid, normalizeIce } = require('./util');
+const { uid, normalizeIce, normalizeSupplierName } = require('./util');
+
+/* -------------------------------------------------------------------- lecture Excel
+ * Lecture d'une feuille en préservant le VRAI numéro de ligne Excel.
+ * blankrows:true → la grille est DENSE sur la plage du fichier ; le numéro Excel réel d'une
+ * ligne d'index `i` dans la grille vaut `excelRow(rowBase, i)`. On ne recalcule JAMAIS le numéro
+ * à partir des lignes ignorées/vides/du mapping : il reflète toujours la feuille source. */
+function readSheetGrid(ws) {
+  const grid = XLSX.utils.sheet_to_json(ws, { header: 1, blankrows: true, raw: true });
+  let rowBase = 0;
+  try { if (ws && ws['!ref']) rowBase = XLSX.utils.decode_range(ws['!ref']).s.r; } catch (_) {}
+  return { grid, rowBase };
+}
+function excelRow(rowBase, gridIndex) { return (rowBase || 0) + gridIndex + 1; }
 
 /* ==================================================================================
  * DOUBLON POTENTIEL — marquage CENTRAL et NON DESTRUCTIF (paiement partiel / facture
@@ -200,10 +213,16 @@ function upsertFournisseur(cabinetId, entrepriseId, { nom, ice, iff }) {
   let row = null;
   if (iceN) row = db.prepare('SELECT * FROM fournisseur WHERE entreprise_id=? AND ice=?').get(entrepriseId, iceN);
   if (!row && iff) row = db.prepare('SELECT * FROM fournisseur WHERE entreprise_id=? AND if_fiscal=?').get(entrepriseId, String(iff));
-  if (!row && !iceN && !iff && nom) row = db.prepare('SELECT * FROM fournisseur WHERE entreprise_id=? AND raison_sociale=?').get(entrepriseId, String(nom));
+  // Rapprochement par NOM NORMALISÉ (comparaison uniquement) quand aucun identifiant fiable — priorité ICE→IF→nom.
+  if (!row && !iceN && !iff && nom) {
+    const nameN = normalizeSupplierName(nom);
+    if (nameN) for (const f of db.prepare('SELECT * FROM fournisseur WHERE entreprise_id=?').all(entrepriseId))
+      if (normalizeSupplierName(f.raison_sociale) === nameN) { row = f; break; }
+  }
   if (row) {
-    if (nom && (!row.raison_sociale || row.raison_sociale.length < String(nom).length))
-      db.prepare('UPDATE fournisseur SET raison_sociale=? WHERE id=?').run(String(nom), row.id);
+    // OBJ 2 : ne jamais MODIFIER le nom affiché ; on le remplit seulement s'il est vide.
+    if (nom && String(nom).trim() && !(row.raison_sociale && String(row.raison_sociale).trim()))
+      db.prepare('UPDATE fournisseur SET raison_sociale=? WHERE id=?').run(String(nom).trim(), row.id);
     return { id: row.id, created: false };
   }
   const id = uid('four');
@@ -326,10 +345,10 @@ function importExcel(buffer, { cabinetId, entrepriseId, sourceName, periode }) {
   const sheets = [];
   for (const name of wb.SheetNames) {
     if (SHEET_SKIP.test(name)) continue;
-    const grid = XLSX.utils.sheet_to_json(wb.Sheets[name], { header: 1, blankrows: false, raw: true });
+    const { grid, rowBase } = readSheetGrid(wb.Sheets[name]);
     if (!grid.length) continue;
     const r = resolveSheet(grid);
-    if (r.importable) sheets.push({ name, grid, ...r });
+    if (r.importable) sheets.push({ name, grid, rowBase, ...r });
   }
   if (!sheets.length) throw new Error("Colonnes non reconnues : ni montant ni dates détectés (même par analyse du contenu).");
 
@@ -468,6 +487,21 @@ const FIELDS = [
 ];
 const FIELD_KEYS = FIELDS.map(f => f[0]);
 
+// Champs canoniques d'une LISTE DE CONVENTIONS (mêmes clés que l'index interne : nom/ice/iff/rc/conv/delai/…).
+// L'assistant d'import réutilise le MÊME composant de mapping que les factures avec cette liste de champs.
+const CONV_FIELDS = [
+  ['nom', 'Nom fournisseur', true],
+  ['ice', 'ICE', false],
+  ['iff', 'IF', false],
+  ['rc', 'RC', false],
+  ['conv', 'Convention (OUI/NON)', false],
+  ['delai', 'Délai conventionnel (jours)', true],
+  ['debut', 'Date de début', false],
+  ['fin', 'Date de fin', false],
+  ['ref', 'Référence convention', false],
+  ['comm', 'Commentaire', false],
+];
+
 // Lignes à ignorer : total, sous-total, report, cumul, solde… (insensible casse/accents/espaces).
 const IGNORE_WORDS = new Set(['total', 'totalgeneral', 'totaux', 'soustotal', 'sstotal', 'stotal', 'report', 'areporter', 'reporter', 'cumul', 'cumule', 'solde', 'balance', 'arrete', 'arretes', 'sommetotale', 'grandtotal', 'montanttotal']);
 function normCell(v) { return String(v == null ? '' : v).toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[^a-z0-9]/g, ''); }
@@ -500,6 +534,14 @@ function autoMapGrid(grid) {
   }
   return { headerRow, startRow: resolved.startRow, mapping };
 }
+// Mapping automatique d'une LISTE DE CONVENTIONS (même forme de retour que autoMapGrid).
+function autoMapConvGrid(grid) {
+  const det = detectConvHeaderRow(grid);
+  const idx = det.idx && Object.keys(det.idx).length ? det.idx : mapConvHeader(grid[det.row] || []);
+  const mapping = {};
+  for (const [f, col] of Object.entries(idx)) if (col !== undefined) mapping[f] = { col, confidence: 0.9, source: 'titre' };
+  return { headerRow: det.row, startRow: det.row + 1, mapping };
+}
 function sampleValues(grid, startRow, col, n = 8) {
   const out = [];
   for (let r = startRow; r < grid.length && out.length < n; r++) {
@@ -510,17 +552,22 @@ function sampleValues(grid, startRow, col, n = 8) {
 }
 
 // Analyse d'un classeur : feuilles, colonnes, échantillon, mapping proposé, feuille suggérée.
-function analyzeWorkbook(buffer) {
+// `kind` = 'factures' (défaut) ou 'conventions' → même composant de mapping, champs adaptés.
+function analyzeWorkbook(buffer, kind = 'factures') {
+  const isConv = kind === 'conventions';
+  const CHAMPS = isConv ? CONV_FIELDS : FIELDS;
+  const champsOut = CHAMPS.map(([k, l, r]) => ({ key: k, label: l, requis: r }));
   const head = buffer.slice(0, 400).toString('utf8');
-  if (/^﻿?\s*<\?xml/.test(head) && /DeclarationReleveDeduction|releveDeductions/.test(buffer.toString('utf8', 0, 2000))) {
-    return { type: 'RELEVE_XML', feuilles: [], suggestion: null, xml: true, champs: FIELDS.map(([k, l, r]) => ({ key: k, label: l, requis: r })) };
+  if (!isConv && /^﻿?\s*<\?xml/.test(head) && /DeclarationReleveDeduction|releveDeductions/.test(buffer.toString('utf8', 0, 2000))) {
+    return { type: 'RELEVE_XML', kind, feuilles: [], suggestion: null, xml: true, champs: champsOut };
   }
   const wb = XLSX.read(buffer, { cellDates: true });
   const feuilles = [];
+  const skipRe = isConv ? CONV_SHEET_SKIP : SHEET_SKIP;
   for (const name of wb.SheetNames) {
-    const grid = XLSX.utils.sheet_to_json(wb.Sheets[name], { header: 1, blankrows: false, raw: true });
+    const { grid } = readSheetGrid(wb.Sheets[name]);
     if (!grid.length) continue;
-    const am = autoMapGrid(grid);
+    const am = isConv ? autoMapConvGrid(grid) : autoMapGrid(grid);
     // IMPORTANT : sheet_to_json renvoie des tableaux CREUX (trous) quand des cellules
     // sont vides au milieu d'une ligne (fréquent sur les exports type Crystal Reports).
     // .map() conserve les trous → ils deviennent `null` en JSON et font planter le
@@ -537,14 +584,17 @@ function analyzeWorkbook(buffer) {
     for (const [f, m] of Object.entries(am.mapping)) mapping[f] = { ...m, colLabel: (cols[m.col] || {}).label || '', apercu: sampleValues(grid, am.startRow, m.col) };
     feuilles.push({
       nom: name, nbLignes: grid.length, ligneEntete: am.headerRow, startRow: am.startRow,
-      ignoree: SHEET_SKIP.test(name), colonnes: cols,
+      ignoree: skipRe.test(name), colonnes: cols,
       echantillon: grid.slice(am.startRow, am.startRow + 6).map(r => cols.map(c => { const v = r ? r[c.index] : ''; return v instanceof Date ? calc.iso(v) : (v == null ? '' : String(v).slice(0, 24)); })),
       mapping,
     });
   }
   const candidates = feuilles.filter(f => !f.ignoree);
-  const suggestion = (candidates.length ? candidates : feuilles).map(f => ({ f, s: Object.keys(f.mapping).length + (f.mapping.ttc ? 2 : 0) + (f.mapping.date_facture ? 1 : 0) })).sort((a, b) => b.s - a.s)[0];
-  return { type: 'EXCEL', feuilles, suggestion: suggestion ? suggestion.f.nom : (feuilles[0] && feuilles[0].nom), champs: FIELDS.map(([k, l, r]) => ({ key: k, label: l, requis: r })) };
+  const score = isConv
+    ? (f => Object.keys(f.mapping).length + (f.mapping.nom ? 2 : 0) + (f.mapping.delai ? 2 : 0) + (f.mapping.conv ? 1 : 0))
+    : (f => Object.keys(f.mapping).length + (f.mapping.ttc ? 2 : 0) + (f.mapping.date_facture ? 1 : 0));
+  const suggestion = (candidates.length ? candidates : feuilles).map(f => ({ f, s: score(f) })).sort((a, b) => b.s - a.s)[0];
+  return { type: 'EXCEL', kind, feuilles, suggestion: suggestion ? suggestion.f.nom : (feuilles[0] && feuilles[0].nom), champs: champsOut };
 }
 
 function fingerprint(entrepriseId, nom, numero, dfacIso, ttc) {
@@ -554,7 +604,7 @@ function fingerprint(entrepriseId, nom, numero, dfacIso, ttc) {
 }
 
 /** Classe les lignes selon un mapping explicite, SANS écrire en base. */
-function classifyGrid(grid, { headerRow, mapping, entrepriseId, annee, trimestre, requireNumero = false }) {
+function classifyGrid(grid, { headerRow, mapping, entrepriseId, annee, trimestre, requireNumero = false, rowBase = 0 }) {
   const col = f => (mapping[f] != null && mapping[f] !== '' ? Number(mapping[f]) : undefined);
   const cell = (row, f) => { const c = col(f); return c != null ? row[c] : undefined; };
   const headerNorms = (grid[headerRow] || []).map(normCell).filter(Boolean);
@@ -565,10 +615,14 @@ function classifyGrid(grid, { headerRow, mapping, entrepriseId, annee, trimestre
   const stats = { total: 0, valides: 0, ignorees: 0, rejetees: 0, doublons: 0, totalTtc: 0, avertissements: 0, memePeriode: 0, autrePeriode: 0 };
   for (let r = headerRow + 1; r < grid.length; r++) {
     const row = grid[r] || [];
+    // Ligne RÉELLEMENT vide (aucune cellule) → ignorée sans être comptée : le VRAI n° Excel des
+    // autres lignes est préservé (grille dense) sans gonfler les statistiques (comportement inchangé).
+    if (!row.length || row.every(c => c === undefined || c === null)) continue;
     stats.total++;
+    const excelLine = excelRow(rowBase, r);
     const brut = row.map(v => v instanceof Date ? calc.iso(v) : (v == null ? '' : String(v)));
     const ig = classifyIgnorable(row, headerNorms);
-    if (ig.ignore) { stats.ignorees++; lignes.push({ ligne: r + 1, statut: 'ignoree', motif: ig.motif, brut }); continue; }
+    if (ig.ignore) { stats.ignorees++; lignes.push({ ligne: excelLine, statut: 'ignoree', motif: ig.motif, brut }); continue; }
 
     const nom = cell(row, 'four_nom'), ice = normalizeIce(cell(row, 'four_ice')), iff = cell(row, 'four_if');
     const mht = num(cell(row, 'mht')), tva = num(cell(row, 'tva'));
@@ -585,7 +639,7 @@ function classifyGrid(grid, { headerRow, mapping, entrepriseId, annee, trimestre
     if (mht && tva && ttc && Math.abs(ttc - (mht + tva)) > 0.5) warns.push('TTC ≠ HT + TVA');
     if (requireNumero && !notEmpty(numero)) warns.push('numéro de facture absent (référence technique générée)');
 
-    if (rejets.length) { stats.rejetees++; lignes.push({ ligne: r + 1, statut: 'rejetee', motif: rejets.map(x => x.motif).join(' ; '), champ: rejets[0].champ, brut, valeur: brut[col(rejets[0].champ)] }); continue; }
+    if (rejets.length) { stats.rejetees++; lignes.push({ ligne: excelLine, statut: 'rejetee', motif: rejets.map(x => x.motif).join(' ; '), champ: rejets[0].champ, brut, valeur: brut[col(rejets[0].champ)] }); continue; }
 
     // DOUBLON POTENTIEL : on ne rejette plus (paiement partiel / facture scindée). On GARDE la
     // ligne (statut valide) et on la SIGNALE pour revue.
@@ -599,7 +653,7 @@ function classifyGrid(grid, { headerRow, mapping, entrepriseId, annee, trimestre
     if (annee != null && trimestre != null) { if (yFac === +annee && qFac === +trimestre) stats.memePeriode++; else stats.autrePeriode++; }
     if (warns.length) stats.avertissements++;
     stats.valides++; stats.totalTtc = round2(stats.totalTtc + ttc);
-    lignes.push({ ligne: r + 1, statut: 'valide', avertissements: warns, brut, doublonPotentiel: doublonPot,
+    lignes.push({ ligne: excelLine, statut: 'valide', avertissements: warns, brut, doublonPotentiel: doublonPot,
       data: { nom: notEmpty(nom) ? String(nom) : null, ice, iff: notEmpty(iff) ? String(iff) : null,
         numero: notEmpty(numero) ? String(numero) : null, mht: mht || null, tva: tva || null, ttc,
         taux_tva: num(cell(row, 'taux_tva')) || null, mode_reglement: notEmpty(cell(row, 'mode_reglement')) ? String(cell(row, 'mode_reglement')) : null,
@@ -613,15 +667,16 @@ function classifyGrid(grid, { headerRow, mapping, entrepriseId, annee, trimestre
 function gridOfSheet(buffer, sheetName) {
   const wb = XLSX.read(buffer, { cellDates: true });
   const name = sheetName && wb.SheetNames.includes(sheetName) ? sheetName : wb.SheetNames[0];
-  return { grid: XLSX.utils.sheet_to_json(wb.Sheets[name], { header: 1, blankrows: false, raw: true }), name };
+  const { grid, rowBase } = readSheetGrid(wb.Sheets[name]);
+  return { grid, name, rowBase };
 }
 
 // Prévisualisation (aucune écriture) : renvoie stats + échantillons de chaque catégorie.
 function previewImport(buffer, opts) {
-  const { grid, name } = gridOfSheet(buffer, opts.sheetName);
+  const { grid, name, rowBase } = gridOfSheet(buffer, opts.sheetName);
   if (!grid.length) throw new Error('Feuille vide.');
   const headerRow = opts.headerRow != null ? +opts.headerRow : detectHeader(grid).row;
-  const { lignes, stats } = classifyGrid(grid, { ...opts, headerRow });
+  const { lignes, stats } = classifyGrid(grid, { ...opts, headerRow, rowBase });
   const ech = st => lignes.filter(l => l.statut === st).slice(0, 12);
   return { feuille: name, ligneEntete: headerRow, stats,
     apercu: { valides: ech('valide'), ignorees: ech('ignoree'), rejetees: ech('rejetee'), doublons: ech('doublon') } };
@@ -630,10 +685,10 @@ function previewImport(buffer, opts) {
 /** Confirmation : écrit les factures valides EN TRANSACTION, stocke le détail des lignes, crée le lot. */
 function confirmImport(buffer, opts) {
   const { cabinetId, entrepriseId, annee, trimestre, sourceName, userId, documentId, empreinte } = opts;
-  const { grid, name } = gridOfSheet(buffer, opts.sheetName);
+  const { grid, name, rowBase } = gridOfSheet(buffer, opts.sheetName);
   if (!grid.length) throw new Error('Feuille vide.');
   const headerRow = opts.headerRow != null ? +opts.headerRow : detectHeader(grid).row;
-  const { lignes, stats } = classifyGrid(grid, { ...opts, headerRow });
+  const { lignes, stats } = classifyGrid(grid, { ...opts, headerRow, rowBase });
   const importId = uid('imp');
   const today = new Date();
   const per = { annee: +annee, trimestre: +trimestre };
@@ -711,14 +766,9 @@ const CONV_OUI = new Set(['oui', 'o', 'yes', 'y', 'x', '1', 'true', 'vrai', 'sig
 const CONV_NON = new Set(['non', 'no', 'n', '0', 'false', 'faux', 'absente', 'absent', 'manquante', 'manquant', 'sans', 'areclamer', 'aucune']);
 const CONV_IGNORE_NAMES = new Set(['fournisseur', 'fournisseurs', 'intitule', 'total', 'totaux', 'totalgeneral', 'nom', 'raisonsociale', 'tiers', 'liste', 'designation', 'soustotal']);
 
-// Normalise un nom de fournisseur pour le rapprochement : minuscules, sans accents,
-// sans ponctuation, formes juridiques usuelles retirées (rapprochement prudent).
-function normName(s) {
-  let n = String(s == null ? '' : s).toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
-  n = n.replace(/[^a-z0-9]+/g, ' ').trim();
-  n = n.replace(/\b(sarlau|sarl|sasu|sas|snc|scs|sca|sa|gie|eurl|societe|ste|cie)\b/g, ' ').replace(/\s+/g, ' ').trim();
-  return n;
-}
+// Rapprochement des noms de fournisseurs : DÉLÈGUE à la fonction centrale unique
+// `normalizeSupplierName` (util). Comparaison uniquement — le nom affiché n'est jamais modifié.
+const normName = normalizeSupplierName;
 function normIf(v) { if (v == null) return null; const s = String(v).replace(/\s+/g, '').replace(/[^0-9A-Za-z]/g, ''); return s || null; }
 function normRc(v) { if (v == null) return null; const s = String(v).replace(/\D/g, ''); if (!s) return null; return s.replace(/^0+/, '') || s; }
 function normDateIso(v) { if (v == null || String(v).trim() === '') return null; const d = calc.parseDate(v); return d && d.getFullYear() >= 1990 && d.getFullYear() <= 2100 ? calc.iso(d) : null; }
@@ -749,6 +799,27 @@ function parseDelai(v) {
 }
 // Délai convenu lu dans un fichier de FACTURES → nombre sain (1..120) ou null (jamais de valeur aberrante).
 function convDelaiFromCell(v) { const p = parseDelai(v); return p.ok ? p.delai : null; }
+
+// Validation STRICTE du délai conventionnel (flux d'import mappé des conventions).
+// N'accepte QU'UN entier positif dans [1,120], enregistré EXACTEMENT (aucun arrondi, aucune
+// conversion, aucune normalisation, aucune plage). Tout le reste est refusé avec un motif explicite.
+const DELAI_CONV_MSG = 'le délai conventionnel doit être un entier compris entre 1 et 120 jours.';
+function parseConvDelaiStrict(v) {
+  if (v == null) return { ok: false, reason: 'absent' };
+  if (typeof v === 'number') {
+    if (!Number.isInteger(v)) return { ok: false, reason: 'decimal', raw: v };
+    if (v < 1) return { ok: false, reason: 'invalide', raw: v };
+    if (v > DELAI_MAX) return { ok: false, reason: 'superieur_max', raw: v };
+    return { ok: true, delai: v };
+  }
+  const raw = (v instanceof Date) ? calc.iso(v) : String(v).trim();
+  if (raw === '') return { ok: false, reason: 'absent' };
+  if (!/^\d+$/.test(raw)) return { ok: false, reason: /[.,]/.test(raw) ? 'decimal' : 'texte', raw }; // décimal, plage, texte, négatif
+  const d = parseInt(raw, 10);
+  if (d < 1) return { ok: false, reason: 'invalide', raw };
+  if (d > DELAI_MAX) return { ok: false, reason: 'superieur_max', raw };
+  return { ok: true, delai: d };
+}
 function parseConv(v) {
   const cv = normCell(v);
   if (cv === '') return 'vide';
@@ -815,7 +886,8 @@ function resolveConvFournisseur(cabinetId, entrepriseId, { nom, ice, iff, rc }) 
     if (iceN && !row.ice) { sets.push('ice=?'); vals.push(iceN); }
     if (ifN && !row.if_fiscal) { sets.push('if_fiscal=?'); vals.push(ifN); }
     if (rcN && !row.rc) { sets.push('rc=?'); vals.push(rcN); }
-    if (nom && (!row.raison_sociale || row.raison_sociale.length < String(nom).length)) { sets.push('raison_sociale=?'); vals.push(String(nom)); }
+    // OBJ 2 : on ne MODIFIE jamais le nom affiché d'un fournisseur existant ; on remplit seulement s'il est vide.
+    if (nom && String(nom).trim() && !(row.raison_sociale && String(row.raison_sociale).trim())) { sets.push('raison_sociale=?'); vals.push(String(nom).trim()); }
     if (sets.length) db.prepare(`UPDATE fournisseur SET ${sets.join(',')} WHERE id=?`).run(...vals, row.id);
     return { id: row.id, created: false };
   }
@@ -825,21 +897,43 @@ function resolveConvFournisseur(cabinetId, entrepriseId, { nom, ice, iff, rc }) 
   return { id, created: true };
 }
 
+/**
+ * Import d'une LISTE de conventions fournisseurs.
+ *  - MODE MAPPÉ (assistant) : opts.mapping (clés nom/ice/iff/rc/conv/delai/debut/fin/ref/comm → n° colonne)
+ *    + opts.sheetName + opts.headerRow. Le délai est validé STRICTEMENT (entier 1..120, exact).
+ *  - MODE AUTO (rétro-compatibilité) : détection de l'en-tête, délai lu en mode tolérant.
+ *  - opts.dryRun : classe sans rien persister (prévisualisation — transaction annulée).
+ *  Renvoie R (compteurs, lignes, aperçu) + R.affectedFournisseurs (recalcul des périodes ouvertes).
+ */
 function importConventions(buffer, opts) {
-  const { cabinetId, entrepriseId, userId = null, sourceName = null, empreinte = null } = opts || {};
+  const { cabinetId, entrepriseId, userId = null, sourceName = null, empreinte = null,
+    mapping = null, sheetName = null, headerRow: headerRowOpt = null, dryRun = false } = opts || {};
+  const mapped = !!(mapping && sheetName != null);
+  const strictDelai = mapped;                              // le flux mappé (assistant) valide strictement le délai
   let wb;
   try { wb = XLSX.read(buffer, { cellDates: true }); }
   catch (_) { throw new Error("Fichier illisible : ce n'est pas un classeur Excel valide (.xlsx / .xls)."); }
 
-  // Détection : on retient les feuilles ressemblant à une liste de fournisseurs.
+  // Collecte des feuilles + index de colonnes : mapping explicite (assistant) OU détection auto (legacy).
   const sheets = [];
-  for (const name of wb.SheetNames) {
-    if (SHEET_SKIP.test(name) || CONV_SHEET_SKIP.test(name)) continue;   // grand-livre / feuille d'instructions
-    const grid = XLSX.utils.sheet_to_json(wb.Sheets[name], { header: 1, blankrows: false, raw: true });
-    if (!grid.length) continue;
-    const det = detectConvHeaderRow(grid);
-    if (det.score < 1) continue; // pas d'en-tête fournisseurs exploitable
-    sheets.push({ name, grid, headerRow: det.row, idx: det.idx });
+  if (mapped) {
+    const name = wb.SheetNames.includes(sheetName) ? sheetName : wb.SheetNames[0];
+    const { grid, rowBase } = readSheetGrid(wb.Sheets[name]);
+    if (grid.length) {
+      const idx = {};
+      for (const [k, v] of Object.entries(mapping)) { if (v != null && v !== '') idx[k] = Number(v); }
+      const hr = headerRowOpt != null ? +headerRowOpt : detectConvHeaderRow(grid).row;
+      sheets.push({ name, grid, headerRow: hr, idx, rowBase });
+    }
+  } else {
+    for (const name of wb.SheetNames) {
+      if (SHEET_SKIP.test(name) || CONV_SHEET_SKIP.test(name)) continue;   // grand-livre / feuille d'instructions
+      const { grid, rowBase } = readSheetGrid(wb.Sheets[name]);
+      if (!grid.length) continue;
+      const det = detectConvHeaderRow(grid);
+      if (det.score < 1) continue; // pas d'en-tête fournisseurs exploitable
+      sheets.push({ name, grid, headerRow: det.row, idx: det.idx, rowBase });
+    }
   }
   if (!sheets.length)
     throw new Error("Aucune liste de fournisseurs détectée. Utilisez le modèle : colonnes « Fournisseur », « ICE/IF », « Convention OUI/NON » et « Délai convenu ».");
@@ -848,8 +942,9 @@ function importConventions(buffer, opts) {
   const R = {
     batchId, analyzed: 0, suppliersCreated: 0, suppliersFound: 0, conventionsCreated: 0,
     duplicates: 0, conflicts: 0, withoutConvention: 0, ignored: 0, rejected: 0, toReview: 0,
-    lignes: [], preview: [], truncated: false,
+    lignes: [], preview: [], truncated: false, affectedFournisseurs: [],
   };
+  const affected = new Set();
   const MAX_LINES = 1000;
   const pushLine = (o) => { if (R.lignes.length < MAX_LINES) R.lignes.push(o); else R.truncated = true; };
 
@@ -868,13 +963,13 @@ function importConventions(buffer, opts) {
       VALUES (?,?,?,?,?,?,?,?,datetime('now'))`)
       .run(batchId, cabinetId, entrepriseId, sourceName || 'conventions.xlsx', 'conventions_xlsx', 'confirme', empreinte, userId);
 
-    for (const { name, grid, headerRow, idx } of sheets) {
+    for (const { name, grid, headerRow, idx, rowBase } of sheets) {
       const cellAt = (row, key) => (idx[key] !== undefined ? row[idx[key]] : undefined);
       const headerNorms = (grid[headerRow] || []).map(normCell).filter(Boolean);
       for (let r = headerRow + 1; r < grid.length; r++) {
         const row = grid[r] || [];
         if (row.every(c => c === undefined || c === null || String(c).trim() === '')) continue; // ligne vide → non comptée
-        const excelLine = r + 1;
+        const excelLine = excelRow(rowBase, r);          // VRAI numéro de ligne Excel
         const brut = row.map(v => v instanceof Date ? calc.iso(v) : (v == null ? '' : String(v)));
         const nomRaw = cellAt(row, 'nom');
         const ice = cellAt(row, 'ice'), iff = cellAt(row, 'iff'), rc = cellAt(row, 'rc');
@@ -897,13 +992,14 @@ function importConventions(buffer, opts) {
         if (noIdentity) { R.analyzed++; record('ignoree', 'ligne sans fournisseur identifiable'); continue; }
 
         R.analyzed++;
-        const conv = parseConv(convRaw);
-        const del = parseDelai(delaiRaw);
+        // Colonne « Convention » non mappée (flux assistant) → un délai valide vaut convention (OUI implicite).
+        const conv = (mapped && idx.conv === undefined) ? 'oui' : parseConv(convRaw);
+        const del = strictDelai ? parseConvDelaiStrict(delaiRaw) : parseDelai(delaiRaw);
         const debut = normDateIso(cellAt(row, 'debut')), fin = normDateIso(cellAt(row, 'fin'));
         const reference = (() => { const v = cellAt(row, 'ref'); return v != null && String(v).trim() !== '' ? String(v).trim() : null; })();
         const commentaire = (() => { const v = cellAt(row, 'comm'); return v != null && String(v).trim() !== '' ? String(v).trim() : null; })();
 
-        // Le fournisseur est réel : on le crée / met à jour dans tous les cas où l'identité est valable.
+        // Le fournisseur est réel (identité valable, priorité ICE→IF→RC→nom normalisé) : on le crée / met à jour.
         const four = resolveConvFournisseur(cabinetId, entrepriseId, { nom: nomRaw, ice, iff, rc });
         if (four.created) R.suppliersCreated++; else R.suppliersFound++;
 
@@ -913,6 +1009,7 @@ function importConventions(buffer, opts) {
         if (conv === 'non') {
           if (existing) { record('conflit', 'le fichier indique « NON » alors qu\'une convention active existe déjà', 'convention'); continue; }
           db.prepare('UPDATE fournisseur SET delai_applicable=60 WHERE id=?').run(four.id);
+          affected.add(four.id);
           record('sans_convention', 'fournisseur sans convention (délai légal 60 j)', 'convention');
           continue;
         }
@@ -923,6 +1020,11 @@ function importConventions(buffer, opts) {
         }
         // Convention = OUI → un délai valide est requis.
         if (!del.ok) {
+          if (strictDelai) {
+            // OBJ 7 : refus explicite, sans jamais corriger la valeur ; le VRAI n° de ligne accompagne le motif.
+            if (del.reason === 'absent') { record('rejetee', DELAI_CONV_MSG, 'delai'); continue; }
+            record('rejetee', DELAI_CONV_MSG, 'delai'); continue;
+          }
           if (del.reason === 'superieur_max') { record('a_verifier', `délai de ${del.delai} j supérieur au maximum légal de ${DELAI_MAX} j — à valider explicitement`, 'delai'); continue; }
           if (del.reason === 'absent') { record('a_verifier', 'convention « OUI » mais délai convenu manquant', 'delai'); continue; }
           record('rejetee', del.reason === 'invalide' ? 'délai nul, négatif ou invalide' : 'délai illisible', 'delai');
@@ -936,24 +1038,27 @@ function importConventions(buffer, opts) {
           record('conflit', `convention existante différente (base : ${existing.delai_convenu} j${existing.date_debut ? ' du ' + existing.date_debut : ''} ; fichier : ${del.delai} j${debut ? ' du ' + debut : ''}) — à vérifier`, 'convention');
           continue;
         }
-        // Création de la convention (PDF différé → document manquant).
+        // Création de la convention (délai enregistré EXACTEMENT, PDF différé → document manquant).
         const convId = uid('conv');
         insConv.run(convId, cabinetId, entrepriseId, four.id, 'Convention délais de paiement', del.delai, debut, fin,
           'valide', del.delai <= 120 ? 1 : 0, null, null, reference, commentaire, batchId, 'import_xlsx');
         db.prepare('UPDATE fournisseur SET delai_applicable=? WHERE id=?').run(del.delai, four.id);
+        affected.add(four.id);
         R.conventionsCreated++;
         insLigne.run(uid('il'), batchId, cabinetId, entrepriseId, excelLine, name, JSON.stringify(brut), JSON.stringify({ four: four.id, delai: del.delai, debut, fin }), 'creee', null, null, convId);
-        if (R.preview.length < 12) R.preview.push({ fournisseur: nomAff, delai: del.delai, debut, fin });
+        if (R.preview.length < 12) R.preview.push({ ligne: excelLine, fournisseur: nomAff, delai: del.delai, debut, fin });
       }
     }
 
     db.prepare(`UPDATE import_lot SET nb_lignes_total=?, nb_lignes_valides=?, nb_lignes_ignorees=?, nb_lignes_rejetees=?, nb_doublons=? WHERE id=?`)
       .run(R.analyzed, R.conventionsCreated, R.ignored, R.rejected, R.duplicates, batchId);
-    db.exec('COMMIT');
+    // dryRun (prévisualisation) : on ANNULE tout — aucune écriture ne persiste.
+    db.exec(dryRun ? 'ROLLBACK' : 'COMMIT');
   } catch (e) {
     db.exec('ROLLBACK');
     throw new Error('Import annulé (aucune donnée enregistrée) : ' + e.message);
   }
+  R.affectedFournisseurs = [...affected];
   return R;
 }
 
@@ -1011,6 +1116,7 @@ function buildConventionsTemplate() {
 
 module.exports = {
   importWorkbook, detectHeader, normHead, analyzeWorkbook, previewImport, confirmImport,
-  importConventions, parseDelai, parseConv, normName, buildConventionsTemplate, CONV_TEMPLATE_HEADERS, FIELDS,
+  importConventions, parseDelai, parseConvDelaiStrict, parseConv, normName, buildConventionsTemplate,
+  CONV_TEMPLATE_HEADERS, FIELDS, CONV_FIELDS, DELAI_CONV_MSG,
   markPotentialDuplicate, DUP_MOTIF, DUP_ANO_MSG,
 };

@@ -778,30 +778,50 @@ const WIZ_STEPS = ['Fichier', 'Feuille & mapping', 'Prévisualisation', 'Confirm
 async function renderImport() {
   if (!state.clientId) return noClient();
   await ensurePeriod();
+  state.wizKind = 'factures';
   state.wiz = { step: 'upload' };
   drawWizard();
   renderDocs();
 }
+// Assistant d'import des CONVENTIONS — RÉUTILISE le même composant de mapping que les factures.
+function openConvWizard() {
+  if (!state.clientId) return noClient();
+  state.wizKind = 'conventions';
+  state.wiz = { step: 'upload' };
+  drawWizard();
+}
+window.openConvWizard = openConvWizard;
+function wizIsConv() { return state.wizKind === 'conventions'; }
 function wizStepIndex() { return { upload: 0, map: 1, preview: 2, done: 3 }[state.wiz.step] || 0; }
 function wizScaffold(inner) {
+  const steps = `<div class="wiz-steps">${WIZ_STEPS.map((s, i) => `<span class="ws ${wizStepIndex() > i ? 'done' : ''} ${wizStepIndex() === i ? 'cur' : ''}">${i + 1}. ${s}</span>`).join('<span class="ws-sep">›</span>')}</div>`;
+  if (wizIsConv()) {
+    return `<div class="page-head headrow"><div><h1>Import des conventions</h1><p>Assistant contrôlé : analyse → <b>mapping libre des colonnes</b> → prévisualisation → confirmation. <b>Aucune donnée n'est enregistrée avant votre validation.</b> Client : <b>${esc(currentClient().name)}</b>.</p></div>
+      <div><button class="btn btn-ghost" onclick="setView('conv')">← Retour aux conventions</button></div></div>
+      ${steps}<div id="wizBody">${inner}</div>`;
+  }
   return `${lockBanner()}
   <div class="page-head"><h1>Import de fichiers</h1><p>Assistant contrôlé : analyse → feuille & mapping → prévisualisation → confirmation. <b>Aucune donnée n'est enregistrée avant votre validation.</b></p></div>
-  <div class="wiz-steps">${WIZ_STEPS.map((s, i) => `<span class="ws ${wizStepIndex() > i ? 'done' : ''} ${wizStepIndex() === i ? 'cur' : ''}">${i + 1}. ${s}</span>`).join('<span class="ws-sep">›</span>')}</div>
+  ${steps}
   <div id="wizBody">${inner}</div>
   <div id="docsList" style="margin-top:26px"></div>`;
 }
 function drawWizard() {
-  const locked = currentPeriodLocked();
+  const conv = wizIsConv();
+  const locked = !conv && currentPeriodLocked();
   const step = state.wiz.step;
   let inner = '';
   if (locked) {
     inner = `<div class="card"><div class="card-b">🔒 La période <b>${state.period.annee} T${state.period.trimestre}</b> est clôturée : import impossible. Choisissez une autre période ou demandez une réouverture (administrateur).</div></div>`;
   } else if (step === 'upload') {
+    const ctx = conv
+      ? `Client : <b>${esc(currentClient().name)}</b> · Formats : .xlsx, .xls · colonnes libres (Nom fournisseur, ICE, IF, RC, Convention, Délai conventionnel…)`
+      : `Client : <b>${esc(currentClient().name)}</b> · Période : <b>${state.period.annee} T${state.period.trimestre}</b> · Formats : .xlsx, .xls, .csv, .xml (relevé SIMPL)`;
     inner = `<div class="card"><div class="card-b">
-      <div class="wiz-ctx">Client : <b>${esc(currentClient().name)}</b> · Période : <b>${state.period.annee} T${state.period.trimestre}</b> · Formats : .xlsx, .xls, .csv, .xml (relevé SIMPL)</div>
+      <div class="wiz-ctx">${ctx}</div>
       <div class="dropzone" id="dz"><div class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M12 16V4m0 0l-4 4m4-4l4 4M5 20h14"/></svg></div>
         <b>Glissez un fichier ici</b><div style="margin-top:6px">ou cliquez pour parcourir — <b>un fichier à la fois</b> (analysé avant import)</div></div>
-      <input type="file" id="file" accept=".xlsx,.xls,.csv,.xml" class="hidden">
+      <input type="file" id="file" accept="${conv ? '.xlsx,.xls' : '.xlsx,.xls,.csv,.xml'}" class="hidden">
     </div></div>`;
   } else if (step === 'map') { inner = wizMapHtml(); }
   else if (step === 'preview') { inner = wizPreviewHtml(); }
@@ -818,19 +838,20 @@ function drawWizard() {
   if (step === 'map') wizWireMap();
   if (step === 'preview') wizWirePreview();
   if (step === 'done') wizWireDone();
-  renderDocs();
+  if (!conv) renderDocs();
 }
 async function wizAnalyze(file) {
   $('#wizBody').innerHTML = `<div class="card"><div class="card-b" style="display:flex;gap:10px;align-items:center"><span class="spin"></span>Analyse de « ${esc(file.name)} »…</div></div>`;
   try {
     const fd = new FormData(); fd.append('file', file);
+    if (wizIsConv()) fd.append('kind', 'conventions');
     const a = await api(`/clients/${state.clientId}/import/analyze`, { method: 'POST', body: fd });
-    if (a.xml) { // relevé XML : mapping implicite → import direct via route legacy
+    if (a.xml && !wizIsConv()) { // relevé XML : mapping implicite → import direct via route legacy
       state.wiz = { step: 'preview', token: a.token, sourceName: a.sourceName, xml: true, analyse: a, sheet: null, headerRow: 0, mapping: {} };
       return wizPreview(); // preview gérera le cas XML côté serveur ? → on route vers confirm direct
     }
     const sug = a.feuilles.find(f => f.nom === a.suggestion) || a.feuilles[0];
-    if (!sug) { toast('Aucune feuille exploitable détectée dans ce fichier. Vérifiez qu\'il contient un tableau de factures.', 'err', 'Fichier non reconnu'); state.wiz = { step: 'upload' }; drawWizard(); return; }
+    if (!sug) { toast(`Aucune feuille exploitable détectée dans ce fichier. Vérifiez qu'il contient ${wizIsConv() ? 'une liste de fournisseurs / conventions' : 'un tableau de factures'}.`, 'err', 'Fichier non reconnu'); state.wiz = { step: 'upload' }; drawWizard(); return; }
     state.wiz = { step: 'map', token: a.token, sourceName: a.sourceName, analyse: a, sheet: sug.nom, headerRow: sug.ligneEntete, mapping: sheetMapping(sug), requireNumero: false };
     drawWizard();
   } catch (e) { toast(e.message, 'err'); state.wiz = { step: 'upload' }; drawWizard(); }
@@ -857,30 +878,35 @@ function wizMapHtml() {
             ${auto && auto.apercu && auto.apercu.length ? `<span class="map-sample" title="${esc(auto.apercu.join(' · '))}">${esc(auto.apercu.slice(0, 3).join(' · '))}</span>` : ''}</div>
         </div>`;
       }).join('')}</div>
-      <label class="wiz-opt"><input type="checkbox" id="wizReqNum" ${state.wiz.requireNumero ? 'checked' : ''}> Exiger un n° de facture (sinon référence technique générée + anomalie)</label>
+      ${wizIsConv() ? '' : `<label class="wiz-opt"><input type="checkbox" id="wizReqNum" ${state.wiz.requireNumero ? 'checked' : ''}> Exiger un n° de facture (sinon référence technique générée + anomalie)</label>`}
       <div class="wiz-actions"><button class="btn btn-ghost" id="wizBack">← Changer de fichier</button><button class="btn btn-primary" id="wizToPreview">Prévisualiser →</button></div>
     </div></div>`;
 }
 function wizWireMap() {
   $('#wizSheet').onchange = e => { state.wiz.sheet = e.target.value; const s = curSheet(); state.wiz.headerRow = s.ligneEntete; state.wiz.mapping = sheetMapping(s); drawWizard(); };
   $$('#wizBody .mapsel').forEach(sel => sel.onchange = () => { const v = sel.value; if (v === '') delete state.wiz.mapping[sel.dataset.field]; else state.wiz.mapping[sel.dataset.field] = +v; });
-  $('#wizReqNum').onchange = e => state.wiz.requireNumero = e.target.checked;
+  const rq = $('#wizReqNum'); if (rq) rq.onchange = e => state.wiz.requireNumero = e.target.checked;
   $('#wizBack').onclick = () => { state.wiz = { step: 'upload' }; drawWizard(); };
   $('#wizToPreview').onclick = () => wizPreview();
 }
 async function wizPreview() {
-  // contrôle des champs requis
-  const req = ['date_facture', 'four_nom', 'ttc'];
+  // Contrôle des champs requis — déduits des champs déclarés par l'analyse (générique factures / conventions).
+  const champs = (state.wiz.analyse && state.wiz.analyse.champs) || [];
+  const req = champs.filter(c => c.requis).map(c => c.key);
   const missing = req.filter(k => state.wiz.mapping[k] == null);
-  if (missing.length && !state.wiz.xml) { toast('Champs requis non mappés : ' + missing.join(', '), 'err'); return; }
+  if (missing.length && !state.wiz.xml) { toast('Champs requis non mappés : ' + missing.map(k => (champs.find(c => c.key === k) || {}).label || k).join(', '), 'err'); return; }
   state.wiz.step = 'preview';
   $('#view').innerHTML = wizScaffold(`<div class="card"><div class="card-b" style="display:flex;gap:10px;align-items:center"><span class="spin"></span>Prévisualisation…</div></div>`);
   try {
-    const pv = await api(`/clients/${state.clientId}/import/preview${perQuery()}`, { method: 'POST', body: { token: state.wiz.token, sheetName: state.wiz.sheet, headerRow: state.wiz.headerRow, mapping: state.wiz.mapping, requireNumero: state.wiz.requireNumero } });
+    const body = { token: state.wiz.token, sheetName: state.wiz.sheet, headerRow: state.wiz.headerRow, mapping: state.wiz.mapping, sourceName: state.wiz.sourceName };
+    const pv = wizIsConv()
+      ? await api(`/clients/${state.clientId}/conventions/preview`, { method: 'POST', body })
+      : await api(`/clients/${state.clientId}/import/preview${perQuery()}`, { method: 'POST', body: { ...body, requireNumero: state.wiz.requireNumero } });
     state.wiz.preview = pv; drawWizard();
   } catch (e) { toast(e.message, 'err'); state.wiz.step = 'map'; drawWizard(); }
 }
 function wizPreviewHtml() {
+  if (wizIsConv()) return wizConvPreviewHtml();
   const pv = state.wiz.preview || { stats: {}, apercu: {} }; const s = pv.stats;
   const mism = s.autrePeriode > 0;
   const rowsHtml = (arr, cls) => (arr || []).slice(0, 8).map(l => `<tr class="${cls}"><td class="mono">${l.ligne}</td><td>${esc(l.statut)}</td><td>${esc(l.motif || (l.avertissements || []).join(', ') || '—')}</td><td class="dh">${esc((l.brut || []).filter(Boolean).slice(0, 5).join(' · ')).slice(0, 90)}</td></tr>`).join('');
@@ -901,6 +927,29 @@ function wizPreviewHtml() {
         <button class="btn btn-primary" id="wizConfirm" ${!s.valides ? 'disabled' : ''}>Confirmer l'import (${s.valides || 0} facture${(s.valides || 0) > 1 ? 's' : ''})</button></div>
     </div></div>`;
 }
+// Prévisualisation de l'import des CONVENTIONS (mapping libre) — vrais numéros de ligne dans les erreurs.
+function wizConvPreviewHtml() {
+  const r = state.wiz.preview || {};
+  const lignes = (r.lignes || []);
+  const probl = lignes.filter(l => l.statut === 'rejetee' || l.statut === 'a_verifier' || l.statut === 'conflit');
+  const rowsHtml = (arr) => arr.slice(0, 12).map(l => `<tr class="${l.statut === 'rejetee' ? 'rej' : 'ign'}"><td class="mono">Ligne ${l.ligne}</td><td>${esc(CONV_STATUT_LABEL[l.statut] || l.statut)}</td><td>${esc(l.fournisseur || '—')}</td><td>${esc(l.motif || '—')}</td></tr>`).join('');
+  return `<div class="card"><div class="card-h"><h3>Prévisualisation — ${esc(state.wiz.sourceName)}</h3><div class="sub">Feuille « ${esc(state.wiz.sheet || '')} » · ${esc(currentClient().name)} · aucune donnée enregistrée</div></div>
+    <div class="card-b">
+      <div class="kpi-grid" style="margin-bottom:12px">
+        <div class="kpi"><div class="lbl">Lignes analysées</div><div class="val">${r.analyzed || 0}</div></div>
+        <div class="kpi accent"><div class="lbl">Conventions à créer</div><div class="val" style="color:var(--r-green)">${r.conventionsCreated || 0}</div></div>
+        <div class="kpi"><div class="lbl">Sans convention</div><div class="val">${r.withoutConvention || 0}</div></div>
+        <div class="kpi"><div class="lbl">Doublons</div><div class="val" style="color:var(--r-orange)">${r.duplicates || 0}</div></div>
+        <div class="kpi"><div class="lbl">Conflits</div><div class="val" style="color:var(--r-orange)">${r.conflicts || 0}</div></div>
+        <div class="kpi"><div class="lbl">À vérifier</div><div class="val">${r.toReview || 0}</div></div>
+        <div class="kpi"><div class="lbl">Rejetées</div><div class="val" style="color:var(--r-red)">${r.rejected || 0}</div></div>
+        <div class="kpi"><div class="lbl">Ignorées</div><div class="val">${r.ignored || 0}</div></div>
+      </div>
+      ${probl.length ? `<h4 style="margin:14px 0 6px">Lignes à corriger (numéro réel du fichier Excel)</h4><div class="table-wrap" style="box-shadow:none;border:1px solid var(--line)"><table><thead><tr><th>Ligne</th><th>Statut</th><th>Fournisseur</th><th>Motif</th></tr></thead><tbody>${rowsHtml(probl)}</tbody></table></div>` : '<div class="lock-note" style="background:rgba(56,161,105,.1);border-color:rgba(56,161,105,.4)">Aucune anomalie détectée.</div>'}
+      <div class="wiz-actions"><button class="btn btn-ghost" id="wizBack2">← Mapping</button>
+        <button class="btn btn-primary" id="wizConfirm" ${!(r.conventionsCreated || r.withoutConvention) ? 'disabled' : ''}>Confirmer l'import (${r.conventionsCreated || 0} convention${(r.conventionsCreated || 0) > 1 ? 's' : ''})</button></div>
+    </div></div>`;
+}
 function wizWirePreview() {
   $('#wizBack2').onclick = () => { state.wiz.step = 'map'; drawWizard(); };
   const c = $('#wizConfirm'); if (c) c.onclick = () => wizConfirm();
@@ -908,14 +957,39 @@ function wizWirePreview() {
 async function wizConfirm() {
   const btn = $('#wizConfirm'); if (btn) { btn.disabled = true; btn.textContent = 'Import en cours…'; }
   try {
-    const r = await api(`/clients/${state.clientId}/import/confirm${perQuery()}`, { method: 'POST', body: { token: state.wiz.token, sheetName: state.wiz.sheet, headerRow: state.wiz.headerRow, mapping: state.wiz.mapping, requireNumero: state.wiz.requireNumero, sourceName: state.wiz.sourceName } });
-    state.wiz.result = r; state.wiz.step = 'done'; drawWizard();
-    toast(`${r.imported} facture(s) importée(s).`, 'ok', 'Import confirmé');
-    refreshAlertsBadge();
+    const body = { token: state.wiz.token, sheetName: state.wiz.sheet, headerRow: state.wiz.headerRow, mapping: state.wiz.mapping, sourceName: state.wiz.sourceName };
+    if (wizIsConv()) {
+      const r = await api(`/clients/${state.clientId}/conventions/confirm`, { method: 'POST', body });
+      state.wiz.result = r; state.wiz.step = 'done'; drawWizard();
+      toast(`${r.conventionsCreated || 0} convention(s) créée(s).`, 'ok', 'Import confirmé');
+      refreshAlertsBadge();
+    } else {
+      const r = await api(`/clients/${state.clientId}/import/confirm${perQuery()}`, { method: 'POST', body: { ...body, requireNumero: state.wiz.requireNumero } });
+      state.wiz.result = r; state.wiz.step = 'done'; drawWizard();
+      toast(`${r.imported} facture(s) importée(s).`, 'ok', 'Import confirmé');
+      refreshAlertsBadge();
+    }
   } catch (e) { toast(e.message, 'err'); if (btn) { btn.disabled = false; btn.textContent = 'Confirmer l\'import'; } }
 }
 function wizDoneHtml() {
   const r = state.wiz.result || {};
+  if (wizIsConv()) {
+    return `<div class="card"><div class="card-h"><h3>Import des conventions terminé ✓</h3></div><div class="card-b">
+      <div class="kpi-grid" style="margin-bottom:12px">
+        <div class="kpi accent"><div class="lbl">Conventions créées</div><div class="val" style="color:var(--r-green)">${r.conventionsCreated || 0}</div></div>
+        <div class="kpi"><div class="lbl">Sans convention</div><div class="val">${r.withoutConvention || 0}</div></div>
+        <div class="kpi"><div class="lbl">Doublons</div><div class="val" style="color:var(--r-orange)">${r.duplicates || 0}</div></div>
+        <div class="kpi"><div class="lbl">Conflits</div><div class="val" style="color:var(--r-orange)">${r.conflicts || 0}</div></div>
+        <div class="kpi"><div class="lbl">Rejetées</div><div class="val" style="color:var(--r-red)">${r.rejected || 0}</div></div>
+        <div class="kpi"><div class="lbl">Périodes recalculées</div><div class="val">${r.recompute || 0}</div></div>
+      </div>
+      <div class="dh" style="font-size:12px;margin-bottom:10px">Les délais conventionnels ont été appliqués et les factures des périodes NON clôturées recalculées automatiquement.</div>
+      <div class="wiz-actions">
+        <button class="btn btn-primary" onclick="setView('conv')">Voir les conventions →</button>
+        <button class="btn btn-ghost" onclick="setView('delais')">Feuille de délais</button>
+        <button class="btn btn-ghost" id="wizNew">Importer un autre fichier</button>
+      </div></div></div>`;
+  }
   return `<div class="card"><div class="card-h"><h3>Import terminé ✓</h3></div><div class="card-b">
       <div class="kpi-grid" style="margin-bottom:12px">
         <div class="kpi"><div class="lbl">Factures créées</div><div class="val" style="color:var(--r-green)">${r.imported || 0}</div></div>
@@ -933,7 +1007,8 @@ function wizDoneHtml() {
 }
 function wizWireDone() {
   $('#wizNew').onclick = () => { state.wiz = { step: 'upload' }; drawWizard(); };
-  $('#wizCancel').onclick = async () => {
+  const cancel = $('#wizCancel'); if (!cancel) return;
+  cancel.onclick = async () => {
     const r = state.wiz.result; if (!r) return;
     if (!confirm(`Annuler cet import ?\nCela retirera les ${r.imported} facture(s) créée(s). Le fichier source sera conservé.`)) return;
     try { const x = await api(`/clients/${state.clientId}/import/${r.importId}/cancel`, { method: 'POST', body: {} }); toast(`Import annulé (${x.facturesSupprimees} facture(s) retirée(s)).`, 'ok'); state.wiz = { step: 'upload' }; drawWizard(); refreshAlertsBadge(); }
@@ -971,8 +1046,7 @@ async function renderConv() {
   <div class="page-head headrow"><div><h1>Conventions fournisseurs</h1><p>Conventions de délai de paiement de ${esc(currentClient().name)}. Importez la liste depuis Excel, puis ajoutez les PDF signés au fil de l'eau.</p></div>
     <div style="display:flex;gap:10px;flex-wrap:wrap">
       <a class="btn btn-ghost" href="/api/conventions/template.xlsx" title="Fichier Excel prêt à remplir">Télécharger le modèle</a>
-      <button class="btn btn-ghost" id="impConv"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 16V4m0 0l-4 4m4-4l4 4M5 20h14"/></svg>Importer une liste Excel</button>
-      <input type="file" id="convXlsx" accept=".xlsx,.xls" class="hidden">
+      <button class="btn btn-ghost" id="impConv" title="Assistant : mappez librement les colonnes de votre fichier Excel"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 16V4m0 0l-4 4m4-4l4 4M5 20h14"/></svg>Importer une liste Excel</button>
       <button class="btn btn-primary" id="newConv"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 5v14M5 12h14"/></svg>Nouvelle convention</button></div></div>
   ${rows.length ? `<div class="table-wrap"><table style="min-width:900px"><thead><tr><th>Fournisseur (ICE)</th><th class="num">Délai</th><th>Début</th><th>Fin</th><th>Statut</th><th>Document PDF</th><th></th></tr></thead>
     <tbody>${rows.map(c => `<tr><td><div class="fournisseur"><b>${esc(c.fournisseur || '—')}</b><small>${esc(c.four_ice || c.four_if || '')}</small></div></td>
@@ -986,18 +1060,8 @@ async function renderConv() {
     : emptyBox('Aucune convention', 'Importez la liste des conventions depuis Excel (bouton ci-dessus) ou ajoutez-les une à une.', null)}`;
   wireClientBar(renderConv);
   $('#newConv').onclick = convModal;
-  $('#impConv').onclick = () => $('#convXlsx').click();
-  $('#convXlsx').onchange = async () => {
-    const f = $('#convXlsx').files[0]; if (!f) return;
-    const btn = $('#impConv'), old = btn.innerHTML;
-    btn.disabled = true; btn.innerHTML = 'Import en cours…';
-    const fd = new FormData(); fd.append('file', f);
-    try {
-      const r = await api(`/clients/${state.clientId}/conventions/import`, { method: 'POST', body: fd });
-      showConvImportReport(r); refreshAlertsBadge();
-    } catch (e) { toast(e.message, 'err', 'Import impossible'); }
-    finally { btn.disabled = false; btn.innerHTML = old; $('#convXlsx').value = ''; }
-  };
+  // Import via l'ASSISTANT (mapping libre des colonnes) — même composant que l'import TVA.
+  $('#impConv').onclick = () => openConvWizard();
   $$('#view [data-addpdf]').forEach(b => b.onclick = () => attachConvPdf(b, b.dataset.addpdf, false));
   $$('#view [data-replacepdf]').forEach(b => b.onclick = () => {
     if (confirm('Remplacer le document PDF déjà rattaché à cette convention ?\nL\'ancien document sera supprimé.')) attachConvPdf(b, b.dataset.replacepdf, true);

@@ -5,6 +5,14 @@ Version candidate à la validation métier (Mme Zahra) et au déploiement de pro
 
 ---
 
+## 🆕 Nouveau (import des conventions par mapping libre)
+
+- L'import des conventions utilise désormais **le même assistant que l'import TVA** : vous **mappez librement les colonnes** de votre fichier Excel (Nom, ICE, IF, RC, Convention, Délai conventionnel, dates, référence…), avec prévisualisation avant tout enregistrement.
+- **Délai conventionnel libre** : n'importe quel entier de **1 à 120 jours** est conservé **exactement** (79 reste 79). Une valeur invalide est refusée avec un message clair (jamais corrigée automatiquement).
+- **Rapprochement fournisseur robuste** : « HLZ », « hlz », « HLZ-Consulting », « HLZ_Consulting » sont reconnus comme le même fournisseur (priorité ICE → IF → RC → nom). Le nom affiché n'est jamais modifié.
+- Après un import de convention, les factures des **périodes non clôturées** sont **recalculées automatiquement** (le délai autorisé est mis à jour) ; les périodes clôturées restent intactes.
+- Les **messages d'erreur affichent le vrai numéro de ligne Excel**.
+
 ## 🆕 Nouveau (export Excel de la feuille de délais)
 
 - Dans la **feuille de calcul des délais**, chaque filtre (**Toutes**, **Retard > 0**, **Convention absente**) dispose de son **bouton « Excel »** pour exporter les factures correspondantes.

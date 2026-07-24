@@ -30,6 +30,22 @@ function normalizeIce(v) {
   return digits ? digits.padStart(15, '0') : null;
 }
 
+/**
+ * Nom de fournisseur normalisé pour la COMPARAISON UNIQUEMENT (jamais pour l'affichage/stockage).
+ * Ignore : casse, accents, espaces (début/fin/multiples), tabulations, tirets, underscores,
+ * ponctuation simple. Les formes juridiques usuelles (SARL, SA, STE…) sont également neutralisées
+ * pour un rapprochement prudent. Le nom affiché reste TOUJOURS celui du fichier source.
+ * Ex. : « HLZ », « hlz », « HlZ » → « hlz » ; « HLZ Consulting », « HLZ-Consulting »,
+ *       « HLZ_Consulting », « HLZ   Consulting » → « hlz consulting ».
+ */
+function normalizeSupplierName(s) {
+  let n = String(s == null ? '' : s).toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
+  n = n.replace(/[^a-z0-9]+/g, ' ').trim();               // séparateurs/ponctuation → espace unique
+  const stripped = n.replace(/\b(sarlau|sarl|sasu|sas|snc|scs|sca|sa|gie|eurl|societe|ste|cie)\b/g, ' ')
+    .replace(/\s+/g, ' ').trim();
+  return stripped || n;                                   // ne jamais renvoyer une chaîne vide si un nom existait
+}
+
 function slugify(s) {
   return String(s || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '')
     .replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 40) || 'cabinet';
@@ -40,4 +56,4 @@ function escapeHtml(s) {
     ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 }
 
-module.exports = { uid, fmtMoney, fmtDateFr, trimestreLabel, normalizeIce, slugify, escapeHtml };
+module.exports = { uid, fmtMoney, fmtDateFr, trimestreLabel, normalizeIce, normalizeSupplierName, slugify, escapeHtml };

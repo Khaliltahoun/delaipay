@@ -961,3 +961,193 @@ test('doublon/E34-E36 CADOZAT : 36 factures, 7025,33 DH, 2 doublons à amende nu
   for (const d of dups) { assert.equal(d.montant_amende || 0, 0, 'ligne doublon → amende nulle'); assert.equal(d.statut_doublon, 'potentiel'); }
   assert.equal(anomaliesDoublon(ent).length, 2, '2 anomalies basses créées');
 });
+
+/* ==================================================================================
+ * IMPORT CONVENTIONS UNIFIÉ (mapping libre) · normalizeSupplierName · délai strict ·
+ * recalcul des périodes ouvertes · VRAI numéro de ligne Excel.
+ * ================================================================================== */
+const { normalizeSupplierName } = require('../src/util');
+
+// Classeur générique (aoa brut) — permet des colonnes libres et des lignes réellement vides.
+function aoaBuf(aoa, sheet = 'Feuille1') {
+  const ws = XLSX.utils.aoa_to_sheet(aoa);
+  const wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, ws, sheet);
+  return XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
+}
+
+/* -------------------- OBJ 2 : normalizeSupplierName (comparaison uniquement) -------------------- */
+test('conv/OBJ2 normalizeSupplierName : casse / accents / espaces / tirets / underscores', () => {
+  const eq = (a, b) => assert.equal(normalizeSupplierName(a), normalizeSupplierName(b), `${a} ≡ ${b}`);
+  eq('HLZ', 'hlz'); eq('HLZ', 'HlZ');
+  eq('HLZ Consulting', 'hlz consulting'); eq('HLZ Consulting', 'HLZ CONSULTING');
+  eq('HLZ Consulting', 'HLZ   Consulting'); eq('HLZ Consulting', 'HLZ-Consulting'); eq('HLZ Consulting', 'HLZ_Consulting');
+  eq('HLZ\tConsulting', 'HLZ Consulting');
+  eq('Sté Générale', 'ste generale'); // accents + forme juridique neutralisée
+  assert.notEqual(normalizeSupplierName('HLZ Consulting'), normalizeSupplierName('ABC Consulting'), 'noms distincts ≠');
+});
+test('conv/OBJ2 matching robuste (nom) + priorité ICE, nom affiché inchangé', () => {
+  const t = newTenant();
+  const fid = uid('four');
+  db.prepare('INSERT INTO fournisseur (id,cabinet_id,entreprise_id,raison_sociale,delai_applicable) VALUES (?,?,?,?,60)').run(fid, t.cab, t.ent, 'HLZ Consulting');
+  // Convention importée avec un nom « sale » (casse/tiret/underscore) et SANS identifiant → matché par nom normalisé.
+  const buf = aoaBuf([['Nom', 'Convention', 'Delai'], ['  hlz-consulting  ', 'OUI', 45]], 'Conv');
+  const r = importer.importConventions(buf, { cabinetId: t.cab, entrepriseId: t.ent, mapping: { nom: 0, conv: 1, delai: 2 }, sheetName: 'Conv', headerRow: 0 });
+  assert.equal(r.conventionsCreated, 1);
+  assert.equal(r.suppliersFound, 1, 'fournisseur existant retrouvé (pas de doublon créé)');
+  assert.equal(db.prepare('SELECT COUNT(*) n FROM fournisseur WHERE entreprise_id=?').get(t.ent).n, 1, 'aucun fournisseur en double');
+  assert.equal(db.prepare('SELECT raison_sociale FROM fournisseur WHERE id=?').get(fid).raison_sociale, 'HLZ Consulting', 'nom affiché JAMAIS modifié');
+  assert.equal(db.prepare('SELECT delai_applicable FROM fournisseur WHERE id=?').get(fid).delai_applicable, 45);
+});
+test('conv/OBJ2 priorité ICE sur le nom', () => {
+  const t = newTenant();
+  const fid = uid('four');
+  db.prepare('INSERT INTO fournisseur (id,cabinet_id,entreprise_id,raison_sociale,ice,delai_applicable) VALUES (?,?,?,?,?,60)').run(fid, t.cab, t.ent, 'NOM ORIGINAL SARL', '000000000000901');
+  // Même ICE mais nom TOTALEMENT différent → doit matcher par ICE (priorité), pas créer un nouveau fournisseur.
+  const buf = aoaBuf([['Nom', 'ICE', 'Convention', 'Delai'], ['Autre Raison', '000000000000901', 'OUI', 100]], 'Conv');
+  const r = importer.importConventions(buf, { cabinetId: t.cab, entrepriseId: t.ent, mapping: { nom: 0, ice: 1, conv: 2, delai: 3 }, sheetName: 'Conv', headerRow: 0 });
+  assert.equal(r.suppliersFound, 1); assert.equal(r.conventionsCreated, 1);
+  assert.equal(db.prepare('SELECT COUNT(*) n FROM fournisseur WHERE entreprise_id=?').get(t.ent).n, 1, 'matché par ICE, pas de doublon');
+  assert.equal(db.prepare('SELECT delai_applicable FROM fournisseur WHERE id=?').get(fid).delai_applicable, 100);
+});
+
+/* -------------------- OBJ 3/7 : délai conventionnel strict (1..120, exact) -------------------- */
+test('conv/OBJ3 parseConvDelaiStrict : entier 1..120 accepté EXACTEMENT', () => {
+  for (const v of [1, 17, 42, 79, 91, 103, 120]) {
+    const p = importer.parseConvDelaiStrict(v); assert.ok(p.ok, `${v} accepté`); assert.equal(p.delai, v, `${v} conservé exactement`);
+    const ps = importer.parseConvDelaiStrict(String(v)); assert.ok(ps.ok && ps.delai === v, `"${v}" (texte) → ${v}`);
+  }
+});
+test('conv/OBJ7 parseConvDelaiStrict : refus vide/0/négatif/>120/décimal/texte', () => {
+  const bad = { '': 'absent', 0: 'invalide', '-5': 'texte', 121: 'superieur_max', 200: 'superieur_max', '79.5': 'decimal', '60,5': 'decimal', '60 à 120': 'texte', abc: 'texte' };
+  for (const [v, reason] of Object.entries(bad)) {
+    const raw = v === '0' ? 0 : (v === '121' ? 121 : (v === '200' ? 200 : v));
+    const p = importer.parseConvDelaiStrict(raw); assert.ok(!p.ok, `${JSON.stringify(raw)} refusé`); assert.equal(p.reason, reason, `${JSON.stringify(raw)} → ${reason}`);
+  }
+  assert.ok(!importer.parseConvDelaiStrict(79.5).ok, '79.5 (nombre décimal) refusé');
+});
+test('conv/OBJ3 import mappé : délais 17..120 enregistrés EXACTEMENT (aucune conversion)', () => {
+  const t = newTenant();
+  const rows = [['Nom', 'ICE', 'Convention', 'Delai']];
+  const vals = [17, 42, 79, 91, 103, 120];
+  vals.forEach((d, i) => rows.push([`FRS ${d}`, '0000000009100' + (10 + i), 'OUI', d]));
+  const r = importer.importConventions(aoaBuf(rows, 'Conv'), { cabinetId: t.cab, entrepriseId: t.ent, mapping: { nom: 0, ice: 1, conv: 2, delai: 3 }, sheetName: 'Conv', headerRow: 0 });
+  assert.equal(r.conventionsCreated, 6);
+  for (const d of vals) {
+    const c = db.prepare(`SELECT delai_convenu FROM convention c JOIN fournisseur f ON f.id=c.fournisseur_id WHERE f.entreprise_id=? AND f.raison_sociale=?`).get(t.ent, `FRS ${d}`);
+    assert.equal(c.delai_convenu, d, `délai ${d} enregistré exactement`);
+  }
+});
+test('conv/OBJ7 import mappé : valeurs invalides rejetées avec message explicite (jamais corrigées)', () => {
+  const t = newTenant();
+  const rows = [['Nom', 'ICE', 'Convention', 'Delai'],
+    ['FRS OK', '000000000009201', 'OUI', 79],       // valide
+    ['FRS ZERO', '000000000009202', 'OUI', 0],       // refus
+    ['FRS SUP', '000000000009203', 'OUI', 121],      // refus
+    ['FRS DEC', '000000000009204', 'OUI', 60.5],     // refus
+    ['FRS TXT', '000000000009205', 'OUI', 'soixante'], // refus
+    ['FRS VIDE', '000000000009206', 'OUI', ''],       // refus
+  ];
+  const r = importer.importConventions(aoaBuf(rows, 'Conv'), { cabinetId: t.cab, entrepriseId: t.ent, mapping: { nom: 0, ice: 1, conv: 2, delai: 3 }, sheetName: 'Conv', headerRow: 0 });
+  assert.equal(r.conventionsCreated, 1, 'seule la ligne valide crée une convention');
+  assert.equal(r.rejected, 5, '5 lignes rejetées');
+  const rejets = r.lignes.filter(l => l.statut === 'rejetee');
+  assert.ok(rejets.every(l => /entier compris entre 1 et 120/.test(l.motif)), 'message explicite unique');
+  assert.equal(db.prepare('SELECT delai_convenu FROM convention c JOIN fournisseur f ON f.id=c.fournisseur_id WHERE f.entreprise_id=? AND f.raison_sociale=?').get(t.ent, 'FRS OK').delai_convenu, 79);
+});
+
+/* -------------------- OBJ 5 : VRAI numéro de ligne Excel -------------------- */
+test('conv/OBJ5 numéro de ligne Excel réel malgré des lignes vides', () => {
+  const t = newTenant();
+  // En-tête ligne 1, données 2, lignes 3 & 4 VIDES, erreur ligne 5.
+  const buf = aoaBuf([
+    ['Nom', 'ICE', 'Convention', 'Delai'],           // Excel 1
+    ['FRS A', '000000000009301', 'OUI', 60],          // Excel 2
+    [],                                               // Excel 3 (vide)
+    [],                                               // Excel 4 (vide)
+    ['FRS ERR', '000000000009302', 'OUI', 999],       // Excel 5 (délai invalide)
+  ], 'Conv');
+  const r = importer.importConventions(buf, { cabinetId: t.cab, entrepriseId: t.ent, mapping: { nom: 0, ice: 1, conv: 2, delai: 3 }, sheetName: 'Conv', headerRow: 0 });
+  const err = r.lignes.find(l => l.statut === 'rejetee');
+  assert.ok(err, 'ligne en erreur présente');
+  assert.equal(err.ligne, 5, 'numéro de ligne = 5 (réel Excel), pas 3 (compacté)');
+});
+test('import/OBJ5 preview factures : numéro de ligne Excel réel (lignes vides ignorées)', () => {
+  const { cab, ent } = seedCab();
+  const buf = aoaBuf([
+    ['N°', 'Date facture', 'Fournisseur', 'TTC', 'Date paiement'],  // Excel 1
+    ['F1', '2026-01-05', 'FRS A', 1000, '2026-02-01'],              // Excel 2
+    [],                                                             // Excel 3 (vide)
+    [],                                                             // Excel 4 (vide)
+    ['F2', '2026-01-06', '', 500, ''],                              // Excel 5 (sans fournisseur → rejetée)
+  ], 'S');
+  const pv = importer.previewImport(buf, { sheetName: 'S', headerRow: 0, mapping: { numero: 0, date_facture: 1, four_nom: 2, ttc: 3, date_paiement: 4 }, cabinetId: cab, entrepriseId: ent, annee: 2026, trimestre: 1 });
+  const rej = pv.apercu.rejetees.find(l => /fournisseur/.test(l.motif));
+  assert.ok(rej, 'ligne rejetée présente'); assert.equal(rej.ligne, 5, 'numéro de ligne réel = 5');
+});
+
+/* -------------------- OBJ 1 : réutilisation du composant de mapping (analyse) -------------------- */
+test('conv/OBJ1 analyzeWorkbook(kind=conventions) → champs conventions + mapping auto', () => {
+  const a = importer.analyzeWorkbook(aoaBuf([['Nom fournisseur', 'ICE', 'Convention', 'Délai convenu'], ['X', '000000000009401', 'OUI', 60]], 'Conv'), 'conventions');
+  assert.equal(a.kind, 'conventions');
+  const keys = a.champs.map(c => c.key);
+  assert.ok(keys.includes('nom') && keys.includes('delai') && keys.includes('conv') && keys.includes('ice'), 'champs conventions exposés');
+  const sug = a.feuilles.find(f => f.nom === a.suggestion) || a.feuilles[0];
+  assert.ok(sug.mapping.nom && sug.mapping.delai, 'mapping automatique proposé (nom + délai)');
+});
+test('conv/OBJ1 preview (dryRun) n\'écrit rien ; confirm écrit', () => {
+  const t = newTenant();
+  const buf = aoaBuf([['Nom', 'ICE', 'Convention', 'Delai'], ['FRS DRY', '000000000009501', 'OUI', 88]], 'Conv');
+  const opts = { cabinetId: t.cab, entrepriseId: t.ent, mapping: { nom: 0, ice: 1, conv: 2, delai: 3 }, sheetName: 'Conv', headerRow: 0 };
+  const pv = importer.importConventions(buf, { ...opts, dryRun: true });
+  assert.equal(pv.conventionsCreated, 1, 'compté en prévisualisation');
+  assert.equal(db.prepare('SELECT COUNT(*) n FROM convention WHERE entreprise_id=?').get(t.ent).n, 0, 'dryRun : AUCUNE écriture');
+  assert.equal(db.prepare('SELECT COUNT(*) n FROM fournisseur WHERE entreprise_id=?').get(t.ent).n, 0, 'dryRun : aucun fournisseur créé');
+  const r = importer.importConventions(buf, opts);
+  assert.equal(db.prepare('SELECT COUNT(*) n FROM convention WHERE entreprise_id=?').get(t.ent).n, 1, 'confirm : convention créée');
+});
+
+/* -------------------- OBJ 4 : recalcul des périodes ouvertes (HTTP), clôturées intactes -------------------- */
+test('conv/OBJ4 HTTP : convention → recalcul période ouverte ; période clôturée intacte', async () => {
+  const t = newTenant();
+  const fid = uid('four');
+  db.prepare('INSERT INTO fournisseur (id,cabinet_id,entreprise_id,raison_sociale,ice,delai_applicable) VALUES (?,?,?,?,?,60)').run(fid, t.cab, t.ent, 'FRS RECALC', '000000000009601');
+  // Facture période OUVERTE (T1) et facture période CLÔTURÉE (T2), délai initial 60, retard 76 j (15/01 impayée → 31/03).
+  const fOpen = uid('fac'); db.prepare(`INSERT INTO facture (id,cabinet_id,entreprise_id,fournisseur_id,numero,ttc,date_facture,annee,trimestre,delai_applicable,delai_ecoule,retard_jours,a_declarer) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`)
+    .run(fOpen, t.cab, t.ent, fid, 'OPEN', 100000, '2026-01-15', 2026, 1, 60, 75, 15, 1);
+  const fClosed = uid('fac'); db.prepare(`INSERT INTO facture (id,cabinet_id,entreprise_id,fournisseur_id,numero,ttc,date_facture,annee,trimestre,delai_applicable,delai_ecoule,retard_jours,a_declarer) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`)
+    .run(fClosed, t.cab, t.ent, fid, 'CLOSED', 100000, '2026-04-15', 2026, 2, 60, 76, 16, 1);
+  // Période T2 CLÔTURÉE (verrouillée).
+  db.prepare(`INSERT INTO periode_declaration (id,cabinet_id,entreprise_id,annee,trimestre,statut) VALUES (?,?,?,?,?,?)`).run(uid('per'), t.cab, t.ent, 2026, 2, 'cloturee');
+  const buf = convBuf([['FRS RECALC', '000000000009601', '', '', 'OUI', 90]]);
+  const res = await postFile(`/api/clients/${t.ent}/conventions/import`, cookieOf(t.u), buf, 'l.xlsx', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+  assert.equal(res.status, 200);
+  assert.equal(db.prepare('SELECT delai_applicable FROM facture WHERE id=?').get(fOpen).delai_applicable, 90, 'période ouverte recalculée (délai 90)');
+  assert.equal(db.prepare('SELECT delai_applicable FROM facture WHERE id=?').get(fClosed).delai_applicable, 60, 'période clôturée INTACTE (délai 60)');
+});
+test('conv/OBJ1 HTTP : assistant conventions analyze(kind) → preview → confirm', async () => {
+  const t = newTenant();
+  const buf = aoaBuf([['Nom', 'ICE', 'Convention', 'Delai'], ['FRS WIZ', '000000000009701', 'OUI', 73]], 'Conv');
+  // analyse (kind=conventions) → token
+  const fd = new FormData(); fd.append('file', new Blob([buf]), 'c.xlsx'); fd.append('kind', 'conventions');
+  const aRes = await fetch(baseUrl() + `/api/clients/${t.ent}/import/analyze`, { method: 'POST', headers: { Cookie: cookieOf(t.u) }, body: fd });
+  const a = await aRes.json();
+  assert.equal(a.kind, 'conventions'); assert.ok(a.token);
+  const body = { token: a.token, sheetName: 'Conv', headerRow: 0, mapping: { nom: 0, ice: 1, conv: 2, delai: 3 }, sourceName: 'c.xlsx' };
+  // preview (aucune écriture)
+  const pv = await postJson(`/api/clients/${t.ent}/conventions/preview`, cookieOf(t.u), body);
+  assert.equal(pv.status, 200); assert.equal(pv.body.conventionsCreated, 1);
+  assert.equal(db.prepare('SELECT COUNT(*) n FROM convention WHERE entreprise_id=?').get(t.ent).n, 0, 'preview n\'écrit rien');
+  // confirm (écrit + délai exact 73)
+  const cf = await postJson(`/api/clients/${t.ent}/conventions/confirm`, cookieOf(t.u), body);
+  assert.equal(cf.status, 200); assert.equal(cf.body.conventionsCreated, 1);
+  const c = db.prepare(`SELECT delai_convenu FROM convention c JOIN fournisseur f ON f.id=c.fournisseur_id WHERE f.entreprise_id=? AND f.raison_sociale=?`).get(t.ent, 'FRS WIZ');
+  assert.equal(c.delai_convenu, 73, 'délai exact 73 enregistré via l\'assistant');
+});
+
+/* -------------------- OBJ 8 : non-régression import conventions AUTO (legacy) -------------------- */
+test('conv/OBJ8 legacy auto (sans mapping) : « 60 à 120 » → 120 inchangé', () => {
+  const t = newTenant();
+  const r = importer.importConventions(convBuf([['LEG PLAGE', '000000000009801', '', '', 'OUI', '60 à 120']]), { cabinetId: t.cab, entrepriseId: t.ent });
+  assert.equal(r.conventionsCreated, 1);
+  assert.equal(convOfEnt(t.ent)[0].delai_convenu, 120, 'mode auto legacy : plage → plus grand (inchangé)');
+});
