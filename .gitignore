@@ -24,3 +24,6 @@ CAHIER_DES_CHARGES_DelaiPay.md
 DELAI DE PAIEMENT/
 *.xlsx
 *.docx
+
+# Coordination Claude Code <-> Claude Cowork (références locales/clients)
+collaboration/

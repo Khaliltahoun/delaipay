@@ -695,6 +695,11 @@ function delaisData(cabinetId, e, p) {
       delai_ecoule: arr.delaiConstate, delai_applicable: delaiApp, date_limite: f.date_limite,
       arrete_au: arr.dateArreteIso, etat_paiement: arr.etat,
       operateur_reseau: rd.sourceRegle === 'operateur_reseau', categorie: f.categorie_fournisseur || 'standard', hors_tableau: rd.horsTableauDeclaratif, source_regle: rd.sourceRegle,
+      // LOT 2 — surface la PROPOSITION réseau (non confirmée) pour permettre la confirmation depuis l'UI.
+      reseau_statut: (f.operateur_reseau && f.statut_classification === 'confirme') ? 'confirme'
+        : ((f.statut_classification === 'propose' || f.statut_classification === 'a_verifier') || (!f.operateur_reseau && reseau.classifyReseau({ nom: f.four_nom }).isOperateur) ? 'propose' : 'aucun'),
+      reseau_categorie: (() => { const p = reseau.classifyReseau({ nom: f.four_nom }); return f.categorie_fournisseur && f.categorie_fournisseur !== 'standard' ? f.categorie_fournisseur : (p.isOperateur ? p.categorie : null); })(),
+      reseau_ambigu: (() => { const p = reseau.classifyReseau({ nom: f.four_nom }); return !!p.ambigu; })(),
       retard, n_mois: f.n_mois, a_declarer: !!f.a_declarer, has_conv: !!f.has_conv,
       taux_bam: f.taux_bam, taux_total: f.taux_total, amende: f.montant_amende, risk: f.couleur_risque,
       // Doublon potentiel : trace historique + état de revue courant (non destructif).

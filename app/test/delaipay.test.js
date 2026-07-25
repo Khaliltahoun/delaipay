@@ -1248,3 +1248,47 @@ test('automap/L1 profileColumn : séquence vs montant vs texte vs date', () => {
   const amt = importer.profileColumn([1200.5, 3400, 56000, 890.25]); assert.ok(amt.numericRate >= 0.7 && amt.looksAmount, 'montant détecté'); assert.equal(amt.isSequential, false);
   const txt = importer.profileColumn(['ALPHA SARL', 'BETA', 'GAMMA SA']); assert.ok(txt.textRate >= 0.9, 'texte détecté');
 });
+
+/* ==================================================================================
+ * LOT 2 (P1) — OPÉRATEURS RÉSEAU : surface des propositions + confirmation via l'UI/API.
+ * ================================================================================== */
+function seedFacFour(t, nom, { ice = null } = {}) {
+  const fid = uid('four');
+  db.prepare('INSERT INTO fournisseur (id,cabinet_id,entreprise_id,raison_sociale,ice,delai_applicable) VALUES (?,?,?,?,?,60)').run(fid, t.cab, t.ent, nom, ice);
+  db.prepare(`INSERT INTO facture (id,cabinet_id,entreprise_id,fournisseur_id,numero,ttc,date_facture,annee,trimestre,delai_applicable,delai_ecoule,retard_jours,a_declarer,montant_amende)
+     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).run(uid('fac'), t.cab, t.ent, fid, 'F-' + nom.slice(0, 3), 100000, '2026-01-15', 2026, 1, 60, 75, 15, 1, 1000);
+  return fid;
+}
+async function delaisRows(t) {
+  const url = baseUrl() + `/api/clients/${t.ent}/delais?annee=2026&trimestre=1`, opt = { headers: { Cookie: cookieOf(t.u), Connection: 'close' } };
+  for (let i = 0; i < 3; i++) { try { const res = await fetch(url, opt); return (await res.json()).rows; } catch (e) { if (i === 2) throw e; } }
+}
+test('reseau/L2 /delais expose une PROPOSITION réseau (SRM, Maroc Telecom) et PAS de faux positif (TOTAL MAROC)', async () => {
+  const t = newTenant();
+  seedFacFour(t, 'SRM MARRAKECH SAFI'); seedFacFour(t, 'MAROC TELECOM'); seedFacFour(t, 'TOTAL MAROC');
+  const rows = await delaisRows(t);
+  const srm = rows.find(r => r.four === 'SRM MARRAKECH SAFI'), iam = rows.find(r => r.four === 'MAROC TELECOM'), total = rows.find(r => r.four === 'TOTAL MAROC');
+  assert.equal(srm.reseau_statut, 'propose', 'SRM proposé'); assert.equal(srm.operateur_reseau, false, 'pas encore confirmé');
+  assert.equal(iam.reseau_statut, 'propose', 'Maroc Telecom proposé');
+  assert.equal(total.reseau_statut, 'aucun', 'TOTAL MAROC : aucun faux positif');
+});
+test('reseau/L2 confirmation → délai 30 j + exclusion déclarative + reste en vue interne', async () => {
+  const t = newTenant();
+  const fid = seedFacFour(t, 'MAROC TELECOM');
+  const r = await patchJson(`/api/clients/${t.ent}/fournisseurs/${fid}/classification`, cookieOf(t.u), { operateur_reseau: true, statut: 'confirme', categorie_fournisseur: 'telecom' });
+  assert.equal(r.status, 200);
+  const rows = await delaisRows(t);
+  const row = rows.find(r => r.four === 'MAROC TELECOM');
+  assert.equal(row.operateur_reseau, true, 'confirmé'); assert.equal(row.delai_applicable, 30, 'délai 30 j appliqué'); assert.equal(row.hors_tableau, true, 'exclu du tableau déclaratif');
+  assert.ok(row, 'toujours présent en vue interne (feuille de délais)');
+  // Exclusion effective dans la déclaration
+  const dec = await (await fetch(baseUrl() + `/api/clients/${t.ent}/declaration?annee=2026&trimestre=1`, { headers: { Cookie: cookieOf(t.u) } })).json();
+  assert.ok(!dec.lignes.some(l => l.nom === 'MAROC TELECOM'), 'exclu de la déclaration');
+  assert.ok(dec.exclusions.nbFactures >= 1, 'résumé des exclusions renseigné');
+});
+test('reseau/L2 règle configurable : DELAI_RESEAU pilote le délai appliqué', () => {
+  const reseau = require('../src/reseau');
+  assert.equal(reseau.DELAI_RESEAU, 30, 'valeur par défaut environnement de test');
+  const rd = reseau.resolveDelaiAutorise({ fournisseur: { operateur_reseau: 1, statut_classification: 'confirme' } });
+  assert.equal(rd.delaiAutorise, reseau.DELAI_RESEAU, 'le délai appliqué suit la constante configurable');
+});

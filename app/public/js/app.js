@@ -589,10 +589,28 @@ function doublonBadge(f) {
 }
 // Badge « opérateur de réseau » (délai 30 j + exclusion déclarative).
 function reseauBadge(f) {
-  if (!f.operateur_reseau) return '';
-  const tip = "Cette facture appartient à un opérateur de télécommunications, d'eau ou d'électricité. Son délai applicable est de 30 jours et elle est exclue des tableaux déclaratifs concernés.";
-  return ` <span class="pill pill-app" style="font-size:9.5px;padding:1px 6px" title="${tip}">Réseau — 30 j</span>${f.hors_tableau ? ' <span class="pill pill-orange" style="font-size:9.5px;padding:1px 6px" title="Facture volontairement exclue des tableaux déclaratifs (conservée en suivi interne).">Hors tableau déclaratif</span>' : ''}`;
+  if (f.operateur_reseau) {
+    const tip = "Cette facture appartient à un opérateur de télécommunications, d'eau ou d'électricité. Son délai applicable est de 30 jours et elle est exclue des tableaux déclaratifs concernés.";
+    return ` <span class="pill pill-app" style="font-size:9.5px;padding:1px 6px" title="${tip}">Réseau — 30 j</span>${f.hors_tableau ? ' <span class="pill pill-orange" style="font-size:9.5px;padding:1px 6px" title="Facture volontairement exclue des tableaux déclaratifs (conservée en suivi interne).">Hors tableau déclaratif</span>' : ''}`;
+  }
+  // Proposition réseau non confirmée : badge + confirmation en un clic (opérateur télécom/eau/électricité → 30 j + exclusion).
+  if (f.reseau_statut === 'propose' && f.four_id) {
+    const tip = `Fournisseur possiblement opérateur de réseau${f.reseau_categorie ? ' (' + esc(f.reseau_categorie) + ')' : ''}${f.reseau_ambigu ? ' — à vérifier (nom générique)' : ''}. Confirmer applique le délai de 30 jours et l'exclusion déclarative.`;
+    return ` <button class="btn btn-ghost btn-sm reseau-confirm" data-four="${f.four_id}" data-fournom="${esc(f.four || '')}" title="${tip}" onclick="event.stopPropagation();confirmReseau(this)" style="font-size:9.5px;padding:1px 7px;color:var(--primary);border-color:rgba(14,77,100,.3)">Réseau ? — confirmer</button>`;
+  }
+  return '';
 }
+// Confirme un fournisseur comme opérateur de réseau (délai 30 j + exclusion déclarative) via l'endpoint de classification.
+window.confirmReseau = async function (btn) {
+  const fourId = btn.dataset.four, nom = btn.dataset.fournom || 'ce fournisseur';
+  if (!window.confirm(`Confirmer « ${nom} » comme opérateur de réseau ?\n\nDélai appliqué : 30 jours. Ses factures seront exclues des tableaux déclaratifs (conservées en suivi interne). Recalcul des périodes non clôturées.`)) return;
+  btn.disabled = true; btn.textContent = '…';
+  try {
+    await api(`/clients/${state.clientId}/fournisseurs/${fourId}/classification`, { method: 'PATCH', body: { operateur_reseau: true, statut: 'confirme', categorie_fournisseur: 'autre_operateur_reseau' } });
+    toast('Opérateur de réseau confirmé (30 j + exclusion).', 'ok', 'Classification réseau');
+    renderDelais(); refreshAlertsBadge();
+  } catch (e) { toast(e.message, 'err'); btn.disabled = false; btn.textContent = 'Réseau ? — confirmer'; }
+};
 // Export Excel de la feuille de délais pour un filtre donné (toutes / retard / convention absente).
 async function exportDelais(filter, btn) {
   const orig = btn ? btn.innerHTML : '';
