@@ -14,7 +14,7 @@
  * Lancer :  npm run repair-delais      (ou  DB_PATH=… node src/repair.js)
  * Sûr à relancer : les valeurs déjà saines ne sont pas modifiées.
  */
-const { db, tauxAt } = require('./db');
+const { db, tauxAt, activeConventionFor } = require('./db');
 const calc = require('./calc');
 
 function repair() {
@@ -42,9 +42,11 @@ function repair() {
     for (const g of groups) {
       const rows = db.prepare('SELECT * FROM facture WHERE entreprise_id=? AND annee=? AND trimestre=?').all(g.entreprise_id, g.annee, g.trimestre);
       for (const f of rows) {
-        const conv = db.prepare(`SELECT delai_convenu FROM convention WHERE entreprise_id=? AND fournisseur_id=? AND statut='valide' ORDER BY created_at DESC LIMIT 1`).get(g.entreprise_id, f.fournisseur_id);
-        const fr = db.prepare('SELECT delai_applicable FROM fournisseur WHERE id=?').get(f.fournisseur_id);
-        const delai = calc.saneDelai(conv ? conv.delai_convenu : (fr && fr.delai_applicable ? fr.delai_applicable : f.delai_applicable));
+        // Résolution CENTRALE identique au runtime (opérateur réseau 30 j → convention → standard 60 j) :
+        // la réparation ne doit JAMAIS réverter un opérateur réseau confirmé à son délai de convention.
+        const fr = db.prepare('SELECT * FROM fournisseur WHERE id=?').get(f.fournisseur_id);
+        const conv = activeConventionFor(g.entreprise_id, f.fournisseur_id);
+        const delai = require('./reseau').resolveDelaiAutorise({ fournisseur: fr, convention: conv }).delaiAutorise;
         const c = calc.computeFacture({ dateFacture: f.date_facture, datePaiement: f.date_paiement, ttc: f.ttc,
           delaiApplicable: delai, periode: { annee: g.annee, trimestre: g.trimestre }, tauxProvider: (y, m) => tauxAt(y, m, g.cabinet_id) });
         upd.run(delai, c.delaiEcoule, c.dateLimite, c.retardJours, c.nMois, c.aDeclarer ? 1 : 0,

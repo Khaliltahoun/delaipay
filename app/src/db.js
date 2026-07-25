@@ -247,4 +247,18 @@ function audit(cabinetId, userId, action, entite, details, ip) {
   } catch (e) { /* audit ne doit jamais casser le flux */ }
 }
 
-module.exports = { db, tauxAt, audit, DB_PATH, backfillStatutDoublon };
+/* --------------------------------------------------- sélection de convention
+ * RÈGLE DE SÉLECTION UNIQUE de la convention active d'un fournisseur, partagée par TOUS les
+ * résolveurs de délai (recalcul, feuille de délais, import, saisie manuelle, réparation).
+ * Définition : la convention la PLUS RÉCENTE (created_at) au statut 'valide'. Renvoie la ligne
+ * ou null. La résolution du délai à partir de (fournisseur, convention) reste faite par
+ * reseau.resolveDelaiAutorise — un SEUL point de vérité métier. */
+function activeConventionFor(entrepriseId, fournisseurId) {
+  if (!entrepriseId || !fournisseurId) return null;
+  // Tie-break DÉTERMINISTE : created_at n'a qu'une précision à la seconde ; rowid (ordre d'insertion,
+  // monotone) départage deux conventions créées dans la même seconde → « la plus récente » sans ambiguïté.
+  return db.prepare(`SELECT * FROM convention WHERE entreprise_id=? AND fournisseur_id=? AND statut='valide'
+                     ORDER BY created_at DESC, rowid DESC LIMIT 1`).get(entrepriseId, fournisseurId) || null;
+}
+
+module.exports = { db, tauxAt, audit, DB_PATH, backfillStatutDoublon, activeConventionFor };

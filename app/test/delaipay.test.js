@@ -1453,3 +1453,138 @@ test('reseau/L2 règle configurable : DELAI_RESEAU pilote le délai appliqué', 
   const rd = reseau.resolveDelaiAutorise({ fournisseur: { operateur_reseau: 1, statut_classification: 'confirme' } });
   assert.equal(rd.delaiAutorise, reseau.DELAI_RESEAU, 'le délai appliqué suit la constante configurable');
 });
+
+/* ==================================================================================
+ * LOT 4 — INTÉGRITÉ MÉTIER DES CONVENTIONS
+ * Une SEULE règle de délai applicable partout : reseau.resolveDelaiAutorise, alimentée
+ * par UNE sélection de convention unique db.activeConventionFor (plus récente 'valide',
+ * tie-break rowid). Aucun écran ne produit une règle différente.
+ * ================================================================================== */
+async function addFactureManuelle(t, fields) { return postJson(`/api/clients/${t.ent}/factures`, cookieOf(t.u), fields); }
+function seedReseauFour(t, nom, ice) {
+  const fid = uid('four');
+  db.prepare(`INSERT INTO fournisseur (id,cabinet_id,entreprise_id,raison_sociale,ice,operateur_reseau,statut_classification,hors_tableau_declaratif,delai_special,categorie_fournisseur,delai_applicable) VALUES (?,?,?,?,?,1,'confirme',1,30,'telecom',60)`).run(fid, t.cab, t.ent, nom, ice);
+  return fid;
+}
+async function delaisRowsP(t, annee, trimestre) {
+  const res = await fetch(baseUrl() + `/api/clients/${t.ent}/delais?annee=${annee}&trimestre=${trimestre}`, { headers: { Cookie: cookieOf(t.u), Connection: 'close' } });
+  return (await res.json()).rows;
+}
+async function deleteConv(t, convId) { return fetch(baseUrl() + `/api/clients/${t.ent}/conventions/${convId}`, { method: 'DELETE', headers: { Cookie: cookieOf(t.u) } }); }
+
+// (Phase 2) CŒUR — la saisie manuelle applique la MÊME règle centrale que le recalcul.
+test('lot4/unicité : facture manuelle sur opérateur réseau confirmé → 30 j (règle unique, pas 60)', async () => {
+  const t = newTenant();
+  const fid = seedReseauFour(t, 'IAM RESEAU', '000000000000801');
+  const r = await addFactureManuelle(t, { fournisseur_id: fid, ttc: 10000, date_facture: '2026-01-10', date_paiement: '2026-04-30', annee: 2026, trimestre: 1 });
+  assert.equal(r.status, 200);
+  assert.equal(db.prepare('SELECT delai_applicable FROM facture WHERE id=?').get(r.body.id).delai_applicable, 30, 'délai réseau 30 j à la saisie manuelle (avant le correctif : 60)');
+});
+test('lot4/unicité : facture manuelle avec convention → délai de la convention', async () => {
+  const t = newTenant();
+  const fid = uid('four'); db.prepare('INSERT INTO fournisseur (id,cabinet_id,entreprise_id,raison_sociale,delai_applicable) VALUES (?,?,?,?,60)').run(fid, t.cab, t.ent, 'FRS CONV');
+  await postConvCreate(t, { fournisseur_id: fid, delai: 90 });
+  const r = await addFactureManuelle(t, { fournisseur_id: fid, ttc: 10000, date_facture: '2026-01-10', annee: 2026, trimestre: 1 });
+  assert.equal(db.prepare('SELECT delai_applicable FROM facture WHERE id=?').get(r.body.id).delai_applicable, 90);
+});
+test('lot4/unicité : facture manuelle standard → 60 j', async () => {
+  const t = newTenant();
+  const fid = uid('four'); db.prepare('INSERT INTO fournisseur (id,cabinet_id,entreprise_id,raison_sociale,delai_applicable) VALUES (?,?,?,?,60)').run(fid, t.cab, t.ent, 'FRS STD');
+  const r = await addFactureManuelle(t, { fournisseur_id: fid, ttc: 10000, date_facture: '2026-01-10', annee: 2026, trimestre: 1 });
+  assert.equal(db.prepare('SELECT delai_applicable FROM facture WHERE id=?').get(r.body.id).delai_applicable, 60);
+});
+// (Phase 6) Deux conventions valides → la plus récente s'applique, à l'identique partout.
+test('lot4/conflit : 2 conventions valides → la plus récente s\'applique (déterministe : sélection + saisie + feuille)', async () => {
+  const t = newTenant();
+  const fid = uid('four'); db.prepare('INSERT INTO fournisseur (id,cabinet_id,entreprise_id,raison_sociale,delai_applicable) VALUES (?,?,?,?,60)').run(fid, t.cab, t.ent, 'FRS 2CONV');
+  await postConvCreate(t, { fournisseur_id: fid, delai: 45 });   // ancienne
+  await postConvCreate(t, { fournisseur_id: fid, delai: 100 });  // plus récente (même seconde → tie-break rowid)
+  assert.equal(require('../src/db').activeConventionFor(t.ent, fid).delai_convenu, 100, 'activeConventionFor = la plus récente');
+  const r = await addFactureManuelle(t, { fournisseur_id: fid, ttc: 10000, date_facture: '2026-01-10', annee: 2026, trimestre: 1 });
+  assert.equal(db.prepare('SELECT delai_applicable FROM facture WHERE id=?').get(r.body.id).delai_applicable, 100, 'saisie manuelle = plus récente');
+  assert.equal((await delaisRowsP(t, 2026, 1)).find(x => x.four === 'FRS 2CONV').delai_applicable, 100, 'feuille = plus récente');
+});
+// (Phase 6) Opérateur réseau confirmé prioritaire sur une convention.
+test('lot4/conflit : opérateur réseau confirmé prioritaire sur convention (30 j gagne sur 120)', async () => {
+  const t = newTenant();
+  const fid = seedReseauFour(t, 'IAM PRIO', '000000000000802');
+  await postConvCreate(t, { fournisseur_id: fid, delai: 120 });
+  const r = await addFactureManuelle(t, { fournisseur_id: fid, ttc: 10000, date_facture: '2026-01-10', annee: 2026, trimestre: 1 });
+  assert.equal(db.prepare('SELECT delai_applicable FROM facture WHERE id=?').get(r.body.id).delai_applicable, 30, 'réseau 30 j prioritaire');
+  assert.equal((await delaisRowsP(t, 2026, 1)).find(x => x.four === 'IAM PRIO').delai_applicable, 30, 'feuille cohérente');
+});
+// (Phase 6) Convention expirée / future : validité fondée sur le statut (date = alerte/badge), déterministe.
+test('lot4/conflit : convention expirée (date_fin passée) reste appliquée tant que statut=valide (règle explicite)', async () => {
+  const t = newTenant();
+  const fid = uid('four'); db.prepare('INSERT INTO fournisseur (id,cabinet_id,entreprise_id,raison_sociale,delai_applicable) VALUES (?,?,?,?,60)').run(fid, t.cab, t.ent, 'FRS EXP');
+  db.prepare(`INSERT INTO convention (id,cabinet_id,entreprise_id,fournisseur_id,delai_convenu,date_fin,statut) VALUES (?,?,?,?,?,?,'valide')`).run(uid('conv'), t.cab, t.ent, fid, 95, '2020-01-01');
+  assert.equal(require('../src/db').activeConventionFor(t.ent, fid).delai_convenu, 95, 'validité par statut (date_fin = alerte/badge, non enforcement)');
+  const r = await addFactureManuelle(t, { fournisseur_id: fid, ttc: 10000, date_facture: '2026-01-10', annee: 2026, trimestre: 1 });
+  assert.equal(db.prepare('SELECT delai_applicable FROM facture WHERE id=?').get(r.body.id).delai_applicable, 95, 'comportement déterministe et documenté');
+});
+// (Phase 3 + 4) Recalcul automatique : créer/supprimer une convention recalcule les factures (période ouverte).
+test('lot4/recalcul : convention créée → factures existantes recalculées ; supprimée → retour 60', async () => {
+  const t = newTenant();
+  const fid = uid('four'); db.prepare('INSERT INTO fournisseur (id,cabinet_id,entreprise_id,raison_sociale,ice,delai_applicable) VALUES (?,?,?,?,?,60)').run(fid, t.cab, t.ent, 'FRS RECALC', '000000000000803');
+  const fac = uid('fac');
+  db.prepare(`INSERT INTO facture (id,cabinet_id,entreprise_id,fournisseur_id,numero,ttc,date_facture,date_paiement,annee,trimestre,delai_applicable) VALUES (?,?,?,?,?,?,?,?,?,?,60)`).run(fac, t.cab, t.ent, fid, 'F-R', 100000, '2026-01-10', '2026-04-30', 2026, 1);
+  await postConvCreate(t, { fournisseur_id: fid, delai: 120 });
+  assert.equal(db.prepare('SELECT delai_applicable FROM facture WHERE id=?').get(fac).delai_applicable, 120, 'facture recalculée à 120');
+  const conv = convOfEnt(t.ent).find(c => c.fournisseur_id === fid);
+  const del = await deleteConv(t, conv.id); assert.equal(del.status, 200);
+  assert.equal(db.prepare('SELECT delai_applicable FROM facture WHERE id=?').get(fac).delai_applicable, 60, 'retour 60 après suppression');
+});
+// (Phase 4) Période clôturée JAMAIS recalculée par une convention (OBJ4).
+test('lot4/recalcul : période clôturée intacte lors d\'une création de convention', async () => {
+  const t = newTenant();
+  const fid = uid('four'); db.prepare('INSERT INTO fournisseur (id,cabinet_id,entreprise_id,raison_sociale,ice,delai_applicable) VALUES (?,?,?,?,?,60)').run(fid, t.cab, t.ent, 'FRS LOCK', '000000000000804');
+  db.prepare(`INSERT INTO periode_declaration (id,cabinet_id,entreprise_id,annee,trimestre,statut) VALUES (?,?,?,?,?,?)`).run(uid('per'), t.cab, t.ent, 2026, 1, 'cloturee');
+  const fac = uid('fac');
+  db.prepare(`INSERT INTO facture (id,cabinet_id,entreprise_id,fournisseur_id,numero,ttc,date_facture,annee,trimestre,delai_applicable) VALUES (?,?,?,?,?,?,?,?,?,60)`).run(fac, t.cab, t.ent, fid, 'F-L', 100000, '2026-01-10', 2026, 1);
+  await postConvCreate(t, { fournisseur_id: fid, delai: 120 });
+  assert.equal(db.prepare('SELECT delai_applicable FROM facture WHERE id=?').get(fac).delai_applicable, 60, 'période clôturée intacte (60)');
+});
+// (Phase 3) Cohérence feuille ↔ déclaration après convention (source unique).
+test('lot4/cohérence : feuille et déclaration reflètent le même délai issu de la convention', async () => {
+  const t = newTenant();
+  const fid = uid('four'); db.prepare('INSERT INTO fournisseur (id,cabinet_id,entreprise_id,raison_sociale,delai_applicable) VALUES (?,?,?,?,60)').run(fid, t.cab, t.ent, 'FRS COH');
+  db.prepare(`INSERT INTO facture (id,cabinet_id,entreprise_id,fournisseur_id,numero,ttc,date_facture,date_paiement,annee,trimestre,delai_applicable,a_declarer) VALUES (?,?,?,?,?,?,?,?,?,?,60,1)`).run(uid('fac'), t.cab, t.ent, fid, 'F-C', 100000, '2026-01-10', '2026-03-31', 2026, 1);
+  await postConvCreate(t, { fournisseur_id: fid, delai: 30 });   // délai court → retard maintenu
+  assert.equal((await delaisRowsP(t, 2026, 1)).find(x => x.four === 'FRS COH').delai_applicable, 30, 'feuille = 30');
+  const dec = await (await fetch(baseUrl() + `/api/clients/${t.ent}/declaration?annee=2026&trimestre=1`, { headers: { Cookie: cookieOf(t.u) } })).json();
+  const line = dec.lignes.find(l => l.nom === 'FRS COH');
+  assert.ok(line && line.retard > 0, 'déclaration reflète le délai court (retard) issu de la convention');
+});
+// (Phase 5) Audit : création et suppression tracent l'état (avant/après) pour comprendre la modification.
+test('lot4/audit : création journalise delai + fournisseur ; suppression journalise l\'état avant', async () => {
+  const t = newTenant();
+  const fid = uid('four'); db.prepare('INSERT INTO fournisseur (id,cabinet_id,entreprise_id,raison_sociale,delai_applicable) VALUES (?,?,?,?,60)').run(fid, t.cab, t.ent, 'FRS AUD');
+  await postConvCreate(t, { fournisseur_id: fid, delai: 77 });
+  const cre = JSON.parse(db.prepare("SELECT details FROM audit_log WHERE action='create' AND entite='convention' AND cabinet_id=? ORDER BY created_at DESC, rowid DESC LIMIT 1").get(t.cab).details);
+  assert.equal(cre.delai, 77); assert.equal(cre.fournisseur, fid);
+  const conv = convOfEnt(t.ent).find(c => c.fournisseur_id === fid);
+  await deleteConv(t, conv.id);
+  const del = JSON.parse(db.prepare("SELECT details FROM audit_log WHERE action='delete' AND entite='convention' AND cabinet_id=? ORDER BY created_at DESC, rowid DESC LIMIT 1").get(t.cab).details);
+  assert.equal(del.delai_convenu, 77, 'délai avant tracé'); assert.equal(del.fournisseur, fid, 'fournisseur tracé');
+});
+// (Phase 3) Remplacement de document : délai inchangé, remplacement audité.
+test('lot4/document : remplacer le document ne change pas le délai et est audité', async () => {
+  const t = newTenant();
+  const fid = uid('four'); db.prepare('INSERT INTO fournisseur (id,cabinet_id,entreprise_id,raison_sociale,delai_applicable) VALUES (?,?,?,?,60)').run(fid, t.cab, t.ent, 'FRS DOC');
+  await postConvCreate(t, { fournisseur_id: fid, delai: 90 }, PDF_BYTES, 'c1.pdf', 'application/pdf');
+  const conv = convOfEnt(t.ent).find(c => c.fournisseur_id === fid);
+  const rep = await postFile(`/api/clients/${t.ent}/conventions/${conv.id}/file?replace=1`, cookieOf(t.u), JPEG_BYTES, 'c2.jpg', 'image/jpeg');
+  assert.equal(rep.status, 200);
+  assert.equal(db.prepare('SELECT delai_convenu FROM convention WHERE id=?').get(conv.id).delai_convenu, 90, 'délai inchangé par le remplacement de document');
+  assert.ok(db.prepare("SELECT 1 FROM audit_log WHERE action='convention_pdf_remplace' AND cabinet_id=?").get(t.cab), 'remplacement audité');
+});
+// (Phase 6) activeConventionFor : ignore les conventions non valides et gère l'absence.
+test('lot4/sélection : activeConventionFor ignore les conventions non valides et l\'absence', () => {
+  const { activeConventionFor } = require('../src/db');
+  const t = newTenant();
+  const fid = uid('four'); db.prepare('INSERT INTO fournisseur (id,cabinet_id,entreprise_id,raison_sociale,delai_applicable) VALUES (?,?,?,?,60)').run(fid, t.cab, t.ent, 'FRS SEL');
+  assert.equal(activeConventionFor(t.ent, fid), null, 'aucune convention → null');
+  assert.equal(activeConventionFor(t.ent, null), null, 'fournisseur nul → null');
+  db.prepare(`INSERT INTO convention (id,cabinet_id,entreprise_id,fournisseur_id,delai_convenu,statut) VALUES (?,?,?,?,?, 'annulee')`).run(uid('conv'), t.cab, t.ent, fid, 50);
+  assert.equal(activeConventionFor(t.ent, fid), null, 'convention non-valide ignorée');
+});

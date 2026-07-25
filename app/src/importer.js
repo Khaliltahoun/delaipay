@@ -1,7 +1,7 @@
 'use strict';
 const XLSX = require('xlsx');
 const xmljs = require('xml-js');
-const { db, tauxAt } = require('./db');
+const { db, tauxAt, activeConventionFor } = require('./db');
 const calc = require('./calc');
 const { uid, normalizeIce, normalizeSupplierName } = require('./util');
 
@@ -308,7 +308,7 @@ function lookupDelai(entrepriseId, fournisseurId) {
   // Délai AUTORISÉ résolu par la fonction centrale (opérateur réseau 30 j → convention → standard 60 j).
   if (fournisseurId) {
     const f = db.prepare('SELECT * FROM fournisseur WHERE id=?').get(fournisseurId);
-    const conv = db.prepare(`SELECT delai_convenu FROM convention WHERE entreprise_id=? AND fournisseur_id=? AND statut='valide' ORDER BY created_at DESC LIMIT 1`).get(entrepriseId, fournisseurId);
+    const conv = activeConventionFor(entrepriseId, fournisseurId);
     return require('./reseau').resolveDelaiAutorise({ fournisseur: f, convention: conv }).delaiAutorise;
   }
   return 60;

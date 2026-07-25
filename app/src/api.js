@@ -4,7 +4,7 @@ const multer = require('multer');
 const XLSX = require('xlsx');
 const path = require('path');
 const fs = require('fs');
-const { db, tauxAt, audit } = require('./db');
+const { db, tauxAt, audit, activeConventionFor } = require('./db');
 const calc = require('./calc');
 const periode = require('./periode');
 const { importWorkbook } = require('./importer');
@@ -123,7 +123,7 @@ function recomputePeriod(cabinetId, entrepriseId, annee, trimestre) {
   const upd = db.prepare(`UPDATE facture SET delai_applicable=?, delai_ecoule=?, date_limite=?,
     retard_jours=?, n_mois=?, a_declarer=?, taux_bam=?, taux_total=?, base_amende=?, montant_amende=?, couleur_risque=? WHERE id=?`);
   for (const f of rows) {
-    const conv = db.prepare(`SELECT delai_convenu FROM convention WHERE entreprise_id=? AND fournisseur_id=? AND statut='valide' ORDER BY created_at DESC LIMIT 1`).get(entrepriseId, f.fournisseur_id);
+    const conv = activeConventionFor(entrepriseId, f.fournisseur_id);
     const fRow = db.prepare('SELECT * FROM fournisseur WHERE id=?').get(f.fournisseur_id);
     // Délai AUTORISÉ résolu centralement (opérateur réseau 30 j → convention → standard 60 j), borné [1,120].
     const delai = reseau.resolveDelaiAutorise({ fournisseur: fRow, convention: conv }).delaiAutorise;
@@ -532,7 +532,7 @@ router.post('/clients/:id/conventions', upload.single('file'), (req, res) => {
   // Recalcul de toutes les périodes NON clôturées de ce fournisseur (jamais les périodes verrouillées).
   if (fournisseurId) recomputeOpenPeriodsForFournisseurs(req.cabinetId, e.id, [fournisseurId]);
   else { const p = latestPeriod(e.id); recomputePeriod(req.cabinetId, e.id, p.annee, p.trimestre); }
-  audit(req.cabinetId, req.user.id, 'create', 'convention', { id, entreprise: e.id, delai: delaiConv, document: docKind }, req.ip);
+  audit(req.cabinetId, req.user.id, 'create', 'convention', { id, entreprise: e.id, fournisseur: fournisseurId || null, delai: delaiConv, date_fin: b.date_fin || null, document: docKind }, req.ip);
   res.json({ ok: true, id });
 });
 router.get('/conventions/:id/file', (req, res) => {
@@ -706,7 +706,7 @@ function delaisData(cabinetId, e, p) {
   const rows = db.prepare(`SELECT f.*, fo.raison_sociale four_nom, fo.ice four_ice, fo.if_fiscal four_if,
       fo.operateur_reseau, fo.statut_classification, fo.hors_tableau_declaratif, fo.categorie_fournisseur, fo.delai_applicable fo_delai,
       (SELECT COUNT(*) FROM convention c WHERE c.fournisseur_id=f.fournisseur_id AND c.statut='valide') has_conv,
-      (SELECT delai_convenu FROM convention c WHERE c.fournisseur_id=f.fournisseur_id AND c.statut='valide' ORDER BY created_at DESC LIMIT 1) conv_delai,
+      (SELECT delai_convenu FROM convention c WHERE c.fournisseur_id=f.fournisseur_id AND c.statut='valide' ORDER BY c.created_at DESC, c.rowid DESC LIMIT 1) conv_delai,
       (SELECT a.id FROM anomalie a WHERE a.type='doublon_potentiel' AND a.entite='facture' AND a.entite_id=f.id AND a.statut='ouverte' LIMIT 1) ano_doublon_id
       FROM facture f LEFT JOIN fournisseur fo ON fo.id=f.fournisseur_id
       WHERE f.entreprise_id=? AND f.annee=? AND f.trimestre=? ORDER BY f.montant_amende DESC, f.retard_jours DESC`)
@@ -905,8 +905,11 @@ router.post('/clients/:id/factures', (req, res) => {
     else { fId = uid('four'); db.prepare('INSERT INTO fournisseur (id,cabinet_id,entreprise_id,raison_sociale,ice,if_fiscal,delai_applicable) VALUES (?,?,?,?,?,?,60)').run(fId, req.cabinetId, e.id, b.fournisseur || null, iceN, b.four_if || null); }
   }
   const mht = Number(b.mht) || 0, tva = Number(b.tva) || 0; let ttc = Number(b.ttc) || round2(mht + tva);
-  const conv = db.prepare(`SELECT delai_convenu FROM convention WHERE entreprise_id=? AND fournisseur_id=? AND statut='valide' LIMIT 1`).get(e.id, fId);
-  const delai = conv ? conv.delai_convenu : 60;
+  // Délai AUTORISÉ résolu par la fonction CENTRALE (opérateur réseau 30 j → convention → standard 60 j),
+  // même règle et même sélection de convention que le recalcul / la feuille de délais / l'import.
+  const fRow = db.prepare('SELECT * FROM fournisseur WHERE id=?').get(fId);
+  const conv = activeConventionFor(e.id, fId);
+  const delai = reseau.resolveDelaiAutorise({ fournisseur: fRow, convention: conv }).delaiAutorise;
   const dpai = b.date_paiement ? calc.parseDate(b.date_paiement) : null;
   // Période cible = celle fournie (contexte), sinon dérivée du paiement, sinon la plus récente.
   const per = (b.annee && b.trimestre) ? { annee: +b.annee, trimestre: +b.trimestre } : (dpai ? { annee: dpai.getFullYear(), trimestre: calc.trimestreOf(dpai) } : latestPeriod(e.id));
@@ -1167,7 +1170,10 @@ router.delete('/clients/:id/conventions/:convId', (req, res) => {
   // Recalcul de toutes les périodes NON clôturées du fournisseur concerné.
   if (c.fournisseur_id) recomputeOpenPeriodsForFournisseurs(req.cabinetId, e.id, [c.fournisseur_id]);
   else { const p = latestPeriod(e.id); recomputePeriod(req.cabinetId, e.id, p.annee, p.trimestre); }
-  audit(req.cabinetId, req.user.id, 'delete', 'convention', { id: c.id }, req.ip);
+  // Trace « avant » complète (Phase 5 — comprendre exactement ce qui a été retiré).
+  audit(req.cabinetId, req.user.id, 'delete', 'convention',
+    { id: c.id, entreprise: e.id, fournisseur: c.fournisseur_id, delai_convenu: c.delai_convenu,
+      date_debut: c.date_debut, date_fin: c.date_fin, avait_document: !!c.fichier }, req.ip);
   res.json({ ok: true });
 });
 
