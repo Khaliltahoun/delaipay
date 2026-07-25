@@ -422,6 +422,167 @@ test('conv/HTTP : import sans authentification refusé (401)', async () => {
   assert.equal(r.status, 401);
 });
 
+/* ==================================================================================
+ * LOT 3 — DOCUMENTS DE CONVENTIONS (Stratégie B : archivage, PAS d'OCR)
+ * Le document est archivé tel quel ; aucune extraction/OCR. Le délai est OBLIGATOIRE,
+ * EXPLICITE, entier 1..120 — jamais de « 120 » par défaut présenté comme extrait.
+ * ================================================================================== */
+const JPEG_BYTES = Buffer.from([0xFF, 0xD8, 0xFF, 0xE0, 0x00, 0x10, 0x4A, 0x46, 0x49, 0x46, 0x00, 0x01]);
+const PNG_BYTES = Buffer.from([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0x00, 0x00, 0x00, 0x0D]);
+async function postConvCreate(t, fields, buf, filename, type) {
+  const fd = new FormData();
+  for (const [k, v] of Object.entries(fields || {})) if (v !== undefined) fd.append(k, String(v));
+  if (buf != null) fd.append('file', new Blob([buf], { type: type || 'application/octet-stream' }), filename);
+  const res = await fetch(baseUrl() + `/api/clients/${t.ent}/conventions`, { method: 'POST', headers: { Cookie: cookieOf(t.u) }, body: fd });
+  let body = null; try { body = await res.json(); } catch (_) {}
+  return { status: res.status, body };
+}
+
+// (1)+(6)+(8) PDF autorisé, délai 90 explicite conservé, document rattaché & consultable
+test('lot3/conv : création PDF + délai 90 explicite → 200, document rattaché & consultable', async () => {
+  const t = newTenant(); const fid = seedFactureFrs(t);
+  const r = await postConvCreate(t, { fournisseur_id: fid, delai: 90 }, PDF_BYTES, 'convention.pdf', 'application/pdf');
+  assert.equal(r.status, 200);
+  const c = db.prepare('SELECT * FROM convention WHERE entreprise_id=? AND fournisseur_id=?').get(t.ent, fid);
+  assert.ok(c, 'convention créée');
+  assert.equal(c.delai_convenu, 90, 'délai 90 conservé (aucun défaut 120)');
+  assert.ok(c.fichier, 'document rattaché (fichier stocké)');
+  assert.equal(c.fichier_nom, 'convention.pdf');
+  // Le téléchargement se fait par l'ID de convention (la route masque le nom de stockage interne).
+  const dl = await fetch(baseUrl() + `/api/conventions/${c.id}/file`, { headers: { Cookie: cookieOf(t.u) } });
+  assert.equal(dl.status, 200, 'document téléchargeable depuis la convention');
+});
+
+// (2) Image JPEG autorisée
+test('lot3/conv : création image JPEG autorisée + délai 60', async () => {
+  const t = newTenant();
+  const r = await postConvCreate(t, { fournisseur: 'FRS IMG', four_ice: '000000000000501', delai: 60 }, JPEG_BYTES, 'scan.jpg', 'image/jpeg');
+  assert.equal(r.status, 200);
+  const c = db.prepare('SELECT c.* FROM convention c JOIN fournisseur f ON f.id=c.fournisseur_id WHERE f.entreprise_id=? AND f.raison_sociale=?').get(t.ent, 'FRS IMG');
+  assert.ok(c && c.fichier, 'convention + image JPEG rattachée');
+  assert.equal(c.delai_convenu, 60);
+});
+
+// Image PNG autorisée
+test('lot3/conv : création image PNG autorisée', async () => {
+  const t = newTenant();
+  const r = await postConvCreate(t, { fournisseur: 'FRS PNG', four_ice: '000000000000502', delai: 45 }, PNG_BYTES, 'scan.png', 'image/png');
+  assert.equal(r.status, 200);
+});
+
+// (3) Type non supporté refusé → aucune convention orpheline
+test('lot3/conv : type de document non supporté refusé (400), aucune convention orpheline', async () => {
+  const t = newTenant(); const fid = seedFactureFrs(t);
+  const r = await postConvCreate(t, { fournisseur_id: fid, delai: 90 }, Buffer.from('juste du texte'), 'note.txt', 'text/plain');
+  assert.equal(r.status, 400);
+  assert.match(r.body.error, /format|PDF/i);
+  assert.equal(db.prepare('SELECT COUNT(*) n FROM convention WHERE fournisseur_id=?').get(fid).n, 0, 'aucune convention créée');
+});
+
+// Faux PDF (extension .pdf, octets invalides) refusé
+test('lot3/conv : faux PDF (extension .pdf, octets non-%PDF-) refusé (400)', async () => {
+  const t = newTenant(); const fid = seedFactureFrs(t);
+  const r = await postConvCreate(t, { fournisseur_id: fid, delai: 90 }, Buffer.from('PAS UN PDF'), 'faux.pdf', 'application/pdf');
+  assert.equal(r.status, 400);
+});
+
+// (4)+(5) délai ABSENT refusé : aucun 120 auto, fournisseur inchangé
+test('lot3/conv : délai ABSENT refusé (aucun 120 injecté), fournisseur inchangé (60)', async () => {
+  const t = newTenant(); const fid = seedFactureFrs(t);
+  const r = await postConvCreate(t, { fournisseur_id: fid }, PDF_BYTES, 'c.pdf', 'application/pdf');
+  assert.equal(r.status, 400, 'délai obligatoire');
+  assert.match(r.body.error, /obligatoire|1 (à|et) 120/i);
+  assert.equal(db.prepare('SELECT COUNT(*) n FROM convention WHERE fournisseur_id=?').get(fid).n, 0, 'aucune convention (donc aucun délai 120)');
+  assert.equal(db.prepare('SELECT delai_applicable FROM fournisseur WHERE id=?').get(fid).delai_applicable, 60, 'délai fournisseur inchangé (60, pas 120)');
+});
+
+// Délai vide refusé
+test('lot3/conv : délai vide refusé (400)', async () => {
+  const t = newTenant(); const fid = seedFactureFrs(t);
+  const r = await postConvCreate(t, { fournisseur_id: fid, delai: '' });
+  assert.equal(r.status, 400);
+});
+
+// (7) délai 120 explicite conservé (borne haute légitime)
+test('lot3/conv : délai 120 explicite conservé', async () => {
+  const t = newTenant(); const fid = seedFactureFrs(t);
+  const r = await postConvCreate(t, { fournisseur_id: fid, delai: 120 });
+  assert.equal(r.status, 200);
+  assert.equal(db.prepare('SELECT delai_convenu FROM convention WHERE fournisseur_id=?').get(fid).delai_convenu, 120);
+});
+
+// (17) valeurs hors plage / non entières refusées
+test('lot3/conv : délai hors plage (0,121,999) et non entier (90,5 / abc) refusés', async () => {
+  const t = newTenant(); const fid = seedFactureFrs(t);
+  for (const bad of ['0', '121', '999', '90,5', '90.5', 'abc', '-5']) {
+    const r = await postConvCreate(t, { fournisseur_id: fid, delai: bad });
+    assert.equal(r.status, 400, `délai « ${bad} » doit être refusé`);
+  }
+  assert.equal(db.prepare('SELECT COUNT(*) n FROM convention WHERE fournisseur_id=?').get(fid).n, 0, 'aucune convention pour délais invalides');
+});
+
+// (6) délai 90 sans document → convention créée
+test('lot3/conv : délai 90 sans document → convention créée, délai 90', async () => {
+  const t = newTenant(); const fid = seedFactureFrs(t);
+  const r = await postConvCreate(t, { fournisseur_id: fid, delai: 90 });
+  assert.equal(r.status, 200);
+  assert.equal(db.prepare('SELECT delai_convenu FROM convention WHERE fournisseur_id=?').get(fid).delai_convenu, 90);
+});
+
+// (9) audit généré à la création
+test('lot3/conv : audit create/convention généré à la création', async () => {
+  const t = newTenant(); const fid = seedFactureFrs(t);
+  await postConvCreate(t, { fournisseur_id: fid, delai: 75 }, PDF_BYTES, 'c.pdf', 'application/pdf');
+  const a = db.prepare("SELECT * FROM audit_log WHERE cabinet_id=? AND action='create' AND entite='convention' ORDER BY created_at DESC").get(t.cab);
+  assert.ok(a, "entrée d'audit create/convention présente");
+});
+
+// (16)+ ajout ultérieur : image acceptée aussi (rattachement à une convention existante)
+test('lot3/conv : ajout ultérieur d\'une image JPEG à une convention existante', async () => {
+  const t = newTenant();
+  await postFile(`/api/clients/${t.ent}/conventions/import`, cookieOf(t.u), convBuf([['ADDIMG', '000000000000503', '', '', 'OUI', 90]]), 'l.xlsx',
+    'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+  const conv = convOfEnt(t.ent)[0];
+  const add = await postFile(`/api/clients/${t.ent}/conventions/${conv.id}/file`, cookieOf(t.u), JPEG_BYTES, 'signee.jpg', 'image/jpeg');
+  assert.equal(add.status, 200);
+  assert.ok(db.prepare('SELECT fichier FROM convention WHERE id=?').get(conv.id).fichier, 'image rattachée');
+});
+
+// (10) non-régression import Excel conventions : délai importé exact, aucun document, aucun OCR
+test('lot3/conv : import Excel conventions inchangé (délai exact 88, document différé)', async () => {
+  const t = newTenant();
+  const r = await postFile(`/api/clients/${t.ent}/conventions/import`, cookieOf(t.u), convBuf([['LOT3 IMP', '000000000000601', '', '', 'OUI', 88]]), 'l.xlsx',
+    'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+  assert.equal(r.status, 200);
+  assert.equal(r.body.conventionsCreated, 1);
+  const c = convOfEnt(t.ent)[0];
+  assert.equal(c.delai_convenu, 88, 'délai importé exact (aucun défaut 120)');
+  assert.equal(c.fichier, null, 'import Excel = document différé (aucune extraction)');
+});
+
+// Stratégie B — (11)(12)(14)(15) honnêteté de l'UI (contrôle statique du bundle front)
+test('lot3/UI : aucun libellé OCR/IA trompeur ; message archivage manuel ; formulaire sans défaut 120', () => {
+  const appJs = fs.readFileSync(path.join(__dirname, '..', 'public', 'js', 'app.js'), 'utf8');
+  const appHtml = fs.readFileSync(path.join(__dirname, '..', 'public', 'app.html'), 'utf8');
+  const appCss = fs.readFileSync(path.join(__dirname, '..', 'public', 'css', 'app.css'), 'utf8');
+  // (11)(14) aucune promesse d'extraction/OCR/IA, aucune valeur « détectée »
+  assert.doesNotMatch(appJs, /module IA|OCR extraira|extraira automatiquement|OCR effectué|champs détectés|IA active/i, 'aucune promesse OCR/IA dans app.js');
+  assert.doesNotMatch(appJs, /\bOCR\b/, 'aucun token « OCR » dans app.js');
+  assert.doesNotMatch(appHtml, /\bOCR\b/, 'nav sans « OCR »');
+  assert.doesNotMatch(appCss, /ocr-fld|\.scan\b/, 'CSS maquette OCR retirée');
+  // (12) message « document archivé, saisie manuelle »
+  assert.match(appJs, /Le document est archivé[\s\S]*saisies manuellement/i, 'message d\'archivage manuel présent');
+  // (15) formulaire manuel : champ délai borné 1..120, SANS value=120 prérempli
+  assert.doesNotMatch(appJs, /id="v_delai"[^>]*value="120"/, 'aucun délai 120 prérempli');
+  assert.match(appJs, /id="v_delai"[^>]*min="1"[^>]*max="120"/, 'délai borné 1..120 dans le formulaire');
+});
+
+// (13) aucun endpoint OCR/extraction fantôme dans l'API
+test('lot3/UI : aucun endpoint OCR/extraction fantôme dans l\'API', () => {
+  const apiJs = fs.readFileSync(path.join(__dirname, '..', 'src', 'api.js'), 'utf8');
+  assert.doesNotMatch(apiJs, /router\.(get|post|put|patch|delete)\(['"][^'"]*(ocr|extract|vision|analyse-?doc|scan-?doc)/i, 'aucune route OCR/extraction');
+});
+
 /* ============== BOUTON « Convention présente » (feuille de délais) ============== */
 async function postJson(pathUrl, cookie, body) {
   const res = await fetch(baseUrl() + pathUrl, { method: 'POST', headers: { Cookie: cookie, 'Content-Type': 'application/json' }, body: JSON.stringify(body) });

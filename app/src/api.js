@@ -466,10 +466,44 @@ function computeConvStatut(c) {
   }
   return 'Trouvée';
 }
+// Délai conventionnel SAISI EXPLICITEMENT : entier strict 1..120, sinon null (refus).
+// AUCUNE valeur par défaut, AUCUNE extraction — un délai absent, non entier ou hors plage est refusé
+// (jamais de « 120 » silencieux présenté comme un résultat d'analyse du document).
+function parseDelaiConventionExplicite(v) {
+  if (v == null) return null;
+  const s = String(v).trim();
+  if (!/^\d{1,3}$/.test(s)) return null;   // entier strict (pas de décimal/texte/signe)
+  const n = parseInt(s, 10);
+  return (n >= 1 && n <= 120) ? n : null;
+}
+// Document de convention accepté = PDF, JPEG ou PNG, validé par les OCTETS D'EN-TÊTE (on ne fait pas
+// confiance à l'extension ni au client). Le document est ARCHIVÉ tel quel : aucune analyse/OCR n'a lieu.
+function conventionDocKind(filePath, originalname) {
+  const ext = path.extname(originalname || '').toLowerCase();
+  let h;
+  try { const fd = fs.openSync(filePath, 'r'); h = Buffer.alloc(8); fs.readSync(fd, h, 0, 8, 0); fs.closeSync(fd); }
+  catch (_) { return null; }
+  if (ext === '.pdf' && h.slice(0, 5).toString('latin1') === '%PDF-') return 'pdf';
+  if ((ext === '.jpg' || ext === '.jpeg') && h[0] === 0xFF && h[1] === 0xD8 && h[2] === 0xFF) return 'jpeg';
+  if (ext === '.png' && h[0] === 0x89 && h[1] === 0x50 && h[2] === 0x4E && h[3] === 0x47) return 'png';
+  return null;
+}
 router.post('/clients/:id/conventions', upload.single('file'), (req, res) => {
   const e = ownedEntreprise(req, req.params.id);
   if (!e) { cleanupUploads(req); return res.status(404).json({ error: 'Introuvable.' }); }
   const b = req.body || {};
+  // 1) Délai OBLIGATOIRE et EXPLICITE (aucun OCR n'existe) — refusé AVANT toute écriture, sans défaut 120.
+  const delaiConv = parseDelaiConventionExplicite(b.delai);
+  if (delaiConv == null) {
+    cleanupUploads(req);
+    return res.status(400).json({ error: 'Le délai conventionnel est obligatoire : saisissez un entier entre 1 et 120 jours. Aucune valeur n\'est extraite automatiquement du document.' });
+  }
+  // 2) Document éventuel : PDF / JPEG / PNG uniquement — archivé, jamais analysé.
+  const docKind = req.file ? conventionDocKind(req.file.path, req.file.originalname) : null;
+  if (req.file && !docKind) {
+    cleanupUploads(req);
+    return res.status(400).json({ error: 'Format de document non pris en charge. Formats acceptés : PDF, JPEG, PNG.' });
+  }
   let fournisseurId = b.fournisseur_id;
   // Un fournisseur fourni explicitement DOIT appartenir à cette entreprise (anti-IDOR).
   if (fournisseurId && !db.prepare('SELECT 1 FROM fournisseur WHERE id=? AND entreprise_id=?').get(fournisseurId, e.id)) {
@@ -484,11 +518,10 @@ router.post('/clients/:id/conventions', upload.single('file'), (req, res) => {
     else {
       fournisseurId = uid('four');
       db.prepare(`INSERT INTO fournisseur (id, cabinet_id, entreprise_id, raison_sociale, ice, if_fiscal, delai_applicable)
-                  VALUES (?,?,?,?,?,?,?)`).run(fournisseurId, req.cabinetId, e.id, b.fournisseur || null, iceN, b.four_if || null, Number(b.delai) || 120);
+                  VALUES (?,?,?,?,?,?,?)`).run(fournisseurId, req.cabinetId, e.id, b.fournisseur || null, iceN, b.four_if || null, delaiConv);
     }
   }
   const id = uid('conv');
-  const delaiConv = calc.saneDelai(b.delai, 120);   // convention : défaut 120 j, plafond légal 120 j
   db.prepare(`INSERT INTO convention (id, cabinet_id, entreprise_id, fournisseur_id, objet, delai_convenu,
       date_signature, date_debut, date_fin, statut, conforme, fichier, fichier_nom)
       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`)
@@ -499,7 +532,7 @@ router.post('/clients/:id/conventions', upload.single('file'), (req, res) => {
   // Recalcul de toutes les périodes NON clôturées de ce fournisseur (jamais les périodes verrouillées).
   if (fournisseurId) recomputeOpenPeriodsForFournisseurs(req.cabinetId, e.id, [fournisseurId]);
   else { const p = latestPeriod(e.id); recomputePeriod(req.cabinetId, e.id, p.annee, p.trimestre); }
-  audit(req.cabinetId, req.user.id, 'create', 'convention', { id, entreprise: e.id }, req.ip);
+  audit(req.cabinetId, req.user.id, 'create', 'convention', { id, entreprise: e.id, delai: delaiConv, document: docKind }, req.ip);
   res.json({ ok: true, id });
 });
 router.get('/conventions/:id/file', (req, res) => {
@@ -515,11 +548,6 @@ function isExcelUpload(file) {
   if (XLSX_EXT.has(ext)) return true;
   const mt = String(file.mimetype || '').toLowerCase();
   return mt.includes('spreadsheetml') || mt.includes('ms-excel');
-}
-function looksLikePdf(filePath, originalname) {
-  if (path.extname(originalname || '').toLowerCase() !== '.pdf') return false;
-  try { const fd = fs.openSync(filePath, 'r'); const b = Buffer.alloc(5); fs.readSync(fd, b, 0, 5, 0); fs.closeSync(fd); return b.toString('latin1') === '%PDF-'; }
-  catch (_) { return false; }
 }
 
 // Import d'une LISTE de conventions (Excel) — crée les conventions SANS le PDF (document différé).
@@ -578,19 +606,21 @@ router.post('/clients/:id/conventions/confirm', (req, res) => {
   } catch (err) { res.status(400).json({ error: err.message }); }
 });
 
-// Ajout (ou remplacement EXPLICITE) du PDF de convention. PDF uniquement, jamais d'écrasement silencieux.
+// Ajout (ou remplacement EXPLICITE) du document de convention (PDF/JPEG/PNG). Archivé, jamais analysé ;
+// jamais d'écrasement silencieux.
 router.post('/clients/:id/conventions/:convId/file', upload.single('file'), (req, res) => {
   const e = ownedEntreprise(req, req.params.id);
   if (!e) { cleanupUploads(req); return res.status(404).json({ error: 'Introuvable.' }); }
   const c = db.prepare('SELECT * FROM convention WHERE id=? AND entreprise_id=? AND cabinet_id=?').get(req.params.convId, e.id, req.cabinetId);
   if (!c) { cleanupUploads(req); return res.status(404).json({ error: 'Convention introuvable.' }); }
   if (!req.file) return res.status(400).json({ error: 'Aucun fichier reçu.' });
-  if (!looksLikePdf(req.file.path, req.file.originalname)) { cleanupUploads(req); return res.status(400).json({ error: 'Le document doit être un fichier PDF.' }); }
+  const kind = conventionDocKind(req.file.path, req.file.originalname);
+  if (!kind) { cleanupUploads(req); return res.status(400).json({ error: 'Format de document non pris en charge. Formats acceptés : PDF, JPEG, PNG.' }); }
   const replacing = !!c.fichier;
   const confirmReplace = req.query.replace === '1' || String((req.body || {}).replace) === '1';
   if (replacing && !confirmReplace) { cleanupUploads(req); return res.status(409).json({ error: 'Un document est déjà rattaché à cette convention. Confirmez le remplacement.', hasFile: true }); }
   // Nom de fichier généré côté serveur (anti path-traversal — aucune donnée du client dans le chemin).
-  const stored = 'conv_' + uid('f').slice(-12) + '.pdf';
+  const stored = 'conv_' + uid('f').slice(-12) + (kind === 'pdf' ? '.pdf' : kind === 'png' ? '.png' : '.jpg');
   try { fs.renameSync(req.file.path, path.join(UP_DIR, stored)); } catch (_) { fs.copyFileSync(req.file.path, path.join(UP_DIR, stored)); fs.unlink(req.file.path, () => {}); }
   const previous = c.fichier;
   db.prepare('UPDATE convention SET fichier=?, fichier_nom=? WHERE id=?').run(stored, req.file.originalname, c.id);

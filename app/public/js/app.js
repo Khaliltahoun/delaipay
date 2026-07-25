@@ -132,7 +132,7 @@ const VIEWS = {
   client: { crumb: 'Fiche client', fn: renderClientOverview },
   import: { crumb: 'Import de fichiers', fn: renderImport },
   delais: { crumb: 'Feuille de calcul des délais', fn: renderDelais },
-  conv: { crumb: 'Conventions & OCR', fn: renderConv },
+  conv: { crumb: 'Conventions & documents', fn: renderConv },
   decl: { crumb: 'Déclaration DGI', fn: renderDecl },
   visa: { crumb: 'Générateur de visa', fn: renderVisa },
   alerts: { crumb: "Centre d'alertes", fn: renderAlerts },
@@ -482,7 +482,7 @@ async function renderClientOverview() {
   <h3 style="margin:6px 0 12px;font-size:15px">Modules du client</h3>
   <div class="hub-grid">
     ${card('delais', 'Feuille de calcul des délais', `${k.aDeclarer} en retard · ${money(k.amende)} DH`)}
-    ${card('conv', 'Conventions & OCR', `${k.conventions} valide(s)${k.convManq ? ` · ${k.convManq} manquante(s)` : ''}`)}
+    ${card('conv', 'Conventions & documents', `${k.conventions} valide(s)${k.convManq ? ` · ${k.convManq} manquante(s)` : ''}`)}
     ${card('decl', 'Déclaration DGI', `Trimestre ${s.periode.trimestre} ${s.periode.annee}`)}
     ${card('visa', 'Générateur de visa', e.type_visa === 'CAC' ? 'Commissaire aux comptes' : 'Expert-comptable')}
     ${card('import', 'Importer des factures', `${k.factures} facture(s) chargée(s)`)}
@@ -1073,19 +1073,19 @@ async function renderConv() {
   const S = { 'Trouvée': 'pill-ok', 'Bientôt expirée': 'pill-orange', 'Expirée': 'pill-red', 'Absente': 'pill-red' };
   $('#view').innerHTML = `
   ${clientPeriodBar(null, false)}
-  <div class="page-head headrow"><div><h1>Conventions fournisseurs</h1><p>Conventions de délai de paiement de ${esc(currentClient().name)}. Importez la liste depuis Excel, puis ajoutez les PDF signés au fil de l'eau.</p></div>
+  <div class="page-head headrow"><div><h1>Conventions fournisseurs</h1><p>Conventions de délai de paiement de ${esc(currentClient().name)}. Importez la liste depuis Excel, puis ajoutez les documents signés (PDF/JPEG/PNG) au fil de l'eau. <b>Les documents sont archivés : aucune extraction automatique n'est effectuée.</b></p></div>
     <div style="display:flex;gap:10px;flex-wrap:wrap">
       <a class="btn btn-ghost" href="/api/conventions/template.xlsx" title="Fichier Excel prêt à remplir">Télécharger le modèle</a>
       <button class="btn btn-ghost" id="impConv" title="Assistant : mappez librement les colonnes de votre fichier Excel"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 16V4m0 0l-4 4m4-4l4 4M5 20h14"/></svg>Importer une liste Excel</button>
       <button class="btn btn-primary" id="newConv"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 5v14M5 12h14"/></svg>Nouvelle convention</button></div></div>
-  ${rows.length ? `<div class="table-wrap"><table style="min-width:900px"><thead><tr><th>Fournisseur (ICE)</th><th class="num">Délai</th><th>Début</th><th>Fin</th><th>Statut</th><th>Document PDF</th><th></th></tr></thead>
+  ${rows.length ? `<div class="table-wrap"><table style="min-width:900px"><thead><tr><th>Fournisseur (ICE)</th><th class="num">Délai</th><th>Début</th><th>Fin</th><th>Statut</th><th>Document</th><th></th></tr></thead>
     <tbody>${rows.map(c => `<tr><td><div class="fournisseur"><b>${esc(c.fournisseur || '—')}</b><small>${esc(c.four_ice || c.four_if || '')}</small></div></td>
       <td class="num"><span class="badge b120">${c.delai} j</span></td>
       <td class="mono dh">${dateFr(c.date_debut)}</td><td class="mono dh">${c.date_fin ? dateFr(c.date_fin) : 'Indéterminée'}</td>
       <td><span class="pill ${S[c.statut] || 'pill-ok'}"><span class="dot"></span>${esc(c.statut)}</span></td>
       <td>${c.fichier
-        ? `<a href="/api/conventions/${c.fichier}/file" target="_blank" rel="noopener">Voir le PDF</a> <button class="btn btn-ghost btn-sm" data-replacepdf="${c.id}">Remplacer</button>`
-        : `<span class="pill pill-orange"><span class="dot"></span>Document manquant</span> <button class="btn btn-ghost btn-sm" data-addpdf="${c.id}">Ajouter le PDF</button>`}</td>
+        ? `<a href="/api/conventions/${c.fichier}/file" target="_blank" rel="noopener">Voir le document</a> <button class="btn btn-ghost btn-sm" data-replacepdf="${c.id}">Remplacer</button>`
+        : `<span class="pill pill-orange"><span class="dot"></span>Document manquant</span> <button class="btn btn-ghost btn-sm" data-addpdf="${c.id}">Ajouter le document</button>`}</td>
       <td style="text-align:right"><button class="btn btn-ghost btn-sm" style="color:var(--r-red);border-color:rgba(210,69,47,.35)" data-delc="${c.id}" data-four="${esc(c.fournisseur || '')}">Supprimer</button></td></tr>`).join('')}</tbody></table></div>`
     : emptyBox('Aucune convention', 'Importez la liste des conventions depuis Excel (bouton ci-dessus) ou ajoutez-les une à une.', null)}`;
   wireClientBar(renderConv);
@@ -1104,16 +1104,16 @@ async function renderConv() {
   });
 }
 
-// Ajout / remplacement d'un PDF (PDF uniquement), avec loader et bouton désactivé.
+// Ajout / remplacement d'un document (PDF/JPEG/PNG — archivé, jamais analysé), avec loader et bouton désactivé.
 function attachConvPdf(btn, convId, replace) {
-  const inp = document.createElement('input'); inp.type = 'file'; inp.accept = '.pdf,application/pdf';
+  const inp = document.createElement('input'); inp.type = 'file'; inp.accept = '.pdf,.jpg,.jpeg,.png,application/pdf,image/jpeg,image/png';
   inp.onchange = async () => {
     if (!inp.files[0]) return;
     const old = btn.innerHTML; btn.disabled = true; btn.innerHTML = 'Envoi…';
     const fd = new FormData(); fd.append('file', inp.files[0]);
     try {
       await api(`/clients/${state.clientId}/conventions/${convId}/file${replace ? '?replace=1' : ''}`, { method: 'POST', body: fd });
-      toast(replace ? 'Document remplacé.' : 'Document PDF ajouté à la convention.', 'ok'); renderConv();
+      toast(replace ? 'Document remplacé.' : 'Document ajouté à la convention.', 'ok'); renderConv();
     } catch (e) { toast(e.message, 'err', 'Ajout du document'); btn.disabled = false; btn.innerHTML = old; }
   };
   inp.click();
@@ -1169,16 +1169,22 @@ async function convModal() {
     <div class="full"><label class="fld-lbl">Fournisseur existant</label><select class="input-fld" id="v_four"><option value="">— nouveau fournisseur —</option>${opts}</select></div>
     <div><label class="fld-lbl">Nom (si nouveau)</label><input class="input-fld" id="v_nom"></div>
     <div><label class="fld-lbl">ICE</label><input class="input-fld" id="v_ice"></div>
-    <div><label class="fld-lbl">Délai convenu (j)</label><input class="input-fld" id="v_delai" type="number" value="120"></div>
+    <div><label class="fld-lbl">Délai convenu (j) — obligatoire</label><input class="input-fld" id="v_delai" type="number" min="1" max="120" step="1" placeholder="entier 1 à 120"></div>
     <div><label class="fld-lbl">Date de fin (option.)</label><input class="input-fld" id="v_fin" type="date"></div>
-    <div class="full"><label class="fld-lbl">Fichier (PDF/image scanné)</label><input class="input-fld" id="v_file" type="file" accept=".pdf,.png,.jpg,.jpeg"></div>
-  </div><div class="dh" style="margin-top:8px;font-size:12px">💡 L'OCR extraira automatiquement les parties, l'ICE et le délai (module IA — V2). Vous pouvez valider/corriger les champs.</div></div>
+    <div class="full"><label class="fld-lbl">Document signé (PDF, JPEG ou PNG) — optionnel</label><input class="input-fld" id="v_file" type="file" accept=".pdf,.png,.jpg,.jpeg"></div>
+  </div><div class="dh" style="margin-top:8px;font-size:12px">📄 Le document est archivé tel quel. Les informations (délai, dates, identifiants) doivent être saisies manuellement — aucune extraction automatique n'est effectuée.</div></div>
   <div class="modal-f"><button class="btn btn-ghost" onclick="closeOverlay()">Annuler</button><button class="btn btn-primary" id="v_save">Enregistrer</button></div>`);
   $('#v_save').onclick = async () => {
+    // Délai OBLIGATOIRE et EXPLICITE : entier 1..120. Jamais de valeur par défaut (aucune extraction).
+    const raw = ($('#v_delai').value || '').trim();
+    if (!/^\d{1,3}$/.test(raw) || +raw < 1 || +raw > 120) {
+      toast('Saisissez le délai conventionnel : un entier entre 1 et 120 jours. Aucune valeur n\'est extraite automatiquement du document.', 'err', 'Délai obligatoire');
+      return;
+    }
     const fd = new FormData();
     fd.append('fournisseur_id', $('#v_four').value);
     fd.append('fournisseur', $('#v_nom').value); fd.append('four_ice', $('#v_ice').value);
-    fd.append('delai', $('#v_delai').value || 120);
+    fd.append('delai', raw);
     if ($('#v_fin').value) fd.append('date_fin', $('#v_fin').value);
     if ($('#v_file').files[0]) fd.append('file', $('#v_file').files[0]);
     try { await api(`/clients/${state.clientId}/conventions`, { method: 'POST', body: fd }); closeOverlay(); toast('Convention enregistrée.', 'ok'); renderConv(); }
