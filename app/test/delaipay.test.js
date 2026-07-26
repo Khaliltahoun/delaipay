@@ -1588,3 +1588,85 @@ test('lot4/sélection : activeConventionFor ignore les conventions non valides e
   db.prepare(`INSERT INTO convention (id,cabinet_id,entreprise_id,fournisseur_id,delai_convenu,statut) VALUES (?,?,?,?,?, 'annulee')`).run(uid('conv'), t.cab, t.ent, fid, 50);
   assert.equal(activeConventionFor(t.ent, fid), null, 'convention non-valide ignorée');
 });
+
+/* ==================================================================================
+ * LOT 5 — COHÉRENCE DES PÉRIODES
+ * La période sélectionnée (annee/trimestre) est la SEULE utilisée. /summary et /clients
+ * la respectent ; la fiche client n'est plus figée sur la dernière période (« bloquée sur T3 »).
+ * ================================================================================== */
+function seedFactP(t, { annee, trimestre, date, aDecl = 0, amende = 0, ttc = 10000, num }) {
+  const fid = uid('four');
+  db.prepare('INSERT INTO fournisseur (id,cabinet_id,entreprise_id,raison_sociale,delai_applicable) VALUES (?,?,?,?,60)').run(fid, t.cab, t.ent, 'FRS ' + num);
+  db.prepare(`INSERT INTO facture (id,cabinet_id,entreprise_id,fournisseur_id,numero,ttc,date_facture,annee,trimestre,delai_applicable,a_declarer,montant_amende)
+              VALUES (?,?,?,?,?,?,?,?,?,60,?,?)`).run(uid('fac'), t.cab, t.ent, fid, num, ttc, date, annee, trimestre, aDecl, amende);
+  return fid;
+}
+async function getJ(url, t) { return (await fetch(baseUrl() + url, { headers: { Cookie: cookieOf(t.u), Connection: 'close' } })).json(); }
+
+// (Phase 3 + 5) La fiche client suit la période demandée — jamais figée sur « la dernière ».
+test('lot5/summary : la fiche client suit la période demandée (pas de blocage sur la dernière)', async () => {
+  const t = newTenant();
+  seedFactP(t, { annee: 2026, trimestre: 1, date: '2026-02-10', num: 'A1' });
+  seedFactP(t, { annee: 2026, trimestre: 3, date: '2026-08-10', num: 'B1' });
+  seedFactP(t, { annee: 2026, trimestre: 3, date: '2026-08-11', num: 'B2' });
+  const t1 = await getJ(`/api/clients/${t.ent}/summary?annee=2026&trimestre=1`, t);
+  const t3 = await getJ(`/api/clients/${t.ent}/summary?annee=2026&trimestre=3`, t);
+  const def = await getJ(`/api/clients/${t.ent}/summary`, t);
+  assert.deepEqual(t1.periode, { annee: 2026, trimestre: 1 });
+  assert.equal(t1.kpis.factures, 1, 'T1 : 1 facture');
+  assert.deepEqual(t3.periode, { annee: 2026, trimestre: 3 });
+  assert.equal(t3.kpis.factures, 2, 'T3 : 2 factures');
+  assert.equal(def.periode.trimestre, 3, 'sans période fournie → la plus récente (T3)');
+});
+
+// (Phase 2 + 5) Le portefeuille reflète la période active (retards/amende) ; cumul si absente.
+test('lot5/clients : le portefeuille suit la période active (cumul toutes périodes si absente)', async () => {
+  const t = newTenant();
+  seedFactP(t, { annee: 2026, trimestre: 1, date: '2026-02-10', num: 'C1', aDecl: 1, amende: 100 });
+  seedFactP(t, { annee: 2026, trimestre: 3, date: '2026-08-10', num: 'C2', aDecl: 1, amende: 250 });
+  const row = l => l.find(c => c.id === t.ent);
+  const listT1 = await getJ(`/api/clients?annee=2026&trimestre=1`, t);
+  const listT3 = await getJ(`/api/clients?annee=2026&trimestre=3`, t);
+  const listAll = await getJ(`/api/clients`, t);
+  assert.equal(row(listT1).retards, 1); assert.equal(row(listT1).amende, 100, 'T1 amende');
+  assert.equal(row(listT3).retards, 1); assert.equal(row(listT3).amende, 250, 'T3 amende');
+  assert.equal(row(listAll).amende, 350, 'sans période → cumul toutes périodes (100+250)');
+});
+
+// (Phase 5) Le tableau de bord suit la période demandée.
+test('lot5/dashboard : le tableau de bord suit la période demandée', async () => {
+  const t = newTenant();
+  seedFactP(t, { annee: 2026, trimestre: 1, date: '2026-02-10', num: 'D1' });
+  seedFactP(t, { annee: 2026, trimestre: 3, date: '2026-08-10', num: 'D2' });
+  seedFactP(t, { annee: 2026, trimestre: 3, date: '2026-08-11', num: 'D3' });
+  const d1 = await getJ(`/api/dashboard?annee=2026&trimestre=1`, t);
+  const d3 = await getJ(`/api/dashboard?annee=2026&trimestre=3`, t);
+  assert.deepEqual(d1.periode, { annee: 2026, trimestre: 1 });
+  assert.equal(d1.kpis.facturesTrim, 1, 'dashboard T1 : 1 facture');
+  assert.equal(d3.kpis.facturesTrim, 2, 'dashboard T3 : 2 factures');
+});
+
+// (Phase 6) Navigation multi-périodes T1→T2→T3→T4 : chaque période renvoie SES données, de façon stable.
+test('lot5/navigation : T1/T2/T3/T4 renvoient des données distinctes et stables (aucune fuite)', async () => {
+  const t = newTenant();
+  seedFactP(t, { annee: 2026, trimestre: 1, date: '2026-02-10', num: 'N1' });
+  seedFactP(t, { annee: 2026, trimestre: 2, date: '2026-05-10', num: 'N2a' });
+  seedFactP(t, { annee: 2026, trimestre: 2, date: '2026-05-11', num: 'N2b' });
+  seedFactP(t, { annee: 2026, trimestre: 4, date: '2026-11-10', num: 'N4' });
+  const cnt = {};
+  for (const tr of [1, 2, 3, 4, 1, 3]) { // change plusieurs fois, y compris retours
+    const s = await getJ(`/api/clients/${t.ent}/summary?annee=2026&trimestre=${tr}`, t);
+    cnt[tr] = s.kpis.factures;
+  }
+  assert.equal(cnt[1], 1, 'T1=1'); assert.equal(cnt[2], 2, 'T2=2');
+  assert.equal(cnt[3], 0, 'T3=0'); assert.equal(cnt[4], 1, 'T4=1');
+});
+
+// (Phase 2/3/4) Contrôle statique du front : les vues client envoient la période active ; goClient recharge.
+test('lot5/UI : fiche client & portefeuille envoient la période active ; goClient recharge les périodes', () => {
+  const app = fs.readFileSync(path.join(__dirname, '..', 'public', 'js', 'app.js'), 'utf8');
+  assert.match(app, /summary\$\{perQuery\(\)\}/, 'fiche client → /summary avec la période active');
+  assert.doesNotMatch(app, /if \(!state\.period\) state\.period = s\.periode/, 'plus de hijack de période par le summary');
+  assert.match(app, /'\/clients' \+ perQuery\(\)/, 'portefeuille → /clients avec la période active');
+  assert.match(app, /async function goClient[\s\S]{0,180}await loadPeriods\(\)[\s\S]{0,40}setView/, 'goClient recharge les périodes du nouveau client');
+});

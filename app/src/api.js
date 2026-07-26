@@ -288,10 +288,16 @@ function nextDeadlines() {
 
 /* ============================================================ CLIENTS */
 router.get('/clients', (req, res) => {
+  // Portefeuille : « En retard » et « Amende » suivent la PÉRIODE ACTIVE quand elle est fournie
+  // (annee/trimestre) ; sans période (sélecteur de client / init) → cumul toutes périodes.
+  const hasP = !!(req.query.annee && req.query.trimestre);
+  const pa = +req.query.annee, pt = +req.query.trimestre;
+  const perFilter = hasP ? 'AND f.annee=? AND f.trimestre=?' : '';
   const rows = db.prepare(`SELECT e.*,
-      (SELECT COUNT(*) FROM facture f WHERE f.entreprise_id=e.id AND f.a_declarer=1) retards,
-      (SELECT COALESCE(SUM(f.montant_amende),0) FROM facture f WHERE f.entreprise_id=e.id AND f.a_declarer=1) amende
-      FROM entreprise e WHERE e.cabinet_id=? ORDER BY e.raison_sociale`).all(req.cabinetId);
+      (SELECT COUNT(*) FROM facture f WHERE f.entreprise_id=e.id AND f.a_declarer=1 ${perFilter}) retards,
+      (SELECT COALESCE(SUM(f.montant_amende),0) FROM facture f WHERE f.entreprise_id=e.id AND f.a_declarer=1 ${perFilter}) amende
+      FROM entreprise e WHERE e.cabinet_id=? ORDER BY e.raison_sociale`)
+    .all(...(hasP ? [pa, pt, pa, pt, req.cabinetId] : [req.cabinetId]));
   res.json(rows.map(e => ({
     id: e.id, name: e.raison_sociale, ice: e.ice, if: e.if_fiscal, rc: e.rc, ville: e.ville,
     ca: e.ca_ht, secteur: e.secteur, expert: e.expert_responsable || '—',
@@ -351,7 +357,10 @@ router.delete('/clients/:id', (req, res) => {
 
 router.get('/clients/:id/summary', (req, res) => {
   const e = ownedEntreprise(req, req.params.id); if (!e) return res.status(404).json({ error: 'Introuvable.' });
-  const p = latestPeriod(e.id);
+  // Période ACTIVE fournie par le contexte global (annee/trimestre) ; sinon la plus récente.
+  // La fiche client doit refléter EXACTEMENT la période sélectionnée (jamais figée sur « la dernière »).
+  const p = (req.query.annee && req.query.trimestre)
+    ? { annee: +req.query.annee, trimestre: +req.query.trimestre } : latestPeriod(e.id);
   recomputePeriod(req.cabinetId, e.id, p.annee, p.trimestre);
   const agg = db.prepare(`SELECT COUNT(*) nb, COALESCE(SUM(CASE WHEN a_declarer=1 THEN 1 ELSE 0 END),0) aDecl,
       COALESCE(SUM(CASE WHEN a_declarer=1 THEN ttc ELSE 0 END),0) ttcRetard,

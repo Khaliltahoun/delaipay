@@ -409,7 +409,8 @@ async function renderDash() {
 
 /* ============================== CLIENTS ============================== */
 async function renderClients() {
-  state.clients = await api('/clients'); updateSwitcherLabel();
+  await ensurePeriod();   // « En retard » / « Amende » du portefeuille reflètent la période ACTIVE
+  state.clients = await api('/clients' + perQuery()); updateSwitcherLabel();
   if (state._cq == null) state._cq = ''; if (!state._crisk) state._crisk = 'all';
   const pill = (r, l) => `<button class="fpill" data-r="${r}" aria-pressed="${state._crisk === r}">${l}</button>`;
   $('#view').innerHTML = `
@@ -427,7 +428,7 @@ async function renderClients() {
     if (state._crisk === 'retard') rows = rows.filter(c => c.retards > 0);
     else if (state._crisk === 'ok') rows = rows.filter(c => c.retards === 0);
     else if (state._crisk === 'assuj') rows = rows.filter(c => c.assujettie);
-    $('#clCount').textContent = `${rows.length} société(s) sur ${state.clients.length} · cliquez une ligne pour ouvrir la fiche client.`;
+    $('#clCount').textContent = `${rows.length} société(s) sur ${state.clients.length} · « En retard » et « Amende » pour la période ${state.period ? state.period.annee + ' ' + TRI_LABEL(state.period.trimestre) : 'active'} · cliquez une ligne pour ouvrir la fiche client.`;
     $('#clRows').innerHTML = rows.length ? rows.map(c => `<tr class="clickable" data-id="${c.id}">
       <td><b>${esc(c.name)}</b></td><td class="mono dh">${esc(c.ice || '—')}</td><td>${esc(c.ville || '—')}</td>
       <td class="num">${money(c.ca, 0)}</td><td><span class="${c.assujettie ? 'tag-yes' : 'tag-no'}">${c.assujettie ? 'Oui' : 'Non'}</span></td>
@@ -453,8 +454,9 @@ const HUBICON = {
 };
 async function renderClientOverview() {
   if (!state.clientId) return noClient();
-  const s = await api(`/clients/${state.clientId}/summary`);
-  const e = s.entreprise, k = s.kpis; if (!state.period) state.period = s.periode;
+  await ensurePeriod();   // garantit state.period (période ACTIVE) et les périodes du client courant
+  const s = await api(`/clients/${state.clientId}/summary${perQuery()}`);   // fiche = période sélectionnée
+  const e = s.entreprise, k = s.kpis;
   const ini = (e.raison_sociale || 'CL').replace(/\b(STE|SARL|SA|SAS|SNC|AU)\b/gi, '').trim().split(/\s+/).filter(Boolean).slice(0, 2).map(w => w[0]).join('').toUpperCase() || 'CL';
   const card = (v, t, sub) => `<button class="hub-card" data-view="${v}"><div class="hc-ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">${HUBICON[v]}</svg></div><b>${t}</b><span class="hc-sub">${sub}</span></button>`;
   $('#view').innerHTML = `
@@ -1287,7 +1289,7 @@ async function renderAlerts() {
 }
 
 /* ============================== VUES PORTEFEUILLE (cliquables depuis le dashboard) ============================== */
-function goClient(entId, view) { if (!entId) return; state.clientId = entId; localStorage.setItem('dp-client', entId); state.period = null; updateSwitcherLabel(); setView(view || 'client'); }
+async function goClient(entId, view) { if (!entId) return; state.clientId = entId; localStorage.setItem('dp-client', entId); state.period = null; updateSwitcherLabel(); await loadPeriods(); setView(view || 'client'); }
 window.goClient = goClient;
 
 async function renderRetards() {
