@@ -118,6 +118,11 @@ function latestPeriod(entrepriseId) {
   const d = new Date(); return { annee: d.getFullYear(), trimestre: Math.floor(d.getMonth() / 3) + 1 };
 }
 function recomputePeriod(cabinetId, entrepriseId, annee, trimestre) {
+  // IMMUABILITÉ (LOT 6) : une période clôturée / déclarée est FIGÉE. Aucun recalcul ne réécrit ses
+  // factures — même déclenché par une consultation (/summary, déclaration) après un changement de
+  // convention/réseau. Les valeurs restent celles arrêtées à la clôture. Point de passage UNIQUE.
+  const pr = db.prepare('SELECT statut FROM periode_declaration WHERE entreprise_id=? AND annee=? AND trimestre=?').get(entrepriseId, annee, trimestre);
+  if (pr && periode.isLocked(pr.statut)) return;
   const rows = db.prepare('SELECT * FROM facture WHERE entreprise_id=? AND annee=? AND trimestre=?')
     .all(entrepriseId, annee, trimestre);
   const upd = db.prepare(`UPDATE facture SET delai_applicable=?, delai_ecoule=?, date_limite=?,
@@ -416,10 +421,14 @@ router.post('/clients/:id/periods/:annee/:trimestre/close', (req, res) => {
   if (req.user.role !== 'admin') return res.status(403).json({ error: 'Seul un administrateur peut clôturer une période.' });
   const p = requirePeriod(req, res); if (!p) return;
   const pr = ensurePeriode(req.cabinetId, e.id, p.annee, p.trimestre);
+  const statutAvant = pr.statut;
   const statut = (req.body && req.body.statut === 'declaree') ? 'declaree' : 'cloturee';
+  // Fige l'état EXACT au moment du verrouillage (recalcul possible tant que non verrouillée),
+  // puis verrouille : les valeurs ne bougeront plus (recomputePeriod devient no-op ensuite).
+  recomputePeriod(req.cabinetId, e.id, p.annee, p.trimestre);
   db.prepare(`UPDATE periode_declaration SET statut=?, date_cloture=datetime('now'), cloturee_par=?, updated_at=datetime('now') WHERE id=?`)
     .run(statut, req.user.id, pr.id);
-  audit(req.cabinetId, req.user.id, 'cloture_periode', 'periode', { entreprise: e.id, annee: p.annee, trimestre: p.trimestre, statut }, req.ip);
+  audit(req.cabinetId, req.user.id, 'cloture_periode', 'periode', { entreprise: e.id, annee: p.annee, trimestre: p.trimestre, avant: statutAvant, apres: statut }, req.ip);
   res.json({ ok: true, statut });
 });
 
@@ -431,9 +440,12 @@ router.post('/clients/:id/periods/:annee/:trimestre/reopen', (req, res) => {
   if (!motif) return res.status(400).json({ error: 'Motif de réouverture obligatoire.' });
   const p = requirePeriod(req, res); if (!p) return;
   const pr = ensurePeriode(req.cabinetId, e.id, p.annee, p.trimestre);
+  // Réouverture LIMITÉE à cette seule période ; seule une période verrouillée peut être rouverte.
+  if (!periode.isLocked(pr.statut)) return res.status(409).json({ error: `Période ${periode.periodInfo(p.annee, p.trimestre).label} non clôturée (${periode.STATUT_LABELS[pr.statut] || pr.statut}) : rien à rouvrir.`, statut: pr.statut });
+  const statutAvant = pr.statut;
   db.prepare(`UPDATE periode_declaration SET statut='rouverte', date_reouverture=datetime('now'), motif_reouverture=?, cloturee_par=?, updated_at=datetime('now') WHERE id=?`)
     .run(motif, req.user.id, pr.id);
-  audit(req.cabinetId, req.user.id, 'reouverture_periode', 'periode', { entreprise: e.id, annee: p.annee, trimestre: p.trimestre, motif }, req.ip);
+  audit(req.cabinetId, req.user.id, 'reouverture_periode', 'periode', { entreprise: e.id, annee: p.annee, trimestre: p.trimestre, avant: statutAvant, apres: 'rouverte', motif }, req.ip);
   res.json({ ok: true, statut: 'rouverte' });
 });
 
@@ -873,6 +885,8 @@ router.patch('/clients/:id/factures/:factureId/doublon', (req, res) => {
     return res.status(400).json({ error: 'Statut de revue invalide (attendu : confirme, faux_positif ou potentiel).' });
   const f = db.prepare('SELECT * FROM facture WHERE id=? AND entreprise_id=?').get(req.params.factureId, e.id);
   if (!f) return res.status(404).json({ error: 'Facture introuvable.' });
+  // Période clôturée/déclarée = immuable : aucune modification de facture (revue doublon incluse).
+  if (f.annee && f.trimestre && !assertWritable(res, req.cabinetId, e.id, f.annee, f.trimestre)) return;
   const avant = { statut_doublon: f.statut_doublon || 'aucun', doublon_potentiel: !!f.doublon_potentiel,
     date_revue_doublon: f.date_revue_doublon || null, utilisateur_revue_doublon: f.utilisateur_revue_doublon || null };
   // Mise à jour NON destructive : la facture reste en base et dans les calculs ; doublon_potentiel (trace) est conservé.

@@ -292,6 +292,48 @@ function buildPeriodList() {
       <span class="period-badge ${m[1] || ''}">${m[0]}</span></button>`;
   }).join('') : `<div class="pp-empty">Aucune donnée. Choisissez un trimestre via ← →.</div>`;
   $$('#perList .pp-item').forEach(b => b.onclick = () => setPeriod(+b.dataset.a, +b.dataset.t));
+  buildPeriodActions();
+}
+// Statut clair de la période active + action de clôture / réouverture (admin uniquement).
+function buildPeriodActions() {
+  const box = $('#perActions'); if (!box || !state.period) return;
+  const st = periodStatutOf(state.period.annee, state.period.trimestre);
+  const locked = st === 'cloturee' || st === 'declaree';
+  const m = PERIOD_STATUT[st] || ['Ouverte', 'st-blue'];
+  const isAdmin = state.me && state.me.role === 'admin';
+  const per = `${state.period.annee} ${TRI_LABEL(state.period.trimestre)}`;
+  box.innerHTML = `
+    <div class="pp-status ${locked ? 'locked' : ''}">
+      <span>${locked ? '🔒' : '📅'} Période <b>${per}</b> — <b>${esc(m[0] || (locked ? 'Clôturée' : 'Ouverte'))}</b></span>
+      ${locked ? '<small>Lecture seule : création / modification / import interdits.</small>' : '<small>Modifiable : saisie, import et recalcul autorisés.</small>'}
+    </div>
+    ${isAdmin
+      ? (locked
+          ? `<button class="btn btn-ghost btn-sm" id="perReopen">Rouvrir la période…</button>`
+          : `<button class="btn btn-ghost btn-sm" id="perClose">Clôturer la période</button>`)
+      : `<small class="pp-note">${locked ? 'Réouverture' : 'Clôture'} réservée à un administrateur.</small>`}`;
+  const cb = $('#perClose'); if (cb) cb.onclick = closePeriodAction;
+  const rb = $('#perReopen'); if (rb) rb.onclick = reopenPeriodAction;
+}
+async function closePeriodAction() {
+  const p = state.period; if (!p) return;
+  if (!confirm(`Clôturer la période ${p.annee} ${TRI_LABEL(p.trimestre)} ?\n\nLes montants seront FIGÉS et la période passera en lecture seule (aucune saisie, modification ni import). Une réouverture ultérieure nécessitera un motif et sera tracée.`)) return;
+  try {
+    await api(`/clients/${state.clientId}/periods/${p.annee}/${p.trimestre}/close${perQuery()}`, { method: 'POST', body: {} });
+    toast(`Période ${p.annee} ${TRI_LABEL(p.trimestre)} clôturée (lecture seule).`, 'ok', 'Clôture');
+    closePeriodPanel(); await loadPeriods(); renderView(state.view);
+  } catch (e) { toast(e.message, 'err', 'Clôture impossible'); }
+}
+async function reopenPeriodAction() {
+  const p = state.period; if (!p) return;
+  const motif = prompt(`Rouvrir la période ${p.annee} ${TRI_LABEL(p.trimestre)} ?\n\nRéservé à un administrateur. Indiquez le MOTIF (obligatoire, tracé dans le journal d'audit) :`);
+  if (motif == null) return;                       // annulé
+  if (!motif.trim()) { toast('Motif de réouverture obligatoire.', 'err', 'Réouverture'); return; }
+  try {
+    await api(`/clients/${state.clientId}/periods/${p.annee}/${p.trimestre}/reopen${perQuery()}`, { method: 'POST', body: { motif: motif.trim() } });
+    toast(`Période ${p.annee} ${TRI_LABEL(p.trimestre)} rouverte (motif enregistré).`, 'ok', 'Réouverture');
+    closePeriodPanel(); await loadPeriods(); renderView(state.view);
+  } catch (e) { toast(e.message, 'err', 'Réouverture impossible'); }
 }
 function wirePeriodSelector() {
   const btn = $('#periodBtn'); if (!btn) return;

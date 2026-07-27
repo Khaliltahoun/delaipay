@@ -1670,3 +1670,132 @@ test('lot5/UI : fiche client & portefeuille envoient la période active ; goClie
   assert.match(app, /'\/clients' \+ perQuery\(\)/, 'portefeuille → /clients avec la période active');
   assert.match(app, /async function goClient[\s\S]{0,180}await loadPeriods\(\)[\s\S]{0,40}setView/, 'goClient recharge les périodes du nouveau client');
 });
+
+/* ==================================================================================
+ * LOT 6 — CLÔTURE ET RÉOUVERTURE DES PÉRIODES
+ * Une période clôturée/déclarée est IMMUABLE (recomputePeriod = no-op ; écritures refusées 423).
+ * Réouverture : admin + motif obligatoire + tracée + une seule période.
+ * ================================================================================== */
+function seedLateFactL6(t, { annee, trimestre, date, datePaiement, ttc = 100000, num }) {
+  const fid = uid('four');
+  db.prepare('INSERT INTO fournisseur (id,cabinet_id,entreprise_id,raison_sociale,delai_applicable) VALUES (?,?,?,?,60)').run(fid, t.cab, t.ent, 'FRS ' + num);
+  db.prepare(`INSERT INTO facture (id,cabinet_id,entreprise_id,fournisseur_id,numero,ttc,date_facture,date_paiement,annee,trimestre,delai_applicable)
+              VALUES (?,?,?,?,?,?,?,?,?,?,60)`).run(uid('fac'), t.cab, t.ent, fid, num, ttc, date, datePaiement || null, annee, trimestre);
+  return fid;
+}
+function nonAdminUser(t) {
+  const u = uid('u');
+  db.prepare('INSERT INTO utilisateur (id,cabinet_id,nom,email,password_hash,role,actif) VALUES (?,?,?,?,?,?,1)').run(u, t.cab, 'Collab', uid('e') + '@ex.ma', 'x', 'collaborateur');
+  return u;
+}
+const closeP = (t, a, tr, body, u) => postJson(`/api/clients/${t.ent}/periods/${a}/${tr}/close?annee=${a}&trimestre=${tr}`, cookieOf(u || t.u), body || {});
+const reopenP = (t, a, tr, body, u) => postJson(`/api/clients/${t.ent}/periods/${a}/${tr}/reopen?annee=${a}&trimestre=${tr}`, cookieOf(u || t.u), body || {});
+const amendeOf = (t, a, tr) => db.prepare('SELECT COALESCE(SUM(montant_amende),0) s FROM facture WHERE entreprise_id=? AND annee=? AND trimestre=?').get(t.ent, a, tr).s;
+
+// CŒUR — immuabilité : une convention créée APRÈS clôture ne change pas les montants figés.
+test('lot6/immuabilité : période clôturée FIGÉE — convention postérieure sans effet sur l\'amende', async () => {
+  const t = newTenant();
+  const fid = seedLateFactL6(t, { annee: 2026, trimestre: 1, date: '2026-01-10', datePaiement: '2026-04-30', num: 'IMM' });
+  const before = await getJ(`/api/clients/${t.ent}/summary?annee=2026&trimestre=1`, t);   // recompute → amende 60 j
+  assert.ok(before.kpis.amende > 0, 'amende initiale > 0');
+  const cl = await closeP(t, 2026, 1); assert.equal(cl.status, 200); assert.equal(cl.body.statut, 'cloturee');
+  const fige = amendeOf(t, 2026, 1);
+  await postConvCreate(t, { fournisseur_id: fid, delai: 120 });   // conv qui SUPPRIMERAIT le retard
+  const after = await getJ(`/api/clients/${t.ent}/summary?annee=2026&trimestre=1`, t);     // consultation
+  assert.equal(after.kpis.amende, before.kpis.amende, 'amende figée malgré la nouvelle convention');
+  assert.equal(amendeOf(t, 2026, 1), fige, 'valeurs stockées inchangées (aucun recalcul destructif)');
+});
+
+// Réouverture : fige puis dégèle (recalcul ré-appliqué).
+test('lot6/réouverture : après réouverture, recalcul ré-appliqué (dégel)', async () => {
+  const t = newTenant();
+  const fid = seedLateFactL6(t, { annee: 2026, trimestre: 1, date: '2026-01-10', datePaiement: '2026-04-30', num: 'REO' });
+  await getJ(`/api/clients/${t.ent}/summary?annee=2026&trimestre=1`, t);
+  await closeP(t, 2026, 1);
+  const gel = amendeOf(t, 2026, 1); assert.ok(gel > 0);
+  await postConvCreate(t, { fournisseur_id: fid, delai: 120 });
+  assert.equal(amendeOf(t, 2026, 1), gel, 'gelé pendant la clôture');
+  const ro = await reopenP(t, 2026, 1, { motif: 'correction de saisie' }); assert.equal(ro.status, 200);
+  await getJ(`/api/clients/${t.ent}/summary?annee=2026&trimestre=1`, t);   // recompute ré-appliqué
+  assert.ok(amendeOf(t, 2026, 1) < gel, 'dégelé : convention 120 j réduit l\'amende');
+});
+
+// Consultation autorisée sur période clôturée (lecture seule OK).
+test('lot6/consultation : période clôturée reste consultable (summary/delais/declaration 200)', async () => {
+  const t = newTenant();
+  seedLateFactL6(t, { annee: 2026, trimestre: 1, date: '2026-01-10', datePaiement: '2026-04-30', num: 'RO' });
+  await getJ(`/api/clients/${t.ent}/summary?annee=2026&trimestre=1`, t);
+  await closeP(t, 2026, 1);
+  for (const url of [`/api/clients/${t.ent}/summary?annee=2026&trimestre=1`, `/api/clients/${t.ent}/delais?annee=2026&trimestre=1`, `/api/clients/${t.ent}/declaration?annee=2026&trimestre=1`]) {
+    const r = await fetch(baseUrl() + url, { headers: { Cookie: cookieOf(t.u), Connection: 'close' } });
+    assert.equal(r.status, 200, 'consultation OK: ' + url);
+  }
+});
+
+// Écritures refusées (423) sur période clôturée : création facture + revue doublon.
+test('lot6/API : période clôturée refuse création facture et revue doublon (423)', async () => {
+  const t = newTenant();
+  const fid = seedLateFactL6(t, { annee: 2026, trimestre: 1, date: '2026-01-10', datePaiement: '2026-04-30', num: 'REF' });
+  const facId = db.prepare('SELECT id FROM facture WHERE entreprise_id=? AND annee=2026 AND trimestre=1').get(t.ent).id;
+  await getJ(`/api/clients/${t.ent}/summary?annee=2026&trimestre=1`, t);
+  await closeP(t, 2026, 1);
+  const addF = await postJson(`/api/clients/${t.ent}/factures`, cookieOf(t.u), { fournisseur_id: fid, ttc: 1000, date_facture: '2026-01-15', annee: 2026, trimestre: 1 });
+  assert.equal(addF.status, 423, 'création facture refusée');
+  const dbl = await patchJson(`/api/clients/${t.ent}/factures/${facId}/doublon`, cookieOf(t.u), { statut: 'confirme' });
+  assert.equal(dbl.status, 423, 'revue doublon refusée (période clôturée)');
+});
+
+// Import refusé (423) sur période clôturée.
+test('lot6/API : import refusé sur période clôturée (423)', async () => {
+  const t = newTenant();
+  seedLateFactL6(t, { annee: 2026, trimestre: 1, date: '2026-01-10', num: 'IMP' });
+  await getJ(`/api/clients/${t.ent}/summary?annee=2026&trimestre=1`, t);
+  await closeP(t, 2026, 1);
+  const buf = aoaBuf([['N°', 'Date', 'Fournisseur', 'ICE', 'TTC'], ['X1', '2026-01-15', 'FRS IMPORT', '000000000077701', 5000]], 'S');
+  const fd = new FormData(); fd.append('files', new Blob([buf]), 'imp.xlsx');
+  const r = await fetch(baseUrl() + `/api/clients/${t.ent}/import?annee=2026&trimestre=1`, { method: 'POST', headers: { Cookie: cookieOf(t.u) }, body: fd });
+  assert.equal(r.status, 423, 'import refusé (période clôturée)');
+});
+
+// Justification obligatoire + permissions + réouverture limitée.
+test('lot6/réouverture : motif obligatoire (400) et admin uniquement (403)', async () => {
+  const t = newTenant();
+  seedLateFactL6(t, { annee: 2026, trimestre: 1, date: '2026-01-10', num: 'J' });
+  await closeP(t, 2026, 1);
+  const sansMotif = await reopenP(t, 2026, 1, {});
+  assert.equal(sansMotif.status, 400, 'réouverture sans motif refusée');
+  const collab = nonAdminUser(t);
+  const nonAdmin = await reopenP(t, 2026, 1, { motif: 'test' }, collab);
+  assert.equal(nonAdmin.status, 403, 'réouverture réservée admin');
+});
+test('lot6/clôture : réservée admin (403) ; réouverture d\'une période non clôturée refusée (409)', async () => {
+  const t = newTenant();
+  seedLateFactL6(t, { annee: 2026, trimestre: 1, date: '2026-01-10', num: 'P' });
+  const collab = nonAdminUser(t);
+  const nonAdminClose = await closeP(t, 2026, 1, {}, collab);
+  assert.equal(nonAdminClose.status, 403, 'clôture réservée admin');
+  const reopenOpen = await reopenP(t, 2026, 1, { motif: 'x' });
+  assert.equal(reopenOpen.status, 409, 'rien à rouvrir sur une période non clôturée');
+});
+
+// Audit clôture + réouverture avec état avant/après.
+test('lot6/audit : clôture et réouverture tracées (avant/après, motif, utilisateur)', async () => {
+  const t = newTenant();
+  seedLateFactL6(t, { annee: 2026, trimestre: 1, date: '2026-01-10', num: 'AUD' });
+  await closeP(t, 2026, 1);
+  const cl = JSON.parse(db.prepare("SELECT details FROM audit_log WHERE action='cloture_periode' AND cabinet_id=? ORDER BY created_at DESC, rowid DESC LIMIT 1").get(t.cab).details);
+  assert.equal(cl.apres, 'cloturee', 'audit clôture: après=cloturee'); assert.ok('avant' in cl, 'audit clôture: état avant tracé');
+  await reopenP(t, 2026, 1, { motif: 'régularisation DGI' });
+  const ro = JSON.parse(db.prepare("SELECT details FROM audit_log WHERE action='reouverture_periode' AND cabinet_id=? ORDER BY created_at DESC, rowid DESC LIMIT 1").get(t.cab).details);
+  assert.equal(ro.avant, 'cloturee', 'audit réouverture: avant=cloturee');
+  assert.equal(ro.apres, 'rouverte'); assert.equal(ro.motif, 'régularisation DGI', 'motif tracé');
+});
+
+// Contrôle statique du front : UI de clôture/réouverture présente + garde-fous.
+test('lot6/UI : contrôles clôture/réouverture présents (admin, motif, confirmation)', () => {
+  const app = fs.readFileSync(path.join(__dirname, '..', 'public', 'js', 'app.js'), 'utf8');
+  assert.match(app, /\/periods\/\$\{p\.annee\}\/\$\{p\.trimestre\}\/close/, 'action de clôture câblée');
+  assert.match(app, /\/periods\/\$\{p\.annee\}\/\$\{p\.trimestre\}\/reopen/, 'action de réouverture câblée');
+  assert.match(app, /reopenPeriodAction[\s\S]{0,400}prompt\(/, 'réouverture demande un motif');
+  assert.match(app, /state\.me && state\.me\.role === 'admin'/, 'boutons réservés à l\'admin');
+});
