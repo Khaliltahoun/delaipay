@@ -1799,3 +1799,407 @@ test('lot6/UI : contrôles clôture/réouverture présents (admin, motif, confir
   assert.match(app, /reopenPeriodAction[\s\S]{0,400}prompt\(/, 'réouverture demande un motif');
   assert.match(app, /state\.me && state\.me\.role === 'admin'/, 'boutons réservés à l\'admin');
 });
+
+/* ================================================================================
+ * LOT 7 — INTÉGRITÉ DES EXPORTS ET LIVRABLES DGI
+ * Principe vérifié : un export représente EXACTEMENT ce que l'application affiche —
+ * même période, mêmes montants, mêmes exclusions, aucune donnée perdue ni recalculée.
+ * ================================================================================ */
+
+async function getText(pathUrl, cookie) {
+  const res = await fetch(baseUrl() + pathUrl, { headers: cookie ? { Cookie: cookie } : {} });
+  const buf = Buffer.from(await res.arrayBuffer());
+  return { status: res.status, ct: res.headers.get('content-type') || '',
+           cd: res.headers.get('content-disposition') || '', buf, text: buf.toString('utf8') };
+}
+async function getJson(pathUrl, cookie) {
+  const res = await fetch(baseUrl() + pathUrl, { headers: cookie ? { Cookie: cookie } : {} });
+  return { status: res.status, body: await res.json().catch(() => null) };
+}
+async function postJson(pathUrl, cookie, body) {
+  const res = await fetch(baseUrl() + pathUrl, { method: 'POST',
+    headers: { Cookie: cookie, 'Content-Type': 'application/json' }, body: JSON.stringify(body || {}) });
+  return { status: res.status, body: await res.json().catch(() => null) };
+}
+// Relit un CSV avec un VRAI parseur (guillemets, séparateur) — comme le ferait Excel.
+function csvGrid(text) {
+  const wb = XLSX.read(text.replace(/^﻿/, ''), { type: 'string', FS: ';', raw: false });
+  return XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { header: 1, blankrows: false });
+}
+const EXPORTS_PERIODE = ['delais/export.xlsx', 'declaration/export.csv', 'declaration/export.xml',
+                         'visa/export.docx', 'visa/export.pdf'];
+
+// Seed déclaratif : 1 fournisseur standard en retard + 1 opérateur réseau (non confirmé au départ).
+function seedDecl(t) {
+  const fn = uid('four'); db.prepare('INSERT INTO fournisseur (id,cabinet_id,entreprise_id,raison_sociale,if_fiscal,delai_applicable) VALUES (?,?,?,?,?,60)')
+    .run(fn, t.cab, t.ent, 'FRS; ÉLECTRICITÉ "A"', 'IF-NORM');
+  const fr = uid('four'); db.prepare('INSERT INTO fournisseur (id,cabinet_id,entreprise_id,raison_sociale,if_fiscal,delai_applicable) VALUES (?,?,?,?,?,60)')
+    .run(fr, t.cab, t.ent, 'MAROC TELECOM', 'IF-RES');
+  const i = db.prepare('INSERT INTO facture (id,cabinet_id,entreprise_id,fournisseur_id,numero,ttc,date_facture,annee,trimestre,delai_applicable) VALUES (?,?,?,?,?,?,?,?,?,60)');
+  i.run(uid('fac'), t.cab, t.ent, fn, 'F-1', 1234.567, '2026-01-05', 2026, 1);
+  i.run(uid('fac'), t.cab, t.ent, fr, 'F-2', 50000, '2026-01-10', 2026, 1);
+  return { fn, fr };
+}
+
+/* -------- Phase 2 : l'écran et le fichier disent la même chose -------- */
+test('lot7/cohérence : déclaration écran ↔ CSV ↔ XML (mêmes lignes, mêmes montants, même période)', async () => {
+  const t = newTenant(); seedDecl(t);
+  const per = '?annee=2026&trimestre=1';
+  const ui = (await getJson(`/api/clients/${t.ent}/declaration${per}`, cookieOf(t.u))).body;
+  const csv = csvGrid((await getText(`/api/clients/${t.ent}/declaration/export.csv${per}`, cookieOf(t.u))).text);
+  const xml = (await getText(`/api/clients/${t.ent}/declaration/export.xml${per}`, cookieOf(t.u))).text;
+
+  const lignesCsv = csv.filter(r => !['IF fournisseur', 'TOTAL', 'EXCLUSIONS RESEAU'].includes(r[0]));
+  assert.equal(lignesCsv.length, ui.lignes.length, 'même nombre de lignes à l\'écran et dans le CSV');
+  assert.equal((xml.match(/<Facture>/g) || []).length, ui.lignes.length, 'même nombre de lignes dans le XML');
+  for (const l of ui.lignes) {
+    const row = lignesCsv.find(r => r[1] === l.nom);
+    assert.ok(row, `ligne « ${l.nom} » présente dans le CSV`);
+    assert.equal(Number(row[2]).toFixed(2), Number(l.ttc).toFixed(2), 'TTC identique');
+    assert.equal(Number(row[6]).toFixed(2), Number(l.amende).toFixed(2), 'amende identique');
+    assert.equal(Number(row[7]), 2026, 'année portée par la ligne');
+    assert.equal(Number(row[8]), 1, 'trimestre porté par la ligne');
+    assert.ok(xml.includes(`<Amende>${Number(l.amende).toFixed(2)}</Amende>`), 'amende identique dans le XML');
+  }
+  const tot = csv.find(r => r[0] === 'TOTAL');
+  assert.equal(Number(tot[2]).toFixed(2), Number(ui.declaration.montant_total_ttc).toFixed(2), 'total TTC identique');
+  assert.equal(Number(tot[6]).toFixed(2), Number(ui.declaration.montant_total_amende).toFixed(2), 'total amende identique');
+  assert.ok(xml.includes(`<TotalTTC>${Number(ui.declaration.montant_total_ttc).toFixed(2)}</TotalTTC>`), 'total TTC identique dans le XML');
+  assert.match(xml, /<DeclarationDelaisPaiement annee="2026" periode="T1">/, 'période portée par le XML');
+});
+
+test('lot7/cohérence : feuille de délais écran ↔ Excel (mêmes lignes, mêmes totaux)', async () => {
+  const t = newTenant(); seedDelaisMix(t);
+  const per = '?annee=2026&trimestre=1';
+  const ui = (await getJson(`/api/clients/${t.ent}/delais${per}`, cookieOf(t.u))).body;
+  const rows = xlsxRows((await getXlsx(`/api/clients/${t.ent}/delais/export.xlsx${per}&filter=all`, cookieOf(t.u))).buf);
+  const data = rows.filter(r => /^(R-1|C-1|OK-1)$/.test(String(r[0])));
+  assert.equal(data.length, ui.rows.length, 'même nombre de lignes');
+  for (const r of ui.rows) {
+    const x = data.find(d => d[0] === r.numero);
+    assert.ok(x, `facture ${r.numero} exportée`);
+    assert.equal(x[5], r.ttc, 'TTC identique');
+    assert.equal(x[10], r.delai_applicable, 'délai autorisé identique');
+    assert.equal(x[11], r.retard, 'retard identique');
+    assert.equal(x[13], r.amende || 0, 'amende identique');
+    assert.equal(x[12], r.a_declarer ? 'Oui' : 'Non', 'statut « à déclarer » identique');
+  }
+  const tot = rows.find(r => r[0] === 'TOTAL');
+  assert.equal(tot[5], ui.totals.ttc, 'TOTAL TTC identique à l\'écran');
+  assert.equal(tot[13], ui.totals.amende, 'TOTAL amende identique à l\'écran');
+});
+
+test('lot7/cohérence : les incidences reportées sont totalisées à part, jamais fondues dans le TTC', async () => {
+  const t = newTenant();
+  const f = uid('four'); db.prepare('INSERT INTO fournisseur (id,cabinet_id,entreprise_id,raison_sociale,delai_applicable) VALUES (?,?,?,?,60)').run(f, t.cab, t.ent, 'FRS INC');
+  const i = db.prepare('INSERT INTO facture (id,cabinet_id,entreprise_id,fournisseur_id,numero,ttc,date_facture,annee,trimestre,delai_applicable) VALUES (?,?,?,?,?,?,?,?,?,60)');
+  i.run(uid('fac'), t.cab, t.ent, f, 'T1-A', 100000, '2026-01-05', 2026, 1);   // impayée → pèse aussi sur T2
+  i.run(uid('fac'), t.cab, t.ent, f, 'T2-A', 40000, '2026-04-10', 2026, 2);
+  for (const q of [1, 2]) await postJson(`/api/clients/${t.ent}/recompute?annee=2026&trimestre=${q}`, cookieOf(t.u));
+  const ui = (await getJson(`/api/clients/${t.ent}/delais?annee=2026&trimestre=2`, cookieOf(t.u))).body;
+  assert.equal(ui.totals.incidences, 1, 'une incidence reportée à l\'écran');
+  const rows = xlsxRows((await getXlsx(`/api/clients/${t.ent}/delais/export.xlsx?annee=2026&trimestre=2&filter=all`, cookieOf(t.u))).buf);
+  const tot = rows.find(r => r[0] === 'TOTAL');
+  const inc = rows.find(r => r[0] === 'Incidences reportées');
+  const due = rows.find(r => String(r[0]).startsWith('TOTAL AMENDE DUE'));
+  assert.ok(inc && due, 'lignes « incidences » et « total dû » présentes');
+  assert.equal(tot[5], ui.totals.ttc, 'TOTAL TTC = TTC des factures de la période (écran)');
+  assert.equal(inc[13], ui.totals.amendeIncidence, 'amende des incidences isolée');
+  assert.equal(due[13], ui.totals.amende, 'amende due au titre de la période = écran');
+  assert.match(String(rows[1][0]), /1 facture\(s\) de la période \+ 1 incidence\(s\) reportée\(s\)/, 'sous-titre explicite');
+});
+
+/* -------- Phase 3 : la période active, et elle seule -------- */
+test('lot7/période : tout export exige une période explicite et valide (jamais devinée)', async () => {
+  const t = newTenant(); seedDecl(t);
+  for (const u of EXPORTS_PERIODE) {
+    const sans = await getText(`/api/clients/${t.ent}/${u}`, cookieOf(t.u));
+    assert.equal(sans.status, 400, `${u} sans période → 400`);
+    assert.match(sans.text, /période .*requise et valide/i, `${u} : message explicite`);
+    const bad = await getText(`/api/clients/${t.ent}/${u}?annee=abc&trimestre=9`, cookieOf(t.u));
+    assert.equal(bad.status, 400, `${u} période illisible → 400`);
+    assert.doesNotMatch(bad.cd, /NaN/, `${u} : aucun fichier « NaN » produit`);
+  }
+});
+
+test('lot7/période : T1..T4 exportent des données distinctes, sans mélange', async () => {
+  const t = newTenant();
+  const f = uid('four'); db.prepare('INSERT INTO fournisseur (id,cabinet_id,entreprise_id,raison_sociale,if_fiscal,delai_applicable) VALUES (?,?,?,?,?,60)').run(f, t.cab, t.ent, 'FRS Q', 'IF-Q');
+  const dates = { 1: '2026-01-05', 2: '2026-04-05', 3: '2026-07-05', 4: '2026-10-05' };
+  const i = db.prepare('INSERT INTO facture (id,cabinet_id,entreprise_id,fournisseur_id,numero,ttc,date_facture,annee,trimestre,delai_applicable) VALUES (?,?,?,?,?,?,?,?,?,60)');
+  for (const q of [1, 2, 3, 4]) i.run(uid('fac'), t.cab, t.ent, f, `Q${q}`, q * 10000, dates[q], 2026, q);
+  for (const q of [1, 2, 3, 4]) await postJson(`/api/clients/${t.ent}/recompute?annee=2026&trimestre=${q}`, cookieOf(t.u));
+  for (const q of [1, 2, 3, 4]) {
+    const per = `?annee=2026&trimestre=${q}`;
+    const rows = xlsxRows((await getXlsx(`/api/clients/${t.ent}/delais/export.xlsx${per}&filter=all`, cookieOf(t.u))).buf);
+    const propres = rows.filter(r => /^Q[1-4]$/.test(String(r[0])) && !r[16]);
+    assert.deepEqual(propres.map(r => r[0]), [`Q${q}`], `T${q} : seule la facture du trimestre (hors incidences)`);
+    const cd = (await getText(`/api/clients/${t.ent}/declaration/export.csv${per}`, cookieOf(t.u))).cd;
+    assert.match(cd, new RegExp(`declaration_2026_T${q}\\.csv`), `T${q} : nom de fichier daté du bon trimestre`);
+    const xml = (await getText(`/api/clients/${t.ent}/declaration/export.xml${per}`, cookieOf(t.u))).text;
+    assert.match(xml, new RegExp(`annee="2026" periode="T${q}"`), `T${q} : période portée par le XML`);
+    const csv = csvGrid((await getText(`/api/clients/${t.ent}/declaration/export.csv${per}`, cookieOf(t.u))).text);
+    for (const r of csv.slice(1)) { assert.equal(Number(r[7]), 2026); assert.equal(Number(r[8]), q); }
+  }
+});
+
+/* -------- Phase 4 : règles métier — clôture, réouverture, réseau, conventions -------- */
+test('lot7/clôture : la déclaration exportée est FIGÉE — exclusion réseau confirmée après clôture sans effet', async () => {
+  const t = newTenant(); const { fr } = seedDecl(t);
+  const per = '?annee=2026&trimestre=1';
+  await postJson(`/api/clients/${t.ent}/recompute${per}`, cookieOf(t.u));
+  const avant = (await getText(`/api/clients/${t.ent}/declaration/export.csv${per}`, cookieOf(t.u))).text;
+  const xmlAvant = (await getText(`/api/clients/${t.ent}/declaration/export.xml${per}`, cookieOf(t.u))).text;
+  assert.equal((await postJson(`/api/clients/${t.ent}/periods/2026/1/close`, cookieOf(t.u))).status, 200);
+  const snap = db.prepare('SELECT montant_total_ttc, montant_total_amende, nb_lignes FROM declaration WHERE entreprise_id=? AND annee=2026 AND trimestre=1').get(t.ent);
+
+  // Confirmation « opérateur de réseau » APRÈS la clôture : elle ne doit rien retirer du tableau figé.
+  const patch = await fetch(baseUrl() + `/api/clients/${t.ent}/fournisseurs/${fr}/classification`, {
+    method: 'PATCH', headers: { Cookie: cookieOf(t.u), 'Content-Type': 'application/json' },
+    body: JSON.stringify({ operateur_reseau: true, statut: 'confirme', hors_tableau_declaratif: true, categorie_fournisseur: 'telecom' }) });
+  assert.equal(patch.status, 200);
+
+  const apres = (await getText(`/api/clients/${t.ent}/declaration/export.csv${per}`, cookieOf(t.u))).text;
+  const xmlApres = (await getText(`/api/clients/${t.ent}/declaration/export.xml${per}`, cookieOf(t.u))).text;
+  assert.equal(apres, avant, 'CSV d\'une période clôturée strictement inchangé');
+  assert.equal(xmlApres.replace(/<PeriodeFigee>\w+<\/PeriodeFigee>/, ''), xmlAvant.replace(/<PeriodeFigee>\w+<\/PeriodeFigee>/, ''),
+    'XML d\'une période clôturée strictement inchangé');
+  assert.match(xmlApres, /<PeriodeFigee>oui<\/PeriodeFigee>/, 'le XML annonce une période figée');
+  assert.ok(apres.includes('MAROC TELECOM'), 'la facture réseau reste dans le tableau arrêté');
+
+  // Aucune écriture : le snapshot en base est intact après les exports.
+  const apresDb = db.prepare('SELECT montant_total_ttc, montant_total_amende, nb_lignes FROM declaration WHERE entreprise_id=? AND annee=2026 AND trimestre=1').get(t.ent);
+  assert.deepEqual(apresDb, snap, 'un export ne réécrit jamais une déclaration clôturée');
+});
+
+test('lot7/clôture : le CA du client modifié après clôture ne change ni le montant ni le type de visa figés', async () => {
+  const t = newTenant(); seedDecl(t);
+  db.prepare('UPDATE entreprise SET ca_ht=? WHERE id=?').run(8_000_000, t.ent);
+  const per = '?annee=2026&trimestre=1';
+  await postJson(`/api/clients/${t.ent}/recompute${per}`, cookieOf(t.u));
+  await postJson(`/api/clients/${t.ent}/periods/2026/1/close`, cookieOf(t.u));
+  const avant = db.prepare('SELECT ca_ht, type_visa FROM declaration WHERE entreprise_id=? AND annee=2026 AND trimestre=1').get(t.ent);
+  assert.equal(avant.type_visa, 'EC', 'visa expert-comptable au moment de l\'arrêté');
+  db.prepare('UPDATE entreprise SET ca_ht=? WHERE id=?').run(90_000_000, t.ent);   // franchit le seuil CAC
+  await getText(`/api/clients/${t.ent}/declaration/export.xml${per}`, cookieOf(t.u));
+  const apres = db.prepare('SELECT ca_ht, type_visa FROM declaration WHERE entreprise_id=? AND annee=2026 AND trimestre=1').get(t.ent);
+  assert.deepEqual(apres, avant, 'en-tête déclaratif figé (ca_ht + type de visa)');
+  const xml = (await getText(`/api/clients/${t.ent}/declaration/export.xml${per}`, cookieOf(t.u))).text;
+  assert.match(xml, /<TypeVisa>EC<\/TypeVisa>/, 'le XML conserve le type de visa arrêté');
+  assert.match(xml, /<CAHT>8000000\.00<\/CAHT>/, 'le XML conserve le CA arrêté');
+});
+
+test('lot7/clôture : la feuille exportée est figée — convention postérieure sans effet (réserve P3-2)', async () => {
+  const t = newTenant();
+  const f = uid('four'); db.prepare('INSERT INTO fournisseur (id,cabinet_id,entreprise_id,raison_sociale,delai_applicable) VALUES (?,?,?,?,60)').run(f, t.cab, t.ent, 'FRS FIG');
+  db.prepare('INSERT INTO facture (id,cabinet_id,entreprise_id,fournisseur_id,numero,ttc,date_facture,annee,trimestre,delai_applicable) VALUES (?,?,?,?,?,?,?,?,?,60)')
+    .run(uid('fac'), t.cab, t.ent, f, 'FIG-1', 100000, '2026-01-05', 2026, 1);
+  const per = '?annee=2026&trimestre=1';
+  await postJson(`/api/clients/${t.ent}/recompute${per}`, cookieOf(t.u));
+  await postJson(`/api/clients/${t.ent}/periods/2026/1/close`, cookieOf(t.u));
+  const uiAvant = (await getJson(`/api/clients/${t.ent}/delais${per}`, cookieOf(t.u))).body;
+  const xAvant = xlsxRows((await getXlsx(`/api/clients/${t.ent}/delais/export.xlsx${per}&filter=all`, cookieOf(t.u))).buf).find(r => r[0] === 'FIG-1');
+
+  db.prepare("INSERT INTO convention (id,cabinet_id,entreprise_id,fournisseur_id,delai_convenu,statut) VALUES (?,?,?,?,120,'valide')")
+    .run(uid('conv'), t.cab, t.ent, f);
+
+  const uiApres = (await getJson(`/api/clients/${t.ent}/delais${per}`, cookieOf(t.u))).body;
+  const xApres = xlsxRows((await getXlsx(`/api/clients/${t.ent}/delais/export.xlsx${per}&filter=all`, cookieOf(t.u))).buf).find(r => r[0] === 'FIG-1');
+  assert.equal(uiApres.rows[0].delai_applicable, uiAvant.rows[0].delai_applicable, 'délai autorisé figé à l\'écran');
+  assert.equal(uiApres.rows[0].retard, uiAvant.rows[0].retard, 'retard figé à l\'écran');
+  assert.equal(uiApres.totals.retardMoyen, uiAvant.totals.retardMoyen, 'KPI retard moyen figé');
+  assert.deepEqual(xApres, xAvant, 'ligne exportée strictement inchangée');
+  // Cohérence interne du fichier : un délai « 120 j / 0 j de retard » à côté d'une amende gelée est exclu.
+  assert.equal(xApres[10], 60, 'délai autorisé = celui arrêté à la clôture');
+  assert.ok(xApres[11] > 0 && xApres[13] > 0, 'retard et amende concordants');
+});
+
+test('lot7/réouverture : après réouverture + recalcul, les exports repartent sur les valeurs recalculées', async () => {
+  const t = newTenant();
+  const f = uid('four'); db.prepare('INSERT INTO fournisseur (id,cabinet_id,entreprise_id,raison_sociale,delai_applicable) VALUES (?,?,?,?,60)').run(f, t.cab, t.ent, 'FRS RO');
+  db.prepare('INSERT INTO facture (id,cabinet_id,entreprise_id,fournisseur_id,numero,ttc,date_facture,annee,trimestre,delai_applicable) VALUES (?,?,?,?,?,?,?,?,?,60)')
+    .run(uid('fac'), t.cab, t.ent, f, 'RO-1', 100000, '2026-01-05', 2026, 1);
+  const per = '?annee=2026&trimestre=1';
+  await postJson(`/api/clients/${t.ent}/recompute${per}`, cookieOf(t.u));
+  await postJson(`/api/clients/${t.ent}/periods/2026/1/close`, cookieOf(t.u));
+  db.prepare("INSERT INTO convention (id,cabinet_id,entreprise_id,fournisseur_id,delai_convenu,statut) VALUES (?,?,?,?,120,'valide')")
+    .run(uid('conv'), t.cab, t.ent, f);
+  const fige = xlsxRows((await getXlsx(`/api/clients/${t.ent}/delais/export.xlsx${per}&filter=all`, cookieOf(t.u))).buf).find(r => r[0] === 'RO-1');
+  assert.equal(fige[10], 60, 'gelé avant réouverture');
+
+  assert.equal((await postJson(`/api/clients/${t.ent}/periods/2026/1/reopen`, cookieOf(t.u), { motif: 'régularisation LOT 7' })).status, 200);
+  assert.equal((await postJson(`/api/clients/${t.ent}/recompute${per}`, cookieOf(t.u))).status, 200);
+  const degel = xlsxRows((await getXlsx(`/api/clients/${t.ent}/delais/export.xlsx${per}&filter=all`, cookieOf(t.u))).buf).find(r => r[0] === 'RO-1');
+  assert.equal(degel[10], 120, 'délai conventionnel appliqué après dégel');
+  assert.equal(degel[11], 0, 'plus de retard');
+  assert.equal(degel[13], 0, 'plus d\'amende');
+  const csv = csvGrid((await getText(`/api/clients/${t.ent}/declaration/export.csv${per}`, cookieOf(t.u))).text);
+  assert.equal(Number(csv.find(r => r[0] === 'TOTAL')[6]), 0, 'déclaration recalculée après réouverture');
+  const xml = (await getText(`/api/clients/${t.ent}/declaration/export.xml${per}`, cookieOf(t.u))).text;
+  assert.match(xml, /<PeriodeFigee>non<\/PeriodeFigee>/, 'le XML n\'annonce plus une période figée');
+});
+
+test('lot7/réseau : les exclusions réseau sont appliquées ET tracées dans le CSV et le XML', async () => {
+  const t = newTenant(); const { fr } = seedDecl(t);
+  const per = '?annee=2026&trimestre=1';
+  await fetch(baseUrl() + `/api/clients/${t.ent}/fournisseurs/${fr}/classification`, {
+    method: 'PATCH', headers: { Cookie: cookieOf(t.u), 'Content-Type': 'application/json' },
+    body: JSON.stringify({ operateur_reseau: true, statut: 'confirme', hors_tableau_declaratif: true, categorie_fournisseur: 'telecom' }) });
+  const ui = (await getJson(`/api/clients/${t.ent}/declaration${per}`, cookieOf(t.u))).body;
+  assert.equal(ui.exclusions.nbFactures, 1, 'une facture exclue à l\'écran');
+  const csv = csvGrid((await getText(`/api/clients/${t.ent}/declaration/export.csv${per}`, cookieOf(t.u))).text);
+  assert.ok(!csv.some(r => r[1] === 'MAROC TELECOM'), 'la facture réseau ne figure pas au tableau déclaratif');
+  const exc = csv.find(r => r[0] === 'EXCLUSIONS RESEAU');
+  assert.ok(exc, 'exclusion tracée dans le CSV (jamais silencieuse)');
+  assert.equal(Number(exc[2]).toFixed(2), Number(ui.exclusions.ttc).toFixed(2), 'TTC exclu identique à l\'écran');
+  assert.match(String(exc[1]), /Opérateur de réseau/, 'motif d\'exclusion porté par le fichier');
+  const xml = (await getText(`/api/clients/${t.ent}/declaration/export.xml${per}`, cookieOf(t.u))).text;
+  assert.match(xml, /<Exclusions nb="1" nbFournisseurs="1">/, 'exclusions tracées dans le XML');
+  assert.ok(!xml.includes('MAROC TELECOM'), 'la facture réseau est bien hors du flux EDI');
+});
+
+test('lot7/convention : le délai conventionnel appliqué à l\'écran l\'est aussi dans l\'Excel', async () => {
+  const t = newTenant();
+  const f = uid('four'); db.prepare('INSERT INTO fournisseur (id,cabinet_id,entreprise_id,raison_sociale,delai_applicable) VALUES (?,?,?,?,60)').run(f, t.cab, t.ent, 'FRS CONV');
+  db.prepare('INSERT INTO facture (id,cabinet_id,entreprise_id,fournisseur_id,numero,ttc,date_facture,annee,trimestre,delai_applicable) VALUES (?,?,?,?,?,?,?,?,?,60)')
+    .run(uid('fac'), t.cab, t.ent, f, 'CV-1', 80000, '2026-01-05', 2026, 1);
+  const per = '?annee=2026&trimestre=1';
+  db.prepare("INSERT INTO convention (id,cabinet_id,entreprise_id,fournisseur_id,delai_convenu,statut) VALUES (?,?,?,?,90,'valide')")
+    .run(uid('conv'), t.cab, t.ent, f);
+  await postJson(`/api/clients/${t.ent}/recompute${per}`, cookieOf(t.u));
+  const ui = (await getJson(`/api/clients/${t.ent}/delais${per}`, cookieOf(t.u))).body;
+  const x = xlsxRows((await getXlsx(`/api/clients/${t.ent}/delais/export.xlsx${per}&filter=all`, cookieOf(t.u))).buf).find(r => r[0] === 'CV-1');
+  assert.equal(ui.rows[0].delai_applicable, 90, 'convention 90 j appliquée à l\'écran');
+  assert.equal(x[10], 90, 'convention 90 j appliquée dans l\'export');
+  assert.equal(x[11], ui.rows[0].retard, 'retard identique');
+});
+
+/* -------- Phase 5 : qualité des fichiers produits -------- */
+test('lot7/qualité : CSV — BOM UTF-8, accents et arabe, colonnes alignées, 2 décimales, Σ lignes = total', async () => {
+  const t = newTenant();
+  const fa = uid('four'); db.prepare('INSERT INTO fournisseur (id,cabinet_id,entreprise_id,raison_sociale,if_fiscal,delai_applicable) VALUES (?,?,?,?,?,60)')
+    .run(fa, t.cab, t.ent, 'FRS; ÉLECTRICITÉ "ÂÎÔÛ"', 'IF;A');
+  const fb = uid('four'); db.prepare('INSERT INTO fournisseur (id,cabinet_id,entreprise_id,raison_sociale,if_fiscal,delai_applicable) VALUES (?,?,?,?,?,60)')
+    .run(fb, t.cab, t.ent, 'شركة الاتصالات المغربية', 'IF-AR');
+  const i = db.prepare('INSERT INTO facture (id,cabinet_id,entreprise_id,fournisseur_id,numero,ttc,date_facture,annee,trimestre,delai_applicable) VALUES (?,?,?,?,?,?,?,?,?,60)');
+  i.run(uid('fac'), t.cab, t.ent, fa, 'Q-1', 1234.567, '2026-01-05', 2026, 1);
+  i.run(uid('fac'), t.cab, t.ent, fb, 'Q-2', 7000, '2026-01-06', 2026, 1);
+  const per = '?annee=2026&trimestre=1';
+  await postJson(`/api/clients/${t.ent}/recompute${per}`, cookieOf(t.u));
+  const r = await getText(`/api/clients/${t.ent}/declaration/export.csv${per}`, cookieOf(t.u));
+  assert.deepEqual([...r.buf.slice(0, 3)], [0xEF, 0xBB, 0xBF], 'BOM UTF-8 en tête (Excel lit les accents)');
+  assert.match(r.ct, /charset=utf-8/, 'jeu de caractères annoncé');
+  const g = csvGrid(r.text);
+  assert.equal(new Set(g.map(x => x.length)).size, 1, 'toutes les lignes ont le même nombre de colonnes');
+  assert.ok(g.some(x => x[1] === 'FRS; ÉLECTRICITÉ "ÂÎÔÛ"'), 'point-virgule, guillemets et accents préservés');
+  assert.ok(g.some(x => x[1] === 'شركة الاتصالات المغربية'), 'libellé arabe préservé');
+  for (const x of g.slice(1)) for (const c of [2, 3, 4, 6])
+    if (x[c] !== null && x[c] !== '') assert.match(String(Number(x[c]).toFixed(2)), /^-?\d+\.\d{2}$/, 'montants à 2 décimales');
+  const lignes = g.filter(x => !['IF fournisseur', 'TOTAL', 'EXCLUSIONS RESEAU'].includes(x[0]));
+  const somme = lignes.reduce((s, x) => s + Number(x[2]), 0);
+  assert.ok(Math.abs(somme - Number(g.find(x => x[0] === 'TOTAL')[2])) < 0.005, 'la somme des lignes retombe exactement sur le total');
+  assert.equal(new Set(lignes.map(x => x[0] + '|' + x[1])).size, lignes.length, 'aucun doublon de ligne');
+});
+
+test('lot7/qualité : rejets CSV — colonnes alignées et injection de formule neutralisée', async () => {
+  const t = newTenant();
+  const lot = uid('lot');
+  db.prepare('INSERT INTO import_lot (id,cabinet_id,entreprise_id,annee,trimestre,source_nom,statut) VALUES (?,?,?,?,?,?,?)')
+    .run(lot, t.cab, t.ent, 2026, 1, 'src.xlsx', 'confirme');
+  db.prepare('INSERT INTO import_ligne (id,import_lot_id,cabinet_id,entreprise_id,numero_ligne,feuille,statut,motif,champ,donnees_brutes_json) VALUES (?,?,?,?,?,?,?,?,?,?)')
+    .run(uid('il'), lot, t.cab, t.ent, 7, 'Feuille;PIÉGÉE', 'rejetee', 'Motif "avec" guillemets', '=cmd|calc',
+         JSON.stringify(['=HYPERLINK("http://x")', 'a"b']));
+  const r = await getText(`/api/imports/${lot}/rejections.csv`, cookieOf(t.u));
+  assert.equal(r.status, 200);
+  assert.deepEqual([...r.buf.slice(0, 3)], [0xEF, 0xBB, 0xBF], 'BOM UTF-8');
+  const g = csvGrid(r.text);
+  assert.equal(new Set(g.map(x => x.length)).size, 1, 'un « ; » dans un nom de feuille ne décale plus les colonnes');
+  assert.equal(g[1][1], 'Feuille;PIÉGÉE', 'nom de feuille restitué intact');
+  assert.equal(g[1][3], 'Motif "avec" guillemets', 'motif restitué intact (guillemets échappés)');
+  assert.ok(String(g[1][4]).startsWith("'="), 'formule neutralisée par une apostrophe');
+  assert.ok(!/(^|;)=/.test(r.text.split('\n')[1]), 'aucune cellule ne commence par « = »');
+});
+
+test('lot7/vide : une période sans données produit un fichier valide, jamais une erreur', async () => {
+  const t = newTenant();   // client sans aucune facture
+  const per = '?annee=2026&trimestre=3';
+  const csv = await getText(`/api/clients/${t.ent}/declaration/export.csv${per}`, cookieOf(t.u));
+  assert.equal(csv.status, 200); assert.match(csv.cd, /declaration_2026_T3\.csv/);
+  const g = csvGrid(csv.text);
+  assert.equal(g[0][0], 'IF fournisseur', 'en-tête présent');
+  assert.equal(Number(g.find(x => x[0] === 'TOTAL')[6]), 0, 'total à zéro — déclaration « néant »');
+  const xml = await getText(`/api/clients/${t.ent}/declaration/export.xml${per}`, cookieOf(t.u));
+  assert.equal(xml.status, 200);
+  assert.match(xml.text, /<Recapitulatif><NbLignes>0<\/NbLignes>/, 'récapitulatif à zéro');
+  assert.match(xml.text, /^<\?xml version="1\.0" encoding="UTF-8"\?>/, 'XML bien formé');
+  const x = await getXlsx(`/api/clients/${t.ent}/delais/export.xlsx${per}&filter=all`, cookieOf(t.u));
+  assert.equal(x.status, 200);
+  const rows = xlsxRows(x.buf);
+  assert.ok(rows.find(r => r[0] === 'N° facture'), 'en-têtes présents dans le classeur vide');
+  assert.equal(rows.find(r => r[0] === 'TOTAL')[5], 0, 'total à zéro');
+  assert.match(String(rows[1][0]), /0 facture\(s\) de la période/, 'sous-titre explicite');
+  for (const f of ['visa/export.docx', 'visa/export.pdf']) {
+    const v = await getXlsx(`/api/clients/${t.ent}/${f}${per}`, cookieOf(t.u));
+    assert.equal(v.status, 200, `${f} : document généré même sans données`);
+    assert.ok(v.buf.length > 500, `${f} : document non vide`);
+  }
+});
+
+/* -------- Phases 7 & 8 : permissions et traçabilité -------- */
+test('lot7/permissions : aucun export accessible sans session ni depuis un autre cabinet', async () => {
+  const a = newTenant('A'), b = newTenant('B'); seedDecl(a);
+  const per = '?annee=2026&trimestre=1';
+  for (const u of EXPORTS_PERIODE) {
+    assert.equal((await getXlsx(`/api/clients/${a.ent}/${u}${per}`, null)).status, 401, `${u} : anonyme refusé`);
+    assert.equal((await getXlsx(`/api/clients/${a.ent}/${u}${per}`, cookieOf(b.u))).status, 404, `${u} : cloisonnement cabinet`);
+  }
+  const lot = uid('lot');
+  db.prepare('INSERT INTO import_lot (id,cabinet_id,entreprise_id,annee,trimestre,source_nom,statut) VALUES (?,?,?,?,?,?,?)')
+    .run(lot, a.cab, a.ent, 2026, 1, 's.xlsx', 'confirme');
+  assert.equal((await getText(`/api/imports/${lot}/rejections.csv`, cookieOf(b.u))).status, 404, 'rejets : cloisonnement cabinet');
+  assert.equal((await getText(`/api/imports/${lot}/rejections.csv`, null)).status, 401, 'rejets : anonyme refusé');
+  assert.equal((await getXlsx('/api/conventions/template.xlsx', null)).status, 401, 'modèle : anonyme refusé');
+});
+
+test('lot7/audit : chaque export est journalisé (utilisateur, date, cabinet, période, format)', async () => {
+  const t = newTenant(); seedDecl(t);
+  const per = '?annee=2026&trimestre=1';
+  await postJson(`/api/clients/${t.ent}/recompute${per}`, cookieOf(t.u));
+  db.prepare('DELETE FROM audit_log WHERE cabinet_id=?').run(t.cab);
+  await getXlsx(`/api/clients/${t.ent}/delais/export.xlsx${per}&filter=all`, cookieOf(t.u));
+  await getText(`/api/clients/${t.ent}/declaration/export.csv${per}`, cookieOf(t.u));
+  await getText(`/api/clients/${t.ent}/declaration/export.xml${per}`, cookieOf(t.u));
+  await getXlsx(`/api/clients/${t.ent}/visa/export.docx${per}`, cookieOf(t.u));
+  await getXlsx(`/api/clients/${t.ent}/visa/export.pdf${per}`, cookieOf(t.u));
+  const logs = db.prepare("SELECT action, entite, details, user_id, cabinet_id, created_at FROM audit_log WHERE cabinet_id=? AND action='export' ORDER BY rowid").all(t.cab);
+  assert.equal(logs.length, 5, 'les 5 exports sont tracés');
+  const formats = logs.map(l => JSON.parse(l.details).format);
+  assert.deepEqual(formats, ['xlsx', 'csv', 'xml', 'docx', 'pdf'], 'format consigné pour chaque export');
+  for (const l of logs) {
+    const d = JSON.parse(l.details);
+    assert.equal(l.user_id, t.u, 'utilisateur consigné');
+    assert.equal(l.cabinet_id, t.cab, 'cabinet consigné');
+    assert.ok(l.created_at, 'date et heure consignées');
+    assert.equal(d.annee, 2026, 'année consignée'); assert.equal(d.trimestre, 1, 'trimestre consigné');
+    assert.equal(d.entreprise, t.ent, 'client consigné');
+  }
+  // Le rapport de rejets est tracé lui aussi.
+  const lot = uid('lot');
+  db.prepare('INSERT INTO import_lot (id,cabinet_id,entreprise_id,annee,trimestre,source_nom,statut) VALUES (?,?,?,?,?,?,?)')
+    .run(lot, t.cab, t.ent, 2026, 1, 's.xlsx', 'confirme');
+  await getText(`/api/imports/${lot}/rejections.csv`, cookieOf(t.u));
+  const rej = db.prepare("SELECT details FROM audit_log WHERE cabinet_id=? AND entite='rejets_import'").get(t.cab);
+  assert.ok(rej && JSON.parse(rej.details).importId === lot, 'export des rejets tracé');
+});
+
+test('lot7/UI : le frontend transmet toujours la période active aux liens d\'export', () => {
+  const src = fs.readFileSync(path.join(__dirname, '..', 'public', 'js', 'app.js'), 'utf8');
+  assert.match(src, /export\.csv\$\{perQuery\(\)\}/, 'export CSV appelé avec la période active');
+  assert.match(src, /export\.xml\$\{perQuery\(\)\}/, 'export XML appelé avec la période active');
+  assert.match(src, /export\.xlsx\$\{qs\}\$\{sep\}filter=/, 'export Excel appelé avec la période active');
+  assert.match(src, /const q = `\?annee=\$\{state\.period\.annee\}&trimestre=\$\{state\.period\.trimestre\}/, 'visa appelé avec la période active');
+  assert.match(src, /export\.docx\$\{q\}/, 'visa Word avec période'); assert.match(src, /export\.pdf\$\{q\}/, 'visa PDF avec période');
+  // Toute vue exportable garantit d'abord la période active (ensurePeriod) avant de bâtir les liens.
+  for (const fn of ['renderDecl', 'renderVisa', 'renderDelais'])
+    assert.match(src, new RegExp(`async function ${fn}\\(\\)[\\s\\S]{0,200}ensurePeriod\\(\\)`), `${fn} garantit la période active`);
+});

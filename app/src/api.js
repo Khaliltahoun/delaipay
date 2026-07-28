@@ -72,6 +72,27 @@ function requirePeriod(req, res) {
   }
   return p;
 }
+// EXPORTS (LOT 7 — Phase 3) : la période est OBLIGATOIRE et validée, jamais devinée. Sans ce garde-fou
+// un export sans paramètre retombait silencieusement sur `latestPeriod` (« la plus fournie ») et une
+// période illisible produisait un livrable « declaration_NaN_T9.csv ». Un fichier remis à la DGI ne
+// doit jamais porter une période implicite. Réponse en texte brut : ces routes servent des fichiers.
+function requireExportPeriod(req, res) {
+  const p = readPeriodParams(req);
+  if (!p || !periode.isValidPeriod(p.annee, p.trimestre)) {
+    res.status(400).type('text/plain; charset=utf-8')
+      .send('Export impossible : période (année + trimestre) requise et valide — ex. ?annee=2026&trimestre=1.');
+    return null;
+  }
+  return p;
+}
+// Journalisation UNIFORME de tout export (LOT 7 — Phase 8) : qui, quand (`created_at`), quel cabinet,
+// quel client, quelle période, quel format, quel volume. Un livrable remis à la DGI doit être traçable.
+function auditExport(req, entite, format, e, p, extra) {
+  audit(req.cabinetId, req.user.id, 'export', entite, {
+    format, entreprise: e ? e.id : null, client: e ? e.raison_sociale : null,
+    annee: p ? p.annee : null, trimestre: p ? p.trimestre : null, ...(extra || {}),
+  }, req.ip);
+}
 // Retourne la ligne periode_declaration, en la CRÉANT paresseusement (défauts calendaires) si absente.
 function ensurePeriode(cabinetId, entrepriseId, annee, trimestre) {
   let row = db.prepare('SELECT * FROM periode_declaration WHERE entreprise_id=? AND annee=? AND trimestre=?').get(entrepriseId, annee, trimestre);
@@ -426,6 +447,9 @@ router.post('/clients/:id/periods/:annee/:trimestre/close', (req, res) => {
   // Fige l'état EXACT au moment du verrouillage (recalcul possible tant que non verrouillée),
   // puis verrouille : les valeurs ne bougeront plus (recomputePeriod devient no-op ensuite).
   recomputePeriod(req.cabinetId, e.id, p.annee, p.trimestre);
+  // LOT 7 — arrête aussi le TABLEAU DÉCLARATIF (lignes retenues + exclusions réseau + en-tête
+  // ca_ht/type_visa) AVANT de verrouiller : c'est ce snapshot que tous les exports reliront.
+  buildDeclaration(req.cabinetId, e, p.annee, p.trimestre);
   db.prepare(`UPDATE periode_declaration SET statut=?, date_cloture=datetime('now'), cloturee_par=?, updated_at=datetime('now') WHERE id=?`)
     .run(statut, req.user.id, pr.id);
   audit(req.cabinetId, req.user.id, 'cloture_periode', 'periode', { entreprise: e.id, annee: p.annee, trimestre: p.trimestre, avant: statutAvant, apres: statut }, req.ip);
@@ -724,6 +748,12 @@ function incidenceFactures(cabinetId, entrepriseId, annee, trimestre) {
 // Données de la feuille de délais (factures de la période + incidences reportées + totaux).
 // Fonction unique réutilisée par l'API JSON et par l'export Excel — même source de vérité.
 function delaisData(cabinetId, e, p) {
+  // LOT 7 — période VERROUILLÉE = feuille FIGÉE. Le délai autorisé et le retard sont relus depuis la
+  // facture arrêtée à la clôture au lieu d'être re-résolus en direct : sans cela une convention (ou
+  // une classification réseau) créée APRÈS la clôture affichait « 120 j / 0 j de retard » à côté
+  // d'une amende gelée, produisant un export auto-contradictoire (réserve P3-2 du LOT 6).
+  const prLock = db.prepare('SELECT statut FROM periode_declaration WHERE entreprise_id=? AND annee=? AND trimestre=?').get(e.id, p.annee, p.trimestre);
+  const figee = !!(prLock && periode.isLocked(prLock.statut));
   const rows = db.prepare(`SELECT f.*, fo.raison_sociale four_nom, fo.ice four_ice, fo.if_fiscal four_if,
       fo.operateur_reseau, fo.statut_classification, fo.hors_tableau_declaratif, fo.categorie_fournisseur, fo.delai_applicable fo_delai,
       (SELECT COUNT(*) FROM convention c WHERE c.fournisseur_id=f.fournisseur_id AND c.statut='valide') has_conv,
@@ -738,8 +768,10 @@ function delaisData(cabinetId, e, p) {
     const arr = calc.getDateArreteFacture({ dateFacture: f.date_facture, datePaiement: f.date_paiement, annee: p.annee, trimestre: p.trimestre });
     // Délai AUTORISÉ résolu centralement (opérateur réseau 30 j prioritaire).
     const rd = reseau.resolveDelaiAutorise({ fournisseur: { operateur_reseau: f.operateur_reseau, statut_classification: f.statut_classification, hors_tableau_declaratif: f.hors_tableau_declaratif, motif_regle_speciale: f.motif_regle_speciale, delai_applicable: f.fo_delai }, convention: f.conv_delai != null ? { delai_convenu: f.conv_delai } : null });
-    const delaiApp = rd.delaiAutorise;
-    const retard = arr.delaiConstate == null ? null : Math.max(0, arr.delaiConstate - delaiApp);
+    // Période figée : on relit la valeur ARRÊTÉE (celle qui a servi à calculer l'amende), pas la règle courante.
+    const delaiApp = figee ? calc.saneDelai(f.delai_applicable) : rd.delaiAutorise;
+    const retard = figee ? (f.retard_jours == null ? null : f.retard_jours)
+      : (arr.delaiConstate == null ? null : Math.max(0, arr.delaiConstate - delaiApp));
     return {
       id: f.id, numero: f.numero, four: f.four_nom, four_id: f.fournisseur_id, four_if: f.four_if, four_ice: f.four_ice, nature: f.designation,
       ttc: f.ttc, mht: f.mht, tva: f.tva, date_facture: f.date_facture, date_paiement: f.date_paiement,
@@ -775,17 +807,28 @@ function delaisData(cabinetId, e, p) {
     incidence: true, periode_origine: `T${f.trimestre} ${f.annee}`,
   }));
   const all = list.concat(inc);
-  const totals = {
-    count: all.length, incidences: inc.length,
-    ttc: round2(list.reduce((s, x) => s + (x.ttc || 0), 0)),
-    aDeclarer: all.filter(x => x.a_declarer).length,
-    ttcRetard: round2(all.filter(x => x.a_declarer).reduce((s, x) => s + (x.ttc || 0), 0)),
-    amende: round2(all.reduce((s, x) => s + (x.amende || 0), 0)),
+  return { periode: p, rows: all, totals: delaisTotals(all), figee };
+}
+
+// Totalisation UNIQUE de la feuille de délais — partagée par l'API JSON (écran) et par l'export
+// Excel (appliquée au sous-ensemble filtré). Toute divergence de définition entre l'écran et le
+// fichier est ainsi impossible : « TTC » = factures DE la période (hors incidences reportées),
+// « amende » = tout ce qui est dû AU TITRE de la période (incidences comprises).
+function delaisTotals(rows) {
+  const propres = rows.filter(x => !x.incidence);
+  const inc = rows.filter(x => x.incidence);
+  const aDecl = rows.filter(x => x.a_declarer);
+  return {
+    count: rows.length, incidences: inc.length,
+    ttc: round2(propres.reduce((s, x) => s + (x.ttc || 0), 0)),
+    ttcIncidence: round2(inc.reduce((s, x) => s + (x.ttc || 0), 0)),
+    aDeclarer: aDecl.length,
+    ttcRetard: round2(aDecl.reduce((s, x) => s + (x.ttc || 0), 0)),
+    amende: round2(rows.reduce((s, x) => s + (x.amende || 0), 0)),
     amendeIncidence: round2(inc.reduce((s, x) => s + (x.amende || 0), 0)),
-    retardMoyen: (() => { const r = all.filter(x => x.a_declarer); return r.length ? Math.round(r.reduce((s, x) => s + x.retard, 0) / r.length) : 0; })(),
-    sansConvention: all.filter(x => !x.has_conv && x.delai_applicable >= 120).length,
+    retardMoyen: aDecl.length ? Math.round(aDecl.reduce((s, x) => s + (x.retard || 0), 0) / aDecl.length) : 0,
+    sansConvention: rows.filter(x => !x.has_conv && x.delai_applicable >= 120).length,
   };
-  return { periode: p, rows: all, totals };
 }
 
 // Filtres de la feuille de délais (mêmes critères que le frontend).
@@ -804,19 +847,19 @@ router.get('/clients/:id/delais', (req, res) => {
 // Export Excel formaté de la feuille de délais, filtré (toutes / retard / convention absente).
 router.get('/clients/:id/delais/export.xlsx', (req, res) => {
   const e = ownedEntreprise(req, req.params.id); if (!e) return res.status(404).send('Introuvable');
-  const p = req.query.annee ? { annee: +req.query.annee, trimestre: +req.query.trimestre } : latestPeriod(e.id);
+  const p = requireExportPeriod(req, res); if (!p) return;
   const filtre = DELAIS_FILTRES[req.query.filter] ? req.query.filter : 'all';
-  const { rows } = delaisData(req.cabinetId, e, p);
+  const { rows, figee } = delaisData(req.cabinetId, e, p);
   const filtered = rows.filter(DELAIS_FILTRES[filtre].test);
-  const buf = buildDelaisXlsx(e, p, filtre, filtered);
+  const buf = buildDelaisXlsx(e, p, filtre, filtered, figee);
   res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
   res.setHeader('Content-Disposition', `attachment; filename="delais_${slugify(e.raison_sociale)}_T${p.trimestre}_${p.annee}_${filtre}.xlsx"`);
-  audit(req.cabinetId, req.user.id, 'export', 'delais', { format: 'xlsx', filtre, entreprise: e.id, nb: filtered.length }, req.ip);
+  auditExport(req, 'delais', 'xlsx', e, p, { filtre, nb: filtered.length, figee });
   res.send(buf);
 });
 
 // Construit un classeur Excel clair et organisé (titre, en-têtes, totaux, largeurs, formats de nombre).
-function buildDelaisXlsx(e, p, filtre, rows) {
+function buildDelaisXlsx(e, p, filtre, rows, figee) {
   const fLabel = DELAIS_FILTRES[filtre].label;
   const dfr = iso => { if (!iso) return ''; const m = String(iso).match(/^(\d{4})-(\d{2})-(\d{2})/); return m ? `${m[3]}/${m[2]}/${m[1]}` : iso; };
   const DOUBLON = { potentiel: 'À vérifier', confirme: 'Confirmé', faux_positif: 'Faux positif', aucun: '' };
@@ -837,13 +880,26 @@ function buildDelaisXlsx(e, p, filtre, rows) {
     RISK[r.risk] || '',
     r.incidence ? (r.periode_origine || 'Oui') : '',
   ]);
-  const totalTtc = round2(rows.reduce((s, x) => s + (x.ttc || 0), 0));
-  const totalAmende = round2(rows.reduce((s, x) => s + (x.amende || 0), 0));
-  const nbRetard = rows.filter(x => x.a_declarer).length;
+  // Totaux calculés par la MÊME fonction que l'écran (delaisTotals) : « TTC » = factures de la
+  // période, hors incidences reportées — additionner ces dernières donnait un total Excel supérieur
+  // au total affiché. Les incidences sont totalisées sur leur propre ligne, sans jamais disparaître.
+  const T = delaisTotals(rows);
   const title = `Feuille de calcul des délais — ${e.raison_sociale}`;
-  const subtitle = `Période T${p.trimestre} ${p.annee} · Filtre : ${fLabel} · ${rows.length} facture(s) · ${nbRetard} en retard · Édité le ${dfr(calc.iso(new Date()))}`;
-  const totalRow = ['TOTAL', '', '', '', '', totalTtc, '', '', '', '', '', '', '', totalAmende, '', '', ''];
-  const aoa = [[title], [subtitle], [], HEAD, ...dataRows, [], totalRow];
+  const subtitle = `Période T${p.trimestre} ${p.annee} · Filtre : ${fLabel} · ${T.count - T.incidences} facture(s) de la période`
+    + (T.incidences ? ` + ${T.incidences} incidence(s) reportée(s)` : '')
+    // Mention exacte : sur une période clôturée les factures DE la période sont figées ; les
+    // incidences reportées restent, elles, rattachées à leur période d'origine (non figée).
+    + ` · ${T.aDeclarer} en retard`
+    + (figee ? ` · PÉRIODE CLÔTURÉE — valeurs figées${T.incidences ? ' (hors incidences reportées, rattachées à leur période d\'origine)' : ''}` : '')
+    + ` · Édité le ${dfr(calc.iso(new Date()))}`;
+  const totalRow = ['TOTAL', '', '', '', '', T.ttc, '', '', '', '', '', '', '', round2(T.amende - T.amendeIncidence), '', '', ''];
+  // Les incidences reportées (factures d'un trimestre antérieur pesant encore sur celui-ci) sont
+  // totalisées à part, puis cumulées : rien n'est perdu et rien n'est mélangé.
+  const extra = T.incidences ? [
+    ['Incidences reportées', '', '', '', '', T.ttcIncidence, '', '', '', '', '', '', '', T.amendeIncidence, '', '', `${T.incidences} ligne(s)`],
+    ['TOTAL AMENDE DUE AU TITRE DE LA PÉRIODE', '', '', '', '', '', '', '', '', '', '', '', '', T.amende, '', '', ''],
+  ] : [];
+  const aoa = [[title], [subtitle], [], HEAD, ...dataRows, [], totalRow, ...extra];
   const ws = XLSX.utils.aoa_to_sheet(aoa);
   ws['!cols'] = [{ wch: 16 }, { wch: 30 }, { wch: 14 }, { wch: 18 }, { wch: 22 }, { wch: 16 }, { wch: 12 }, { wch: 12 },
     { wch: 12 }, { wch: 15 }, { wch: 15 }, { wch: 9 }, { wch: 10 }, { wch: 14 }, { wch: 13 }, { wch: 11 }, { wch: 16 }];
@@ -1071,10 +1127,16 @@ router.get('/imports/:importId/rejections.csv', (req, res) => {
   if (!lot) return res.status(404).send('Introuvable');
   const rows = db.prepare(`SELECT numero_ligne, feuille, statut, motif, champ, donnees_brutes_json FROM import_ligne
     WHERE import_lot_id=? AND statut IN ('ignoree','rejetee','doublon') ORDER BY numero_ligne`).all(lot.id);
+  // Toutes les cellules passent par csvCell : les valeurs viennent d'un classeur téléversé (nom de
+  // feuille, contenu brut) — sans échappement, un « ; » dans un nom de feuille décalait les colonnes
+  // et un contenu commençant par « = » restait exécutable à l'ouverture dans Excel.
   let csv = 'Ligne;Feuille;Statut;Motif;Champ;Donnees\n';
-  for (const r of rows) csv += `${r.numero_ligne};${r.feuille || ''};${r.statut};${(r.motif || '').replace(/;/g, ',')};${r.champ || ''};${(r.donnees_brutes_json || '').replace(/[;\n]/g, ' ').slice(0, 300)}\n`;
+  for (const r of rows)
+    csv += [r.numero_ligne, r.feuille || '', r.statut, r.motif || '', r.champ || '',
+      String(r.donnees_brutes_json || '').replace(/[\r\n]+/g, ' ').slice(0, 300)].map(csvCell).join(';') + '\n';
   res.setHeader('Content-Type', 'text/csv; charset=utf-8');
   res.setHeader('Content-Disposition', `attachment; filename="rejets_${lot.id}.csv"`);
+  auditExport(req, 'rejets_import', 'csv', null, { annee: lot.annee, trimestre: lot.trimestre }, { importId: lot.id, source: lot.source_nom, nb: rows.length });
   res.send('﻿' + csv);
 });
 
@@ -1201,7 +1263,40 @@ router.delete('/clients/:id/conventions/:convId', (req, res) => {
 });
 
 /* ============================================================ DECLARATIONS */
+// IMMUABILITÉ DÉCLARATIVE (LOT 6 → LOT 7) : une période verrouillée expose la déclaration TELLE
+// QU'ELLE A ÉTÉ ARRÊTÉE. `recomputePeriod` gelait déjà les factures, mais l'agrégat était refait à
+// chaque lecture : l'ensemble des EXCLUSIONS réseau et l'en-tête (ca_ht / type_visa) étaient relus
+// en direct → une confirmation « opérateur de réseau » ou un changement de CA POSTÉRIEURS à la
+// clôture modifiaient le montant déclaré et réécrivaient la déclaration figée depuis un simple GET.
+// Ici : lecture seule du snapshot stocké (declaration + ligne_declaration), aucune écriture.
+function frozenDeclaration(entrepriseId, annee, trimestre) {
+  const d = db.prepare('SELECT * FROM declaration WHERE entreprise_id=? AND annee=? AND trimestre=?').get(entrepriseId, annee, trimestre);
+  if (!d) return null;
+  const lignes = db.prepare(`SELECT facture_id, fournisseur_if, fournisseur_nom, ttc, non_paye, paye_hors_delai, retard_jours, montant_amende
+    FROM ligne_declaration WHERE declaration_id=? ORDER BY montant_amende DESC`).all(d.id)
+    .map(l => ({ facture_id: l.facture_id, if: l.fournisseur_if, nom: l.fournisseur_nom, ttc: l.ttc,
+                 non_paye: l.non_paye, hors_delai: l.paye_hors_delai, retard: l.retard_jours, amende: l.montant_amende }));
+  // Exclusions reconstituées depuis le snapshot : factures à déclarer de la période ABSENTES du
+  // tableau figé = celles qui en ont été écartées au moment de l'arrêté (aucune relecture live).
+  const retenues = new Set(lignes.map(l => l.facture_id));
+  const exclues = db.prepare(`SELECT f.id, f.ttc, f.montant_amende, f.fournisseur_id FROM facture f
+    WHERE f.entreprise_id=? AND f.annee=? AND f.trimestre=? AND f.a_declarer=1`).all(entrepriseId, annee, trimestre)
+    .filter(f => !retenues.has(f.id));
+  const exclusions = {
+    nbFactures: exclues.length,
+    ttc: round2(exclues.reduce((s, f) => s + (f.ttc || 0), 0)),
+    amende: round2(exclues.reduce((s, f) => s + (f.montant_amende || 0), 0)),
+    nbFournisseurs: new Set(exclues.map(f => f.fournisseur_id)).size,
+    motif: reseau.MOTIF_RESEAU,
+  };
+  return { declaration: d, lignes, exclusions, figee: true };
+}
 function buildDeclaration(cabinetId, entreprise, annee, trimestre) {
+  const pr = db.prepare('SELECT statut FROM periode_declaration WHERE entreprise_id=? AND annee=? AND trimestre=?').get(entreprise.id, annee, trimestre);
+  if (pr && periode.isLocked(pr.statut)) {
+    const snap = frozenDeclaration(entreprise.id, annee, trimestre);
+    if (snap) return snap;   // sinon (période verrouillée sans déclaration arrêtée) : on la construit une fois, puis elle est figée.
+  }
   recomputePeriod(cabinetId, entreprise.id, annee, trimestre);
   const allFacs = db.prepare(`SELECT f.*, fo.raison_sociale four_nom, fo.if_fiscal four_if,
        fo.operateur_reseau, fo.statut_classification, fo.hors_tableau_declaratif, fo.categorie_fournisseur
@@ -1248,37 +1343,64 @@ function buildDeclaration(cabinetId, entreprise, annee, trimestre) {
   db.prepare('DELETE FROM ligne_declaration WHERE declaration_id=?').run(d.id);
   const ins = db.prepare(`INSERT INTO ligne_declaration (id,declaration_id,facture_id,fournisseur_if,fournisseur_nom,ttc,non_paye,paye_hors_delai,retard_jours,montant_amende) VALUES (?,?,?,?,?,?,?,?,?,?)`);
   for (const l of lignes) ins.run(uid('lgn'), d.id, l.facture_id, l.if, l.nom, l.ttc, l.non_paye, l.hors_delai, l.retard, l.amende);
-  return { declaration: d, lignes, exclusions };
+  return { declaration: d, lignes, exclusions, figee: false };
 }
 router.get('/clients/:id/declaration', (req, res) => {
   const e = ownedEntreprise(req, req.params.id); if (!e) return res.status(404).json({ error: 'Introuvable.' });
   const p = req.query.annee ? { annee: +req.query.annee, trimestre: +req.query.trimestre } : latestPeriod(e.id);
-  const { declaration, lignes, exclusions } = buildDeclaration(req.cabinetId, e, p.annee, p.trimestre);
-  res.json({ entreprise: shapeEnt(e), declaration, lignes, exclusions });
+  const { declaration, lignes, exclusions, figee } = buildDeclaration(req.cabinetId, e, p.annee, p.trimestre);
+  // Sur une période figée, l'en-tête affiché est celui ARRÊTÉ (CA / type de visa), pas la valeur courante.
+  res.json({ entreprise: shapeEnt(e, figee ? declaration : null), declaration, lignes, exclusions, figee: !!figee });
 });
-function shapeEnt(e) { return { id: e.id, raison_sociale: e.raison_sociale, ice: e.ice, if_fiscal: e.if_fiscal, rc: e.rc, adresse: e.adresse, ville: e.ville, ca_ht: e.ca_ht, secteur: e.secteur, type_visa: visaOf(e.ca_ht) }; }
+function shapeEnt(e, fige) {
+  return { id: e.id, raison_sociale: e.raison_sociale, ice: e.ice, if_fiscal: e.if_fiscal, rc: e.rc,
+    adresse: e.adresse, ville: e.ville, secteur: e.secteur,
+    ca_ht: fige ? fige.ca_ht : e.ca_ht, type_visa: fige ? fige.type_visa : visaOf(e.ca_ht) };
+}
+
+// Montants des livrables : TOUJOURS 2 décimales, point décimal (format d'échange, indépendant de la
+// locale). Sans cela un TTC brut « 1234.567 » partait dans le fichier alors que l'écran et le
+// récapitulatif affichent 1 234,57 → la somme des lignes ne retombait pas sur le total déclaré.
+function money2(n) { return round2(Number(n) || 0).toFixed(2); }
 
 router.get('/clients/:id/declaration/export.csv', (req, res) => {
   const e = ownedEntreprise(req, req.params.id); if (!e) return res.status(404).send('Introuvable');
-  const p = req.query.annee ? { annee: +req.query.annee, trimestre: +req.query.trimestre } : latestPeriod(e.id);
-  const { lignes } = buildDeclaration(req.cabinetId, e, p.annee, p.trimestre);
-  let csv = 'IF fournisseur;Raison sociale;Montant TTC;Non payees;Paye hors delai;Retard (j);Amende\n';
-  for (const l of lignes) csv += `${csvCell(l.if)};${csvCell(l.nom)};${l.ttc};${l.non_paye};${l.hors_delai};${l.retard};${l.amende}\n`;
+  const p = requireExportPeriod(req, res); if (!p) return;
+  const { declaration, lignes, exclusions, figee } = buildDeclaration(req.cabinetId, e, p.annee, p.trimestre);
+  // Colonnes historiques conservées DANS LE MÊME ORDRE (aucun consommateur cassé) ; année et
+  // trimestre ajoutés en fin de ligne pour qu'un fichier détaché de son nom reste non ambigu.
+  let csv = 'IF fournisseur;Raison sociale;Montant TTC;Non payees;Paye hors delai;Retard (j);Amende;Annee;Trimestre\n';
+  for (const l of lignes)
+    csv += `${csvCell(l.if)};${csvCell(l.nom)};${money2(l.ttc)};${money2(l.non_paye)};${money2(l.hors_delai)};${l.retard == null ? '' : l.retard};${money2(l.amende)};${p.annee};${p.trimestre}\n`;
+  // Total : même valeurs que le pied de tableau de l'écran.
+  csv += `TOTAL;${lignes.length} ligne(s);${money2(declaration.montant_total_ttc)};${money2(declaration.montant_non_paye)};${money2(declaration.montant_paye_hors_delai)};;${money2(declaration.montant_total_amende)};${p.annee};${p.trimestre}\n`;
+  // EXCLUSIONS RÉSEAU : jamais silencieuses — le fichier dit ce qui a été écarté et pourquoi.
+  if (exclusions && exclusions.nbFactures)
+    csv += `EXCLUSIONS RESEAU;${csvCell(exclusions.motif)};${money2(exclusions.ttc)};;;;${money2(exclusions.amende)};${p.annee};${p.trimestre}\n`;
   res.setHeader('Content-Type', 'text/csv; charset=utf-8');
   res.setHeader('Content-Disposition', `attachment; filename="declaration_${p.annee}_T${p.trimestre}.csv"`);
+  auditExport(req, 'declaration', 'csv', e, p, { nb: lignes.length, exclues: exclusions ? exclusions.nbFactures : 0, figee: !!figee });
   res.send('﻿' + csv);
 });
 router.get('/clients/:id/declaration/export.xml', (req, res) => {
   const e = ownedEntreprise(req, req.params.id); if (!e) return res.status(404).send('Introuvable');
-  const p = req.query.annee ? { annee: +req.query.annee, trimestre: +req.query.trimestre } : latestPeriod(e.id);
-  const { declaration, lignes } = buildDeclaration(req.cabinetId, e, p.annee, p.trimestre);
+  const p = requireExportPeriod(req, res); if (!p) return;
+  const { declaration, lignes, exclusions, figee } = buildDeclaration(req.cabinetId, e, p.annee, p.trimestre);
   const esc = s => String(s == null ? '' : s).replace(/[<>&]/g, c => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;' }[c]));
+  // En-tête du déclarant : sur une période figée, le CA arrêté (pas la valeur courante de la fiche).
+  const caHt = figee ? declaration.ca_ht : e.ca_ht;
   let xml = `<?xml version="1.0" encoding="UTF-8"?>\n<DeclarationDelaisPaiement annee="${p.annee}" periode="T${p.trimestre}">\n`;
-  xml += `  <Declarant><RaisonSociale>${esc(e.raison_sociale)}</RaisonSociale><IF>${esc(e.if_fiscal)}</IF><ICE>${esc(e.ice)}</ICE><RC>${esc(e.rc)}</RC><CAHT>${e.ca_ht}</CAHT></Declarant>\n  <Factures>\n`;
-  for (const l of lignes) xml += `    <Facture><IFFournisseur>${esc(l.if)}</IFFournisseur><RaisonSociale>${esc(l.nom)}</RaisonSociale><MontantTTC>${l.ttc}</MontantTTC><NonPaye>${l.non_paye}</NonPaye><PayeHorsDelai>${l.hors_delai}</PayeHorsDelai><Amende>${l.amende}</Amende></Facture>\n`;
-  xml += `  </Factures>\n  <Recapitulatif><TotalTTC>${declaration.montant_total_ttc}</TotalTTC><TotalAmende>${declaration.montant_total_amende}</TotalAmende><MontantAVerser>${declaration.montant_a_verser}</MontantAVerser><TypeVisa>${declaration.type_visa}</TypeVisa></Recapitulatif>\n</DeclarationDelaisPaiement>\n`;
+  xml += `  <Declarant><RaisonSociale>${esc(e.raison_sociale)}</RaisonSociale><IF>${esc(e.if_fiscal)}</IF><ICE>${esc(e.ice)}</ICE><RC>${esc(e.rc)}</RC><CAHT>${money2(caHt)}</CAHT></Declarant>\n  <Factures>\n`;
+  for (const l of lignes) xml += `    <Facture><IFFournisseur>${esc(l.if)}</IFFournisseur><RaisonSociale>${esc(l.nom)}</RaisonSociale><MontantTTC>${money2(l.ttc)}</MontantTTC><NonPaye>${money2(l.non_paye)}</NonPaye><PayeHorsDelai>${money2(l.hors_delai)}</PayeHorsDelai><Retard>${l.retard == null ? '' : l.retard}</Retard><Amende>${money2(l.amende)}</Amende></Facture>\n`;
+  xml += `  </Factures>\n`;
+  // Exclusions réseau tracées dans le flux (élément additif : un lecteur existant l'ignore).
+  xml += `  <Exclusions nb="${exclusions ? exclusions.nbFactures : 0}" nbFournisseurs="${exclusions ? exclusions.nbFournisseurs : 0}">`
+    + `<MontantTTC>${money2(exclusions ? exclusions.ttc : 0)}</MontantTTC><Amende>${money2(exclusions ? exclusions.amende : 0)}</Amende>`
+    + `<Motif>${esc(exclusions ? exclusions.motif : '')}</Motif></Exclusions>\n`;
+  xml += `  <Recapitulatif><NbLignes>${lignes.length}</NbLignes><TotalTTC>${money2(declaration.montant_total_ttc)}</TotalTTC><TotalAmende>${money2(declaration.montant_total_amende)}</TotalAmende><MontantAVerser>${money2(declaration.montant_a_verser)}</MontantAVerser><TypeVisa>${esc(declaration.type_visa)}</TypeVisa><PeriodeFigee>${figee ? 'oui' : 'non'}</PeriodeFigee></Recapitulatif>\n</DeclarationDelaisPaiement>\n`;
   res.setHeader('Content-Type', 'application/xml; charset=utf-8');
   res.setHeader('Content-Disposition', `attachment; filename="EDI_${p.annee}_T${p.trimestre}.xml"`);
+  auditExport(req, 'declaration', 'xml', e, p, { nb: lignes.length, exclues: exclusions ? exclusions.nbFactures : 0, figee: !!figee });
   res.send(xml);
 });
 
@@ -1303,19 +1425,21 @@ router.get('/clients/:id/visa', (req, res) => {
 });
 router.get('/clients/:id/visa/export.docx', asyncHandler(async (req, res) => {
   const e = ownedEntreprise(req, req.params.id); if (!e) return res.status(404).send('Introuvable');
-  const { p, data } = visaData(req, e);
+  if (!requireExportPeriod(req, res)) return;
+  const { p, declaration, data } = visaData(req, e);
   const buf = await visa.toDocx(data.blocks);
   res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document');
   res.setHeader('Content-Disposition', `attachment; filename="Visa_${slugify(e.raison_sociale)}_T${p.trimestre}_${p.annee}.docx"`);
-  audit(req.cabinetId, req.user.id, 'export', 'visa', { format: 'docx', entreprise: e.id }, req.ip);
+  auditExport(req, 'visa', 'docx', e, p, { type: data.type, montant_vise: declaration.montant_total_ttc, conclusion: data.conclusion });
   res.send(buf);
 }));
 router.get('/clients/:id/visa/export.pdf', (req, res, next) => {
   const e = ownedEntreprise(req, req.params.id); if (!e) return res.status(404).send('Introuvable');
-  const { p, data } = visaData(req, e);
+  if (!requireExportPeriod(req, res)) return;
+  const { p, declaration, data } = visaData(req, e);
   res.setHeader('Content-Type', 'application/pdf');
   res.setHeader('Content-Disposition', `attachment; filename="Visa_${slugify(e.raison_sociale)}_T${p.trimestre}_${p.annee}.pdf"`);
-  audit(req.cabinetId, req.user.id, 'export', 'visa', { format: 'pdf', entreprise: e.id }, req.ip);
+  auditExport(req, 'visa', 'pdf', e, p, { type: data.type, montant_vise: declaration.montant_total_ttc, conclusion: data.conclusion });
   try {
     const doc = visa.toPdf(data.blocks, res);
     if (doc && doc.on) doc.on('error', next);
