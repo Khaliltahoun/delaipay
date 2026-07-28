@@ -15,7 +15,9 @@ back.jpg
 *.tmp
 
 # --- Fichiers clients & données réelles : NON publiés ---
-docs/
+# docs/ : on VERSIONNE la documentation (*.md) mais JAMAIS les fichiers clients (xlsx/pdf/docx…)
+docs/*
+!docs/*.md
 app/screenshots/
 *.pdf
 CAHIER_DES_CHARGES_DelaiPay.md

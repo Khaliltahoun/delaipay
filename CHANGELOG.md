@@ -1,150 +1,223 @@
 # Changelog — DelaiPay
 
-## LOT 1 (P0) — Sécurisation de l'auto-mapping des imports (corruption silencieuse) (juillet 2026)
+Toutes les évolutions notables de DelaiPay sont consignées dans ce fichier.
 
-### Corrigé / Ajouté
-- **Corruption silencieuse de l'auto-mapping** (reproduite sur `BANKAI RELEV DED TVA 005`) : le Fournisseur était mappé sur `M_TTC` (montants → noms) et le Montant TTC sur `ORDRE` (n° de ligne → montants), à seulement 60 % de confiance, sans blocage. **Cause** : le mapping par titre ne reconnaissait pas les en-têtes EDI `M_TTC` / `LIB_FRSS` / `ICE_FRS` / `FACT_NUM`, qui tombaient dans l'inférence par contenu (fragile). **Correctifs génériques** (aucun code spécifique BANKAI) :
-  - reconnaissance des en-têtes EDI standard (SIMPL/DGI) par titre → 004 **et** 005 mappent `Fournisseur→LIB_FRSS` et `TTC→M_TTC` à **92 %** de façon déterministe ;
-  - **détection des colonnes séquentielles** (1, 2, 3… `ORDRE`) → jamais retenues comme Montant TTC ;
-  - **`profileColumn(values)`** : profil réel d'une colonne (taux numérique/texte/date, distinct, longueur, séquentiel, montant, identifiant, min/max, exemples) ;
-  - **`validateImportMapping({mapping, columnProfiles, requiredFields})`** : erreurs bloquantes (Fournisseur sur colonne numérique, TTC sur séquence/ORDRE, type incompatible, colonne partagée par des champs incompatibles, champ obligatoire absent), avertissements et confiance globale ;
-  - **blocage dur** : `confirmImport` REFUSE tout mapping incohérent (aucune écriture) ; la prévisualisation expose la validation, la somme brute de la colonne TTC mappée, et l'assistant **désactive « Confirmer »** avec un message explicite tant que les erreurs bloquantes ne sont pas corrigées ;
-  - **`isValidSupplierDisplayName(name)`** : une raison sociale purement numérique / au format d'un montant (7596, « 28 200,00 ») n'est jamais acceptée ; un vrai nom avec chiffres (SOCIETE 3D, MAROC 24) l'est.
-- **Non-régression** : CADOZAT inchangé (36 factures / 7 025,33 DH), imports 004 déjà corrects préservés. Suite de tests **116/116**.
+Le format s'appuie sur [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/),
+et le projet suit le [versionnage sémantique](https://semver.org/lang/fr/).
 
-## Correctif — délai conventionnel robuste aux formats Excel réels (juillet 2026)
+DelaiPay est un SaaS multi-tenant de suivi des délais de paiement au titre de la
+**loi marocaine 69-21**, destiné aux cabinets d'expertise comptable.
 
-### Corrigé
-- **Régression `parseConvDelaiStrict` trop strict** : les cellules réelles comme « 90JOURS », « 120JOURS », « 90 jours », « 90 J », « 30J », « 90.0 » étaient **rejetées à tort** (« le délai conventionnel doit être un entier compris entre 1 et 120 jours. »). Le parseur **extrait** désormais le nombre (unité J/JOUR/JOURS, casse, espaces multiples, tabulations ignorés) puis applique la **règle métier inchangée** : entier **1..120**, enregistré **exactement** (90JOURS → 90, 120JOURS → 120). Refus conservés pour : aucun nombre (« abc »), plusieurs nombres différents (« 90/120 », « 90 et 120 »), décimal non entier (« 90.5 »), 0, négatif, > 120 (« 121JOURS »). S'applique au flux mappé (assistant), à la prévisualisation et à la confirmation ; l'import auto legacy (`parseDelai`) était déjà tolérant. Suite de tests **108/108**.
+---
 
-## Import des conventions unifié (mapping libre) + matching & délais robustes (juillet 2026)
+## [1.0.0] — 2026-07-28
 
-### Ajouté
-- **Import des conventions via l'assistant** (mapping libre des colonnes) — **réutilise exactement le composant de mapping de l'import TVA** : analyse → feuille & mapping (auto + confiance, corrigeable) → prévisualisation (aucune écriture) → confirmation. Champs mappables : Nom fournisseur, ICE, IF, RC, Convention (OUI/NON), Délai conventionnel, Date début/fin, Référence, Commentaire. Endpoints `POST /clients/:id/conventions/preview` (dry-run) et `/confirm` ; `POST /clients/:id/import/analyze` accepte `kind=conventions`. L'import auto historique (sans mapping) reste disponible (rétro-compatibilité).
-- **`util.normalizeSupplierName`** — fonction **centralisée et unique** de rapprochement des noms (comparaison uniquement) : ignore casse, accents, espaces (début/fin/multiples), tabulations, tirets, underscores, ponctuation ; neutralise les formes juridiques. Priorité d'identification **ICE → IF → RC → nom normalisé**. Le **nom affiché n'est JAMAIS modifié** (jamais écrasé ; rempli seulement s'il était vide). Utilisée par l'import des conventions ET des factures.
-- **Délai conventionnel variable et strict (1..120)** dans le flux mappé : n'importe quel entier de 1 à 120 est enregistré **exactement** (aucun arrondi, aucune conversion, aucune normalisation — 79 reste 79, 103 reste 103). Toute valeur invalide (vide, 0, négative, décimale, texte, > 120) est **rejetée** avec un message explicite : *« le délai conventionnel doit être un entier compris entre 1 et 120 jours. »* — jamais corrigée automatiquement.
-- **Recalcul automatique des factures** après import/suppression d'une convention : **toutes les périodes NON clôturées** des fournisseurs concernés sont recalculées (le délai autorisé de la feuille de délais reflète immédiatement le nouveau délai) ; les **périodes clôturées ne sont jamais modifiées**.
+Première version stable de production. Elle consolide six lots de correctifs
+d'intégrité métier (LOTs 1 à 6), chacun développé, testé puis validé
+indépendamment par la revue Claude Cowork (tests réels sur navigateur).
 
-### Corrigé
-- **Vrai numéro de ligne Excel** dans tous les messages d'erreur d'import (TVA, conventions, factures, assistant) : la lecture des feuilles préserve désormais la position réelle (`blankrows` + origine de plage) — le numéro affiché correspond à la ligne du fichier Excel (ex. « Ligne 15 »), jamais recalculé à partir des lignes ignorées/vides/en-têtes/du mapping.
-- La colonne `resolue_le` des anomalies est présente (déjà corrigée précédemment).
+- **Version applicative** (`/healthz`) : `e25ef50ee4`
+- **Commit** : `17ca7ac`
+- **Tag** : `v1.0.0`
+- **Suite de tests** : 160/160 au vert
+- **Non-régression de référence** : CADOZAT T1 2026 = **7 025,33 DH / 36 factures** (inchangé sur les 6 lots)
 
-### Préservé
-- **CADOZAT = 36 factures / 7 025,33 DH** inchangé. Import auto legacy des conventions inchangé (« 60 à 120 » → 120). Suite de tests **106/106**.
+### LOT 1 — Sécurisation de l'auto-mapping des imports (P0)
 
-## Export Excel de la feuille de délais, par filtre (juillet 2026)
+*Commit `75c22ee`. Corrige une corruption silencieuse des données à l'import (reproduite sur `BANKAI RELEV DED TVA 005`).*
 
-### Ajouté
-- **Bouton « Excel » par filtre** dans la feuille de calcul des délais (**Toutes**, **Retard > 0**, **Convention absente**) : chaque filtre exporte exactement ses factures dans un **classeur `.xlsx` formaté** (titre, sous-titre période/filtre/date, en-têtes clairs, largeurs de colonnes, montants au format `#,##0.00`, **ligne TOTAL** TTC + amende).
-- **Endpoint `GET /clients/:id/delais/export.xlsx?annee=&trimestre=&filter=all|retard|conv`** : authentifié, isolé par tenant (404 hors périmètre), filtre inconnu → « toutes », audité. Colonnes exportées : N° facture, fournisseur (IF/ICE), nature, TTC, dates facture/paiement/arrêté, délai constaté/autorisé, retard, à déclarer, amende, revue doublon, risque, incidence reportée.
-- Le calcul de la feuille est factorisé (`delaisData`) et **partagé** entre l'API JSON et l'export → même source de vérité (aucun double comptage).
-- Frontend : téléchargement via `blob` (état de chargement sur le bouton, toast de succès/erreur), nom de fichier `delais_<client>_T<t>_<annee>_<filtre>.xlsx`.
+#### Objectif
+Empêcher qu'un mauvais mapping automatique des colonnes Excel/EDI n'écrive des
+données incohérentes sans que rien ne le signale (montants pris pour des noms,
+numéros de ligne pris pour des montants).
 
-### Préservé
-- **CADOZAT** : l'export « Retard » = 16 factures, **TOTAL amende 7 025,33 DH** (inchangé). Suite de tests **92/92**.
+#### Ajouté
+- Reconnaissance **déterministe** des en-têtes EDI standard (SIMPL/DGI) par titre
+  (`M_TTC`, `LIB_FRSS`, `ICE_FRS`, `FACT_NUM`) : `Fournisseur → LIB_FRSS` et
+  `TTC → M_TTC` mappés à 92 % de confiance, sans passer par l'inférence de contenu fragile.
+- **Détection des colonnes séquentielles** (1, 2, 3… `ORDRE`) : jamais retenues comme Montant TTC.
+- **`profileColumn(values)`** : profil réel d'une colonne (taux numérique/texte/date,
+  valeurs distinctes, longueur, séquentialité, montant, identifiant, min/max, exemples).
+- **`validateImportMapping({mapping, columnProfiles, requiredFields})`** : validation à
+  erreurs bloquantes (Fournisseur sur colonne numérique, TTC sur séquence/`ORDRE`, type
+  incompatible, colonne partagée par des champs incompatibles, champ obligatoire absent),
+  avertissements et score de confiance global.
+- **`isValidSupplierDisplayName(name)`** : une raison sociale purement numérique ou au
+  format d'un montant (« 7596 », « 28 200,00 ») est refusée ; un vrai nom comportant des
+  chiffres (« SOCIETE 3D », « MAROC 24 ») est accepté.
 
-## Revue non destructive des doublons potentiels (juillet 2026)
+#### Corrigé
+- **Blocage dur** de l'import : `confirmImport` refuse tout mapping incohérent (aucune écriture).
+  L'assistant désactive « Confirmer » avec un message explicite tant que les erreurs
+  bloquantes subsistent ; la prévisualisation expose la validation et la somme brute de la
+  colonne TTC mappée.
 
-> **DelaiPay conserve les factures ressemblant à des doublons. Elles sont signalées pour vérification afin de ne pas supprimer par erreur des paiements partiels, factures scindées ou échéances multiples.**
->
-> **Un utilisateur peut confirmer l'alerte ou la marquer comme faux positif. Cette revue ne supprime ni ne fusionne aucune facture.**
->
-> **Les doublons supprimés par d'anciennes versions ne peuvent être récupérés qu'en réimportant la source originale.**
+#### Impacts métier
+- Fin des imports silencieusement corrompus : plus de fournisseur nommé « 7596 » ni de
+  montants issus de numéros de ligne. La qualité des amendes calculées est protégée à la source.
 
-### Ajouté
-- **Fonction centrale unique `importer.markPotentialDuplicate`** : les **trois** chemins d'import (import direct `importExcel`, relevé XML `importReleveXml`, assistant `confirmImport`) marquent désormais un doublon de façon **strictement identique** — drapeau `doublon_potentiel`, `motif_doublon`, `statut_doublon='potentiel'` et **anomalie interne de gravité basse** (idempotente : jamais recréée deux fois sur réexécution/recalcul).
-- **Statut de revue non destructif** sur la facture (migration SQLite idempotente) : `statut_doublon` (`aucun` | `potentiel` | `confirme` | `faux_positif`), `date_revue_doublon`, `utilisateur_revue_doublon`. Le drapeau `doublon_potentiel` est conservé comme **trace historique de détection**.
-- **Endpoint `PATCH /clients/:id/factures/:factureId/doublon`** (`{ "statut": "confirme" | "faux_positif" | "potentiel" }`) : authentifié, isolé par tenant/client, statut validé (400), facture inexistante (404). Écrit `statut_doublon` + traçabilité, journalise une **entrée d'audit avant/après**, et met l'anomalie associée en cohérence :
-  - `potentiel` → anomalie **ouverte** ;
-  - `confirme` → anomalie **résolue** (motif `doublon_confirme`), historique conservé ;
-  - `faux_positif` → anomalie **résolue** (motif `faux_positif`), **alerte principale désactivée** (non reproposée automatiquement pour la même détection).
-- **API** : `GET /clients/:id/delais` et le détail de facture exposent `doublon_potentiel`, `motif_doublon`, `statut_doublon`, `date_revue_doublon`, `utilisateur_revue_doublon` et `anomalie_doublon_active`. **Compatibilité conservée** : une interface ne lisant que `doublon_potentiel` continue de fonctionner.
-- **Interface** (feuille de délais) : badge **« Doublon ? »** (potentiel, avertissement léger + infobulle du motif), badge **« Doublon confirmé »** (confirme), **aucune alerte principale** en faux positif (indication discrète « Alerte vérifiée — faux positif » dans le détail). Actions **Confirmer le doublon** / **Marquer comme faux positif** dans le tiroir de détail, avec confirmation avant mise à jour, toast de succès/erreur et rafraîchissement de la ligne.
+### LOT 2 — Opérateurs réseau (P1)
 
-### Préservé / sécurité
-- **Aucune facture n'est jamais supprimée ni fusionnée** ; la facture reste incluse dans le suivi et les calculs quel que soit le statut de revue. Aucune période clôturée modifiée, aucune formule légale touchée.
-- Migration **idempotente** (rejouable sans erreur) ; les factures héritées `doublon_potentiel=1` passent à `statut_doublon='potentiel'` sans rouvrir une revue déjà tranchée.
-- Correction connexe : la colonne `resolue_le` (utilisée par la résolution d'anomalies) est désormais présente en base.
-- **CADOZAT = 36 factures / 7 025,33 DH** inchangé (les 2 doublons gardés ont une amende nulle). Suite de tests **88/88** (60 initiaux + 28 nouveaux couvrant harmonisation, migration, endpoint, API et non-régression).
+*Commit `257e374`. Version `d039059eb0`.*
 
-## Doublons conservés (paiements partiels / factures scindées) (juillet 2026)
+#### Objectif
+Rendre exploitable dans l'interface le traitement particulier des opérateurs réseau
+(télécoms, eau, électricité) : délai spécifique et exclusion des tableaux déclaratifs.
 
-### Modifié
-- Les factures détectées comme **doublons** (même n°, date, montant TTC) ne sont **plus supprimées** à l'import : elles peuvent représenter un **paiement partiel** ou une **facture scindée**. Elles sont désormais **conservées dans les tableaux de factures** et **signalées** (`doublon_potentiel`, motif) pour revue par l'expert-comptable — badge « doublon ? » dans la feuille de délais, anomalie de gravité basse, colonne exposée par l'API.
-- S'applique aux 3 chemins d'import (assistant/`confirmImport`, import direct/`importExcel`, relevé XML). Les splits à **montants distincts** étaient déjà conservés (le TTC fait partie de la clé) ; ce changement concerne les répétitions au **montant identique** (différant par la date de paiement).
-- **Impact CADOZAT** : l'import passe de 34 à **36 factures** (2 lignes : mêmes factures à dates de paiement différentes, désormais gardées). **L'amende reste 7 025,33 DH** (ces factures sont réglées dans les délais → 0 amende), donc le moteur légal est inchangé. Attendu de test mis à jour et documenté. Suite 60/60.
+#### Ajouté
+- La feuille de délais (`/delais`) expose `reseau_statut`, `reseau_categorie` et
+  `reseau_ambigu`, et affiche un bouton **« Réseau ? — confirmer »**.
+- **Confirmation en 1 clic** : applique un **délai de 30 jours**, exclut le fournisseur des
+  tableaux déclaratifs, recalcule les périodes non clôturées et présente un résumé.
+- **Règle configurable** : `DELAI_RESEAU=30` (jours).
 
-## Règle spéciale « opérateurs de réseau » — délai 30 j + exclusion déclarative (juillet 2026)
+#### Corrigé
+- La rupture était purement **UI** : le moteur `reseau.js`, les endpoints
+  (`PATCH …/classification`, `GET …/reseau/simulation`), `resolveDelaiAutorise`,
+  `estHorsTableauDeclaratif` et l'exclusion dans `buildDeclaration` existaient déjà mais les
+  classifications réseau n'étaient jamais surfacées ni confirmables. Aucun second moteur créé.
+- **Aucun faux positif** : TOTAL MAROC et AFRIQUIA restent `reseau_statut='aucun'` (non réseau).
+  Priorité d'identification inchangée : ICE > IF > RC > alias confirmés > nom > mots-clés.
 
-### Ajouté
-- **Catégorie « opérateur de réseau »** (télécom, eau, électricité, régies / SRM) : **délai autorisé = 30 jours**, prioritaire sur le standard 60 j, la convention et les valeurs d'import (fonction centrale unique `reseau.resolveDelaiAutorise`, backend = vérité).
-- **Exclusion des tableaux DÉCLARATIFS** (déclaration DGI, `ligne_declaration`, export CSV/XML, visa) via l'unique `buildDeclaration`, avec **résumé des exclusions** (nombre, TTC, fournisseurs) — les factures ne sont **jamais supprimées** et restent visibles dans le **suivi interne** (feuille de délais, dashboard, fournisseurs, anomalies).
-- **Classification robuste et confirmée** : reconnaissance par **alias normalisés** (Maroc Telecom/IAM/Itissalat, Orange/Médi Telecom, inwi/Wana, SRM/régies…), **ICE/IF/RC prioritaires** sur le nom. Un match par **nom seul** est *proposé* et **doit être confirmé** (jamais de classement définitif ni d'exclusion automatique sur un nom ambigu).
-- Fournisseur enrichi : `categorie_fournisseur`, `operateur_reseau`, `delai_special`, `hors_tableau_declaratif`, `statut_classification` (propose/confirme/à vérifier), `classification_source`, `date_validation`, `utilisateur_validation` (migration idempotente).
-- **API** : `PATCH /clients/:id/fournisseurs/:fid/classification` (confirmer/modifier, audité, recalcul des périodes **non clôturées** uniquement) ; `GET /clients/:id/reseau/simulation` (rapport d'impact **lecture seule** — candidats, factures, périodes, délai actuel→30, confiance).
-- **Feuille de délais** : badge « Réseau — 30 j » + « Hors tableau déclaratif » + infobulle ; délai autorisé résolu par le backend.
+#### Impacts métier
+- Les factures d'opérateurs réseau sont traitées avec le bon délai et exclues à bon escient
+  des déclarations, en un clic et de façon traçable.
 
-### Préservé / sécurité
-- Aucune donnée historique modifiée automatiquement : reclassification et recalcul **uniquement après confirmation explicite**, jamais sur une période clôturée. Trois indicateurs distincts (constaté / autorisé / retard). **CADOZAT = 7 025,33 DH** inchangé — suite 60/60.
+### LOT 3 — Conventions et documents — Stratégie B (honnêteté OCR)
 
-## Délai constaté arrêté au dernier jour du trimestre (juillet 2026)
+*Commit `21e2c54`. Version `487ee3f4bd`.*
 
-### Ajouté / corrigé
-- **Règle métier « date d'arrêté »** (fonction centrale `calc.getDateArreteFacture`, source unique côté backend) : le délai constaté d'une facture est calculé jusqu'à une **date d'arrêté** :
-  - payée au plus tard le dernier jour du trimestre → arrêté = **date de paiement** ;
-  - impayée à la clôture **ou payée après la clôture** → arrêté = **dernier jour du trimestre** (T1→31/03, T2→30/06, T3→30/09, T4→31/12 de l'année N, même si T4 est traité en janvier N+1).
-- **Correction** : auparavant, une facture impayée utilisait la **date du jour** (délai qui augmentait chaque jour) et une facture payée après la clôture utilisait sa **date de paiement postérieure**. Désormais l'arrêté est stable au dernier jour du trimestre déclaré. **La date du jour n'arrête plus jamais un trimestre.**
-- **Trois indicateurs distincts** garantis : *délai constaté* (arrêté − facture), *délai autorisé* (60/convention ≤ 120), *jours de retard* (= constaté − autorisé, jamais négatif).
-- **Feuille de délais** : nouvelles colonnes « Arrêté au » et « Délai constaté », état lisible (Payée / Impayée à la clôture / Payée après la clôture) + infobulle explicative. La valeur provient exclusivement du backend (le frontend ne recalcule pas).
-- **Cas limites** : facture datée après la fin du trimestre ou paiement antérieur à la facture → signalés (aucun délai négatif produit). Calcul en **jours calendaires** (sans dérive de fuseau horaire), correct en année bissextile.
-- **Incidence reportée préservée** : la facture source reste dans son trimestre d'origine (ni déplacée ni dupliquée) ; le délai constaté est recalculé à la clôture de chaque trimestre ultérieur.
+#### Objectif
+Aligner l'interface sur la réalité technique : **aucun OCR n'a jamais existé** dans le
+produit. Supprimer toute promesse d'extraction automatique et fiabiliser la saisie du délai.
 
-### Préservé
-- **Montants d'amende / à déclarer INCHANGÉS** pour tout trimestre clôturé (l'amende ne somme que les mois du trimestre déclaré) — **CADOZAT T1 2026 = 7 025,33 DH** (test de non-régression, 54/54).
+#### Corrigé / Modifié
+- **Retrait de toute promesse OCR/IA** : renommage « Conventions & OCR » → **« Conventions & documents »** ;
+  message honnête « **les documents sont archivés : aucune extraction automatique n'est effectuée** ».
+  (Audit : aucune dépendance OCR, aucune route d'extraction, aucun worker — le texte « module IA V2 »
+  était un placeholder jamais implémenté depuis le commit initial.)
+- **Suppression du délai « 120 » prérempli** ; le **délai devient obligatoire, explicite, entier 1..120**.
+  Une valeur invalide est refusée côté serveur, **sans créer de convention orpheline**.
+- **Upload sécurisé** : fichiers PDF/JPEG/PNG validés par les **octets d'en-tête** (magic bytes),
+  pas seulement par l'extension.
 
-## Import Excel des conventions fournisseurs & pièces PDF différées (juillet 2026)
+#### Impacts métier
+- Plus de délai fantôme de 120 jours introduit à l'insu de l'utilisateur : chaque convention
+  porte un délai saisi et assumé. Les documents restent archivés comme pièces justificatives.
 
-### Ajouté
-- **Import d'une liste de conventions depuis Excel** (menu Conventions) : crée fournisseurs et conventions en une fois, **sans exiger le PDF**. Le document signé s'ajoute ensuite, ligne par ligne.
-- **Modèle Excel à deux feuilles** (`GET /conventions/template.xlsx`) : onglet *Instructions* (mode d'emploi) + onglet *Conventions* (10 colonnes, 3 exemples **fictifs** dont un « NON », largeurs de colonnes). Aucune donnée réelle.
-- **Règles métier de l'import** : identification fournisseur **ICE → IF → RC → nom normalisé** ; délai d'une plage → **plus grand** (« 60 A 120 J » = 120) ; délai **> 180 j** classé « à vérifier » (jamais accepté d'office) ; délai nul/illisible **rejeté** ; **Convention = NON** → aucune convention, fournisseur au délai légal 60 j ; Convention vide/ambiguë → « à vérifier ».
-- **Dédoublonnage & conflits** : convention identique = **doublon** (aucune recréation) ; délai/dates différents = **conflit à vérifier** (jamais d'écrasement automatique, PDF existant préservé).
-- **Rapport d'import** (API + interface) : lignes analysées, conventions créées, fournisseurs créés/existants, doublons, conflits, sans convention, à vérifier, rejetées, ignorées — avec, pour chaque ligne à corriger : n° de ligne Excel, fournisseur, motif, délai reçu, convention reçue, et **export CSV**.
-- **Pièces PDF différées** : statut **« Document manquant »**, boutons **Ajouter le PDF** / **Voir le PDF** / **Remplacer** (avec confirmation), loaders et boutons désactivés pendant l'envoi.
-- **Action express « + Convention présente »** dans la feuille de calcul des délais : sur une facture dont le fournisseur n'a pas de convention (délai écoulé > 60 j), un clic crée la convention pour ce fournisseur (délai proposé 120 j, éditable, plafond 180 j ; PDF différé). Recalcul immédiat des retards. `four_id` (id fournisseur) exposé par `GET /clients/:id/delais` ; création via `POST /clients/:id/conventions` avec appartenance vérifiée (anti-IDOR).
-- **Traçabilité** : chaque import de conventions crée un **lot** (`import_lot`, `source_type = conventions_xlsx`, empreinte SHA-256, utilisateur) ; chaque convention créée est reliée à son lot (`convention.import_lot_id`). Migrations **idempotentes** (colonnes additives `import_lot_id`, `reference`, `commentaire`, `source_import`).
-- **Transaction unique** : tout l'import est encapsulé (`BEGIN`/`COMMIT`/`ROLLBACK`) — une erreur en cours annule tout, aucun fournisseur ni convention partielle conservé.
+### LOT 4 — Intégrité métier des conventions
 
-### Sécurité
-- `POST /clients/:id/conventions/import` : authentifié, **cabinet + client vérifiés serveur**, **Excel uniquement**, limite de taille, **MulterError → HTTP 400** (jamais 500), nom serveur généré, nettoyage des fichiers temporaires.
-- `POST /clients/:id/conventions/:convId/file` : authentifié, appartenance convention→client→cabinet vérifiée, **PDF uniquement** (extension + signature `%PDF-`), **aucun écrasement silencieux** (remplacement explicite → 409 sinon), audit *ajout* vs *remplacement*, aucun chemin interne exposé.
+*Commit `513e0ab`. Version `487ee3f4bd` (backend uniquement).*
 
-### Préservé
-- **Moteur de calcul légal inchangé** — CADOZAT T1 2026 reste à **7 025,33 DH** (test de non-régression automatisé, toujours vert).
-- **Convention = NON ne crée aucune convention active** — comportement confirmé et couvert par test.
+#### Objectif
+Garantir qu'**une seule et même règle de délai** s'applique partout où le délai autorisé est
+déterminé, sans site de contournement.
 
-## Périodes trimestrielles & assistant d'import (juillet 2026)
+#### Corrigé
+- Règle unique : `db.activeConventionFor` (convention la plus récente `valide`, tie-break
+  déterministe `created_at DESC, rowid DESC`) → `reseau.resolveDelaiAutorise` (réseau 30 j →
+  convention → 60 j par défaut) → `calc.computeFacture`.
+- **Sites de contournement supprimés** : la **saisie manuelle de facture** (`POST /factures`)
+  et **`repair.js`** ignoraient la règle réseau (60 j au lieu de 30 j, opérateurs réseau
+  révertés) ; ils passent désormais tous par la fonction centrale.
+- **Audit enrichi** (avant/après) sur la création et la suppression de convention.
 
-### Ajouté
-- **Sélecteur global de période** (année + trimestre) dans le bandeau, avec badge de statut, navigation ← →, raccourcis « trimestre en cours de traitement » / « période la plus fournie », et liste des périodes disponibles par client. Persisté (localStorage) et **validé côté serveur**.
-- **Bannière de contexte** permanente : « Client X — Période de travail : T2 2026 » + statut + indicateur lecture seule.
-- **Calendrier déclaratif** (module `periode.js`, source unique) : bornes du trimestre, **mois de traitement** (T1→avril, T2→juillet, T3→octobre, **T4→janvier N+1**), échéance de dépôt SIMPL, jours restants. Bloc dédié sur le tableau de bord.
-- **Cycle de vie des périodes** (`periode_declaration`) : à venir / ouverte / en préparation / à contrôler / prête / validée / déclarée / clôturée / rouverte.
-- **Clôture / réouverture** de période (réservé admin, motif obligatoire, **audit**). Période clôturée = **lecture seule** (imports, suppressions, recalcul, saisie bloqués → HTTP 423).
-- **Assistant d'import en 6 étapes** : fichier → feuille & **mapping colonnes** (auto + confiance + aperçu, corrigeable) → **prévisualisation** (valides / ignorées / rejetées / doublons, sans écriture) → **confirmation transactionnelle** → résultat → **annulation**.
-- **Rapport des lignes** ignorées/rejetées (motif + champ + données) + export **CSV**.
-- **Modèles de mapping** réutilisables par cabinet (`/mapping-templates`).
-- **Isolation stricte par trimestre** : chaque fichier et facture rattachés à `(cabinet, entreprise, année, trimestre, lot d'import)` + **empreinte SHA-256**. Un fichier T1 n'apparaît jamais en T2.
-- **Incidence reportée** : une facture impayée d'un trimestre antérieur génère l'amende des mois tombant dans le trimestre déclaré, **sans déplacer le fichier source** (traçabilité vers la période d'origine).
-- **Tables** : `periode_declaration`, `import_lot`, `import_ligne`, `modele_mapping` + colonnes de traçabilité + index. Migration idempotente (`npm run migrate`).
-- **Détection des lignes** total / sous-total / report / cumul / solde / vides / formules Excel / en-têtes répétés (insensible casse/accents, plusieurs cellules).
-- **Suite de tests automatisés** (`npm test`) : calendrier, non-régression CADOZAT, classification d'import, doublons, isolation.
+#### Conflits résolus (règles explicites)
+- Deux conventions concurrentes → la **plus récente** l'emporte (sélection déterministe et stable).
+- Le **réseau est prioritaire** sur la convention.
+- Validité **par statut** : `date_fin` sert d'alerte/badge, elle n'est pas contraignante
+  (voir Known Issues — à valider juridiquement).
 
-### Sécurité
-- Toutes les routes période/document/facture **exigent et valident** année + trimestre côté serveur (jamais de confiance au frontend).
-- Clôture/réouverture, imports, annulations, recalculs, modifications de taux **journalisés** (audit).
-- Modification des taux BAM réservée à l'admin. Anti path-traversal sur les fichiers temporaires d'import.
+#### Impacts métier
+- Un même fournisseur ne peut plus obtenir un délai différent selon le point d'entrée (import,
+  saisie manuelle, réparation). Le montant de l'amende est cohérent quelle que soit l'origine de la donnée.
 
-### Préservé
-- **Moteur de calcul légal inchangé** — CADOZAT T1 2026 reste à **7 025,33 DH** (test de non-régression automatisé).
-- Aucune donnée existante supprimée (migration avec sauvegarde préalable + contrôle des effectifs avant/après).
+### LOT 5 — Cohérence des périodes
+
+*Commit `011031e`. Version `7c95ba3f96`.*
+
+#### Objectif
+Faire de la **période active** la seule période utilisée partout, pilotée par le sélecteur
+année/trimestre.
+
+#### Corrigé
+- La période active `state.period` (persistée dans `localStorage('dp-period')`, propagée via
+  `perQuery()`) est la **seule** référence ; chaque `setPeriod` déclenche un re-render + refetch
+  (plus de cache périmé).
+- **Fiche client** : `GET /clients/:id/summary` n'est plus figé sur la dernière période ;
+  suppression du forçage `state.period = s.periode` qui « bloquait » la fiche sur T3/dernière période.
+- **Portefeuille** : `GET /clients` respecte `annee/trimestre` au lieu de cumuler toutes les périodes.
+- `goClient` devient asynchrone et recharge les périodes (`await loadPeriods`), cohérent avec `setClient`.
+
+#### Impacts métier
+- La fiche client, le portefeuille et toutes les vues scopées reflètent exactement la période
+  sélectionnée. Fin de la « fiche bloquée sur la dernière période ».
+
+### LOT 6 — Clôture et réouverture des périodes
+
+*Commit `17ca7ac`. Version `e25ef50ee4`.*
+
+#### Objectif
+Une période clôturée devient **immuable** (montants, pénalités, déclarations, factures figés) ;
+la réouverture est explicite, réservée à l'administrateur, motivée et tracée.
+
+#### Corrigé
+- **`recomputePeriod` = NO-OP** si la période est verrouillée : correctif décisif garantissant
+  l'immuabilité (auparavant, `/summary` et `buildDeclaration` pouvaient réécrire une période
+  clôturée si une convention/réseau était modifié après coup).
+- **`/close`** recalcule puis fige la période, avec audit avant/après.
+- **`/reopen`** refuse **409** une période non clôturée, exige un **motif obligatoire**, trace
+  avant/après + motif, et se limite à une seule période.
+- **`PATCH …/doublon`** protégé par `assertWritable` → **423** sur période verrouillée.
+- **UI** : panneau de période (statut clair, bandeau lecture seule 🔒, boutons Clôturer / Rouvrir
+  réservés à l'admin, motif obligatoire à la réouverture).
+- Aucune route ajoutée/supprimée, aucun changement de schéma.
+
+#### Impacts métier
+- Les montants déclarés à la DGI sont figés à la clôture et ne peuvent plus dériver. Toute
+  régularisation passe par une réouverture admin motivée et traçable (piste d'audit complète).
+- Validation de bout en bout : clôture de BANKAI T2 (amende figée 52 102,32 DH malgré une
+  convention 120 j créée après clôture) → réouverture motivée → dégel (52 102,32 → 37 188,15 DH).
+
+### Sécurité (rappel, socle stable depuis RC1)
+- Authentification **JWT**, isolation **multi-tenant** stricte (404 hors périmètre).
+- En-têtes durcis (CSP, X-Frame-Options, X-Content-Type-Options, Referrer-Policy,
+  Permissions-Policy, HSTS en production).
+- Rate-limiting (connexion 10/15 min ; opérations lourdes 20/min).
+- Actions sensibles auditées ; aucune stack trace exposée ; anti path-traversal ; `/healthz` versionné.
+
+---
+
+## Known Issues (réserves connues au 2026-07-28)
+
+Ces points sont **non bloquants**, **sans impact sur l'intégrité des données ni sur les
+montants déclarés à la DGI**, et documentés en détail dans `docs/KNOWN_ISSUES.md`. Aucun n'est
+corrigé dans la version 1.0.0.
+
+- **P3 — LOT 5 — Persistance de période au rafraîchissement.** Au rechargement (F5), une période
+  sélectionnée vide ou hors « périodes disponibles » du client courant n'est pas restaurée depuis
+  `localStorage('dp-period')` : `loadPeriods` replie sur la période de travail. Aucun mélange de
+  périodes, vue rechargée cohérente et clairement libellée.
+- **P3 — LOT 6 — Affichage transitoire de la feuille sur période clôturée.** La feuille de calcul
+  (`/delais`) recalcule en direct l'affichage « délai autorisé » et le KPI « retard moyen » sur une
+  période clôturée, alors que l'amende, le nombre d'« en retard » et la déclaration restent figés.
+  Incohérence d'affichage transitoire uniquement, sans effet sur les montants déclarés.
+
+### Réserves à trancher (juridique / UX, hors P3 pur)
+- **LOT 4 — Validité des conventions par statut** : une convention à `date_fin` passée reste
+  appliquée (badge « Expirée » informatif). Point de **droit à valider** (impact sur l'amende :
+  décider si l'expiration doit revenir au délai légal de 60 j).
+- **LOT 4 — `DELETE` convention → 401 silencieux** sur session expirée (aucun message ; OK après reload) ;
+  `confirm()` et sélecteur de fichier **natifs** (UX/automatisation).
+- **LOT 2 — Règle réseau 30 j + exclusion déclarative** : base légale 69-21 à **valider juridiquement**
+  avant production. Des données héritées **pré-LOT 1** (corrompues) peuvent subsister dans d'anciennes bases
+  (le correctif LOT 1 empêche de nouvelles corruptions mais ne nettoie pas l'existant → prévoir un ré-import/nettoyage).
+
+---
+
+## Historique antérieur (pré-1.0.0)
+
+- **RC1** — Release Candidate : sélecteur global année/trimestre, calendrier déclaratif centralisé
+  (`periode.js`), assistant d'import en 6 étapes, cycle de vie des périodes déclaratives
+  (clôture/réouverture, lecture seule HTTP 423), incidence reportée des impayés, durcissement
+  sécurité, `/healthz` versionné, première suite de tests automatisés. (Voir l'historique Git.)
