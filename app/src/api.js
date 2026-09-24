@@ -17,9 +17,15 @@ const permissions = require('./permissions');
 const { rateLimit } = require('./security');
 const { uid, normalizeIce, fmtMoney, slugify } = require('./util');
 
-// Anti brute-force : max 10 tentatives de connexion / 15 min / IP.
-const loginLimiter = rateLimit({ windowMs: 15 * 60 * 1000, max: 10,
-  message: 'Trop de tentatives de connexion. Réessayez dans quelques minutes.' });
+// Anti force brute, à DEUX niveaux :
+//  - par identité ciblée (IP + espace de l'hôte + e-mail) : 10 échecs / 15 min — un collaborateur qui se trompe
+//    ne bloque ni ses collègues derrière la même IP, ni un autre espace ; remis à zéro après une connexion réussie ;
+//  - plafond global par IP (100 / 15 min) : limite la pulvérisation de mots de passe sur de nombreux comptes.
+const loginKey = req => `${req.ip}|${require('./tenant').slugFromHost(req.hostname || req.headers.host || '') || '-'}|${String((req.body && req.body.email) || '').toLowerCase().trim()}`;
+const loginLimiter = rateLimit({ windowMs: 15 * 60 * 1000, max: 10, keyGenerator: loginKey,
+  message: 'Trop de tentatives de connexion pour ce compte. Réessayez dans quelques minutes.' });
+const loginIpCeiling = rateLimit({ windowMs: 15 * 60 * 1000, max: 100,
+  message: 'Trop de tentatives de connexion depuis ce poste. Réessayez dans quelques minutes.' });
 
 // Limiteur pour les routes coûteuses (import de gros classeurs, exports) :
 // le parsing/génération est synchrone et bloque la boucle d'événements — on
@@ -181,7 +187,7 @@ function recomputeOpenPeriodsForFournisseurs(cabinetId, entrepriseId, fournisseu
 }
 
 /* ============================================================ AUTH */
-router.post('/auth/login', loginLimiter, (req, res) => {
+router.post('/auth/login', loginIpCeiling, loginLimiter, (req, res) => {
   const { email, password } = req.body || {};
   if (!email || !password) return res.status(400).json({ error: 'Email et mot de passe requis.' });
   // Espace de travail désigné par le nom d'hôte (premium.delaipay.local…) : la recherche du compte est
@@ -193,18 +199,21 @@ router.post('/auth/login', loginLimiter, (req, res) => {
   const candidates = ws.slug
     ? (ws.cabinet ? db.prepare('SELECT * FROM utilisateur WHERE email=? AND actif=1 AND cabinet_id=?').all(mail, ws.cabinet.id) : [])
     : db.prepare('SELECT * FROM utilisateur WHERE email=? AND actif=1').all(mail);
-  const u = candidates[0] || null;
-  // Comparaison systématique (hash factice si l'utilisateur n'existe pas) pour
-  // ne pas révéler l'existence d'un compte par le temps de réponse.
-  const ok = auth.verifyPassword(password, u ? u.password_hash : auth.DUMMY_HASH);
-  if (!u || !ok)
+  // Le mot de passe est comparé à CHAQUE compte candidat (jamais au seul « premier trouvé ») ;
+  // hash factice si aucun compte, pour ne pas révéler l'existence d'un compte par le temps de réponse.
+  const matches = candidates.length ? candidates.filter(c => auth.verifyPassword(password, c.password_hash)) : (auth.verifyPassword(password, auth.DUMMY_HASH), []);
+  if (!matches.length)
     return res.status(401).json({ error: 'Identifiants incorrects.' });
+  const u = matches[0];
+  // Hôte neutre + e-mail présent dans plusieurs espaces : aucune sélection implicite, quel que soit
+  // le compte dont le mot de passe correspond (même réponse pour tous — pas d'indication de l'espace).
   if (candidates.length > 1)
     return res.status(409).json({ error: 'Cette adresse e-mail est rattachée à plusieurs espaces de travail. Connectez-vous depuis l’adresse de votre espace (ex. votre-cabinet.delaipay.com).', code: 'ambiguous_workspace' });
   const ucab = db.prepare('SELECT actif FROM cabinet WHERE id=?').get(u.cabinet_id);
   if (!ucab || ucab.actif === 0)
     return res.status(403).json({ error: 'Cet espace de travail est désactivé. Contactez DelaiPay pour le réactiver.', code: 'workspace_inactive' });
   try { db.prepare(`UPDATE utilisateur SET derniere_connexion=datetime('now') WHERE id=?`).run(u.id); } catch (_) {}
+  loginLimiter.reset(req);   // connexion réussie : le compteur de CETTE identité repart de zéro
   const token = auth.signToken(u);
   auth.setAuthCookie(res, token);
   audit(u.cabinet_id, u.id, 'login', 'utilisateur', { email: u.email }, req.ip);
@@ -213,6 +222,7 @@ router.post('/auth/login', loginLimiter, (req, res) => {
 router.post('/auth/logout', (req, res) => { auth.clearAuthCookie(res); res.json({ ok: true }); });
 
 router.get('/me', auth.requireAuth, (req, res) => {
+  res.setHeader('X-DP-Session', `${req.user.id}:${req.user.role}`);
   const row = db.prepare('SELECT * FROM cabinet WHERE id=?').get(req.cabinetId);
   const cab = row ? { id: row.id, nom: row.nom, slug: row.slug, plan: row.plan } : null;
   const role = req.user.role;
@@ -264,11 +274,14 @@ router.get('/tenant', (req, res) => {
 function publicUser(u) {
   return { id: u.id, nom: u.nom, email: u.email, role: u.role,
     initiales: u.initiales || (u.nom || 'U').split(' ').map(x => x[0]).join('').slice(0, 2).toUpperCase(),
-    titre: u.titre || 'Utilisateur' };
+    titre: u.titre || null };
 }
 
 // tout ce qui suit exige l'authentification
 router.use(auth.requireAuth);
+// Empreinte de session renvoyée à chaque réponse : l'interface compare l'utilisateur / le rôle affichés
+// à ceux de la session RÉELLE et se réhydrate s'ils diffèrent (changement d'utilisateur, de rôle).
+router.use((req, res, next) => { res.setHeader('X-DP-Session', `${req.user.id}:${req.user.role}`); next(); });
 // Compte « Lecture seule » : aucune méthode d'écriture, quelle que soit la route (filet global).
 router.use(permissions.readOnlyGuard);
 
@@ -1289,6 +1302,17 @@ router.post('/clients/:id/import/confirm', (req, res) => {
   const p = requirePeriod(req, res); if (!p) return;
   if (!assertWritable(res, req.cabinetId, e.id, p.annee, p.trimestre)) return;
   const tmp = safeUploadPath(b.token, req); if (!tmp) return res.status(400).json({ error: 'Fichier expiré ou introuvable — relancez l\'analyse.' });
+  // Contrôle de rattachement EXPLICITE (demandé par l'interface via strictPeriode ; l'API historique est
+  // inchangée) : des lignes datées hors du trimestre choisi ne sont jamais rattachées sans confirmation.
+  if (b.strictPeriode && !b.accepteHorsPeriode) {
+    try {
+      const pv = importer.previewImport(fs.readFileSync(tmp), { sheetName: b.sheetName, headerRow: b.headerRow, mapping: b.mapping || {},
+        cabinetId: req.cabinetId, entrepriseId: e.id, annee: p.annee, trimestre: p.trimestre, requireNumero: !!b.requireNumero });
+      const st = pv.stats || {};
+      if (st.autrePeriode > 0) return res.status(409).json({ code: 'hors_periode', autrePeriode: st.autrePeriode, memePeriode: st.memePeriode, valides: st.valides,
+        error: `${st.autrePeriode} ligne(s) sont datées hors de T${p.trimestre} ${p.annee}. Vérifiez le trimestre choisi ou confirmez explicitement leur rattachement. Aucune facture n'a été enregistrée.` });
+    } catch (err) { return res.status(400).json({ error: err.message }); }
+  }
   try {
     const buf = fs.readFileSync(tmp);
     const crypto = require('crypto');

@@ -43,6 +43,7 @@ async function api(path, opts = {}) {
     try { res = await fetch('/api' + path, o); }
     catch (_) { throw new Error(method === 'GET' ? 'Connexion au service impossible. Vérifiez votre réseau puis réessayez.' : 'Connexion au service impossible : l’opération n’a pas été enregistrée. Vérifiez votre réseau puis réessayez.'); }
     const ct = res.headers.get('content-type') || '';
+    checkSessionFingerprint(res.headers.get('X-DP-Session'));
     const data = ct.includes('json') ? await res.json().catch(() => ({})) : await res.text();
     // Session expirée / compte ou espace désactivé : retour à la connexion AVEC un motif lisible (jamais silencieux).
     if (res.status === 401) { const code = (data && data.code) || 'expired'; window.location.href = '/login?reason=' + encodeURIComponent(code); throw new Error((data && data.error) || 'Session expirée.'); }
@@ -62,6 +63,22 @@ async function api(path, opts = {}) {
     return data;
   } finally { _inflight.delete(path); }
 }
+
+/* Identité TOUJOURS dérivée de la session réelle : chaque réponse API porte « id:rôle » de la session.
+ * Si l'onglet affiche un autre utilisateur (connexion d'un autre compte dans un autre onglet) ou un rôle
+ * périmé, l'état local est jeté et l'application se réhydrate depuis /api/me (rechargement unique). */
+let _reloading = false;
+function checkSessionFingerprint(fp) {
+  if (!fp || !state.me || _reloading) return;
+  const [id, role] = fp.split(':');
+  if (id !== state.me.id || role !== state.me.role) {
+    _reloading = true;
+    try { sessionStorage.setItem('dp-session-changed', id !== state.me.id ? 'user' : 'role'); } catch (_) {}
+    _cache.clear(); window.location.reload();
+  }
+}
+// Retour sur l'onglet : vérification immédiate de la session (pas d'attente d'une action).
+document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible' && state.me) api('/me', { noCache: true }).catch(() => {}); });
 
 /* Rendu paginé pour les grands tableaux : n'injecte qu'une tranche de lignes à la fois
    (évite de figer l'onglet sur des milliers de <tr>). La vue doit contenir un
@@ -212,8 +229,9 @@ async function boot() {
     state.me = me.user; state.cabinet = me.cabinet; state.workspace = me.workspace || null; state.perms = me.permissions || {};
   } catch { return; }
   applyWorkspace();
-  // header/user
-  $('#sideName').textContent = state.me.nom; $('#sideTitle').textContent = state.me.titre || state.me.role;
+  // header/user — rôle EFFECTIF (serveur) ; la fonction n'est affichée que si elle n'est pas un simple libellé de rôle
+  $('#sideName').textContent = state.me.nom; $('#sideTitle').textContent = state.me.roleLabel || state.me.role;
+  try { const why = sessionStorage.getItem('dp-session-changed'); if (why) { sessionStorage.removeItem('dp-session-changed'); setTimeout(() => toast(why === 'user' ? `Session mise à jour : vous êtes connecté·e en tant que ${state.me.nom}.` : `Votre rôle a changé : ${state.me.roleLabel}.`, 'info', 'Session actualisée'), 300); } } catch (_) {}
   $('#sideAv').textContent = state.me.initiales; $('#topAv').textContent = state.me.initiales;
   $('#umName').textContent = state.me.nom || '—'; $('#umMail').textContent = `${state.me.email || ''} · ${state.me.roleLabel || state.me.role}`;
   if (state.me.role === 'lecture') { const b = document.createElement('span'); b.className = 'pill pill-sm pill-locked ro-pill'; b.innerHTML = svgI('lock', '') + 'Lecture seule'; b.title = 'Votre accès permet la consultation et les exports, sans modification.'; $('.top-right').prepend(b); }
@@ -435,9 +453,9 @@ function currentPeriodLocked() {
   return st === 'cloturee' || st === 'declaree';
 }
 // Charge les périodes disponibles du client courant + fixe la période globale (persistée sinon période de travail).
-async function loadPeriods() {
+async function loadPeriods(opts = {}) {
   if (!state.clientId) { state.periods = []; state.periodMeta = null; return; }
-  const data = await api(`/clients/${state.clientId}/periods`);
+  const data = await api(`/clients/${state.clientId}/periods`, opts.fresh ? { fresh: true } : {});
   state.periods = data.disponibles || data.periods || [];
   state.periodMeta = { travail: data.travail, plusFournie: data.plusFournie };
   // priorité : période mémorisée (si dispo) → sinon période de travail → sinon plus fournie → sinon latest
@@ -572,6 +590,12 @@ function wirePeriodSelector() {
   $('#perNext').onclick = () => { const p = state.period; const np = p.trimestre === 4 ? { annee: p.annee + 1, trimestre: 1 } : { annee: p.annee, trimestre: p.trimestre + 1 }; setPeriod(np.annee, np.trimestre); };
   $('#perWork').onclick = () => { const w = (state.periodMeta || {}).travail; if (w) setPeriod(w.annee, w.trimestre); };
   $('#perData').onclick = () => { const d = (state.periodMeta || {}).plusFournie; if (d) setPeriod(d.annee, d.trimestre); };
+}
+// Relit les périodes disponibles (source unique : /clients/:id/periods) SANS changer la période active.
+async function refreshPeriodsKeep() {
+  const cur = state.period ? { ...state.period } : null;
+  await loadPeriods({ fresh: true });
+  if (cur) { state.period = cur; updatePeriodLabel(); updateCtxBanner(); }
 }
 async function ensurePeriod() { if (!state.periods) await loadPeriods(); return state.periods || []; }
 function perQuery() { return state.period ? `?annee=${state.period.annee}&trimestre=${state.period.trimestre}` : ''; }
@@ -730,6 +754,8 @@ function onboardingBanner(ob) {
 const OB_ICON = { bienvenue: 'bolt', cabinet: 'building', client: 'users', factures: 'up', conventions: 'doc', reseau: 'info', periode: 'cal', pret: 'checkc' };
 async function renderOnboarding(stepKey) {
   const ob = await api('/onboarding', { fresh: true }); state.onboarding = ob;
+  // Périodes relues depuis la source unique (/clients/:id/periods) à chaque affichage : un import récent est vu.
+  if (state.clientId) await refreshPeriodsKeep().catch(() => {});
   const editable = can('onboarding');
   const key = stepKey || state._obStep || ob.current || 'bienvenue';
   const idx = Math.max(0, ob.steps.findIndex(x => x.key === key));
@@ -772,13 +798,19 @@ async function renderOnboarding(stepKey) {
       <div><label class="fld-lbl" for="ob_ca">CA HT (DH)</label><input class="input-fld mono" id="ob_ca" type="number" min="0"></div>
     </div>
     <div class="actions" style="margin-top:18px"><button class="btn btn-primary" id="ob_client">Créer le dossier et continuer ${svgI('arrow')}</button></div>`}`;
-  else if (st.key === 'factures') body = `
+  else if (st.key === 'factures') {
+    const op = ob.periode;
+    body = `
     <h2 class="ob-title">Importez vos factures (journal TVA / achats)</h2>
     <p class="ob-lead">L'assistant analyse votre fichier Excel, CSV ou XML SIMPL, propose la correspondance des colonnes et <b>bloque</b> toute correspondance incohérente avant le moindre enregistrement.</p>
-    ${f.factures ? doneNote(`${f.factures} facture(s) importée(s) dans l'espace.`) + `<div class="actions">${go(nextKey)}</div>`
-      : (f.clients ? `<div class="actions"><button class="btn btn-primary" id="ob_import">${svgI('up')}Ouvrir l'assistant d'import</button></div>
-         <div class="hint" style="margin-top:12px">${svgI('info')}<span>Choisissez la période (trimestre) dans la barre supérieure avant d'importer. Vous reviendrez ici ensuite.</span></div>`
-        : `<div class="note note-warn">${svgI('warn')}<div>Créez d'abord un dossier client (étape précédente).</div></div>`)}`;
+    ${f.factures ? doneNote(`${f.factures} facture(s) importée(s) dans l'espace.`) : ''}
+    ${!f.clients ? `<div class="note note-warn">${svgI('warn')}<div>Créez d'abord un dossier client.</div></div>`
+      : !op ? `<div class="note note-danger">${svgI('stop')}<div><div class="note-t">Trimestre non choisi</div>Choisissez d'abord le trimestre à traiter : les factures y seront rattachées.</div></div>
+        <div class="actions"><button class="btn btn-primary" data-ob-goto="periode">${svgI('cal')}Choisir le trimestre</button></div>`
+      : `<div class="note note-info">${svgI('cal')}<div>Les factures seront importées dans <b>${TRI_LABEL(op.trimestre)} ${op.annee}</b>. Des lignes datées d'un autre trimestre exigeront une confirmation explicite.
+          <button class="btn-link" data-ob-goto="periode">Changer de trimestre</button></div></div>
+        <div class="actions"><button class="btn btn-primary" id="ob_import">${svgI('up')}Importer dans ${TRI_LABEL(op.trimestre)} ${op.annee}</button>${f.factures ? go(nextKey).replace('btn-primary', 'btn-ghost') : ''}</div>`}`;
+  }
   else if (st.key === 'conventions') body = `
     <h2 class="ob-title">Ajoutez vos conventions de délai</h2>
     <p class="ob-lead">Sans convention, le délai légal de 60 jours s'applique. Une convention signée (jusqu'à 120 jours) se saisit une à une ou s'importe depuis une liste Excel ; le justificatif est archivé tel quel.</p>
@@ -793,12 +825,19 @@ async function renderOnboarding(stepKey) {
     <div class="actions"><button class="btn btn-primary" id="ob_reseau" ${f.factures ? '' : 'disabled'}>${svgI('table')}Ouvrir la feuille des délais</button>${st.status !== 'todo' ? go(nextKey).replace('btn-primary', 'btn-ghost') : ''}${skip}</div>`;
   else if (st.key === 'periode') {
     const per = state.periods || [];
+    const w = (state.periodMeta && state.periodMeta.travail) || state.period || { annee: new Date().getFullYear(), trimestre: 1 };
+    // Trimestre de travail (calendrier déclaratif) et les 3 précédents — calculés, jamais figés en dur.
+    const cands = []; let q = { annee: w.annee, trimestre: w.trimestre };
+    for (let i = 0; i < 4; i++) { cands.push(q); q = q.trimestre === 1 ? { annee: q.annee - 1, trimestre: 4 } : { annee: q.annee, trimestre: q.trimestre - 1 }; }
+    for (const p of per) if (!cands.some(c => c.annee === p.annee && c.trimestre === p.trimestre)) cands.push({ annee: p.annee, trimestre: p.trimestre });
+    const chosen = ob.periode || null;
     body = `
-    <h2 class="ob-title">Sélectionnez votre première période</h2>
-    <p class="ob-lead">Toute l'application travaille sur <b>une période (trimestre) active</b>, toujours affichée en haut de l'écran. Choisissez celle que vous allez déclarer.</p>
-    ${per.length ? `<div class="ob-periods">${per.map(p => `<button class="pp-item ${state.period && state.period.annee === p.annee && state.period.trimestre === p.trimestre ? 'active' : ''}" data-ob-per="${p.annee}-${p.trimestre}"><span><b>${TRI_LABEL(p.trimestre)} ${p.annee}</b> <small>${p.nbFactures} facture(s)</small></span><span class="period-badge ${(PERIOD_STATUT[p.statut] || ['', ''])[1]}">${esc((PERIOD_STATUT[p.statut] || [p.statut])[0])}</span></button>`).join('')}</div>`
-      : `<div class="note note-info">${svgI('info')}<div>Aucune période avec des factures pour le dossier actif. Importez des factures, ou choisissez un trimestre avec le sélecteur de période.</div></div>`}
-    <div class="actions" style="margin-top:16px"><button class="btn btn-primary" id="ob_per" ${state.period ? '' : 'disabled'}>Utiliser ${state.period ? TRI_LABEL(state.period.trimestre) + ' ' + state.period.annee : 'cette période'} ${svgI('arrow')}</button></div>`;
+    <h2 class="ob-title">Choisissez le trimestre à traiter</h2>
+    <p class="ob-lead">Toute l'application travaille sur <b>une période (trimestre) active</b>, toujours affichée en haut de l'écran. Les factures que vous importerez ensuite y seront rattachées.</p>
+    ${f.clients ? `<div class="ob-periods">${cands.map(c => { const p = per.find(x => x.annee === c.annee && x.trimestre === c.trimestre); const on = chosen && chosen.annee === c.annee && chosen.trimestre === c.trimestre;
+        return `<button class="pp-item ${on ? 'active' : ''}" data-ob-per="${c.annee}-${c.trimestre}"><span><b>${TRI_LABEL(c.trimestre)} ${c.annee}</b> <small>${p ? `${p.nbFactures} facture(s)` : 'aucune facture'}${w.annee === c.annee && w.trimestre === c.trimestre ? ' · trimestre en cours de traitement' : ''}</small></span>${p ? `<span class="period-badge ${(PERIOD_STATUT[p.statut] || ['', ''])[1]}">${esc((PERIOD_STATUT[p.statut] || [p.statut])[0])}</span>` : ''}</button>`; }).join('')}</div>
+      ${chosen ? doneNote(`Trimestre retenu : <b>${TRI_LABEL(chosen.trimestre)} ${chosen.annee}</b>.`) + `<div class="actions">${go(nextKey)}</div>` : ''}`
+      : `<div class="note note-warn">${svgI('warn')}<div>Créez d'abord un dossier client.</div></div>`}`;
   } else if (st.key === 'pret') {
     const req = ob.steps.filter(x => !x.optional && !['bienvenue', 'pret'].includes(x.key));
     body = `
@@ -845,11 +884,14 @@ async function renderOnboarding(stepKey) {
       state.clients = await api('/clients'); state.clientId = r.id; try { localStorage.setItem('dp-client', r.id); } catch (_) {} updateSwitcherLabel(); await loadPeriods(); goto(nextKey); }
     catch (e) { toast(e.message, 'err', 'Dossier non créé'); oc.disabled = false; }
   };
-  const oi = $('#ob_import'); if (oi) oi.onclick = () => setView('import');
+  const oi = $('#ob_import'); if (oi) oi.onclick = () => { const op = ob.periode; if (op) setPeriod(op.annee, op.trimestre, { silent: true }); setView('import'); };
   const ocv = $('#ob_conv'); if (ocv) ocv.onclick = () => setView('conv');
   const orz = $('#ob_reseau'); if (orz) orz.onclick = () => setView('delais');
-  $$('[data-ob-per]').forEach(b => b.onclick = () => { const [a, t] = b.dataset.obPer.split('-'); setPeriod(+a, +t, { silent: true }); renderOnboarding('periode'); });
-  const op = $('#ob_per'); if (op) op.onclick = async () => { try { await api('/onboarding', { method: 'PUT', body: { step: 'periode', status: 'done' } }); goto('pret'); } catch (e) { toast(e.message, 'err'); } };
+  $$('[data-ob-per]').forEach(b => b.onclick = async () => {
+    const [a, t] = b.dataset.obPer.split('-');
+    try { await api('/onboarding', { method: 'PUT', body: { periode: { annee: +a, trimestre: +t } } }); setPeriod(+a, +t, { silent: true }); renderOnboarding('periode'); }
+    catch (e) { toast(e.message, 'err'); }
+  });
   const fin = $('#ob_finish'); if (fin) fin.onclick = async () => {
     try { await api('/onboarding', { method: 'PUT', body: { complete: true } });
       modal(`<div class="modal-b" style="padding-top:26px;text-align:center"><div class="dlg-ic tone-ok" style="margin:0 auto 14px">${svgI('checkc', '')}</div>
@@ -1454,12 +1496,14 @@ function wizPreviewHtml() {
         <div class="stat"><div class="l">Total TTC (valides)</div><div class="v">${money(s.totalTtc)}<small>DH</small></div></div>
       </div>
       ${cohBox}
-      ${mism ? `<div class="note note-warn">${svgI('cal')}<div><div class="note-t">${s.autrePeriode} ligne(s) datée(s) hors de ${TRI_LABEL(state.period.trimestre)} ${state.period.annee}</div>Elles seront rattachées à cette période (la période d'origine est conservée). Vérifiez que le trimestre sélectionné est le bon.</div></div>` : ''}
+      ${mism ? `<div class="note ${s.memePeriode ? 'note-warn' : 'note-danger'}" role="alert">${svgI(s.memePeriode ? 'cal' : 'stop')}<div><div class="note-t">${s.memePeriode ? `${s.autrePeriode} ligne(s) datée(s) hors de ${TRI_LABEL(state.period.trimestre)} ${state.period.annee}` : `Aucune ligne n'est datée de ${TRI_LABEL(state.period.trimestre)} ${state.period.annee}`}</div>
+        ${s.memePeriode ? 'Elles seraient rattachées à cette période (la période d’origine est conservée).' : 'Ce fichier semble concerner un autre trimestre : choisissez le bon trimestre dans la barre de période, puis relancez l’import.'}
+        <label class="check" style="margin-top:8px"><input type="checkbox" id="wizAckPer" ${state.wiz.accepteHorsPeriode ? 'checked' : ''}> Je confirme le rattachement de ces ${s.autrePeriode} ligne(s) à <b>${TRI_LABEL(state.period.trimestre)} ${state.period.annee}</b></label></div></div>` : ''}
       ${s.doublons ? `<div class="note note-warn">${svgI('warn')}<div>${s.doublons} doublon(s) potentiel(s) : ces factures sont <b>conservées</b> et signalées « Doublon ? » dans la feuille de délais pour revue (paiement partiel ou facture scindée possible). Rien n'est supprimé.</div></div>` : ''}
       ${s.rejetees ? `<h4 style="margin:16px 0 8px;font-size:13px">Lignes rejetées — numéro de ligne réel du fichier</h4><div class="table-wrap flat"><table><thead><tr><th>Ligne</th><th>Statut</th><th>Motif</th><th>Données</th></tr></thead><tbody>${rowsHtml(pv.apercu.rejetees, 'rej')}</tbody></table></div>` : ''}
       ${s.ignorees ? `<details style="margin-top:12px"><summary class="dh" style="cursor:pointer">${s.ignorees} ligne(s) ignorée(s) (total, sous-total, ligne vide…)</summary><div class="table-wrap flat" style="margin-top:8px"><table><thead><tr><th>Ligne</th><th>Statut</th><th>Motif</th><th>Données</th></tr></thead><tbody>${rowsHtml(pv.apercu.ignorees, 'ign')}</tbody></table></div></details>` : ''}
       <div class="wiz-actions"><button class="btn btn-ghost" id="wizBack2">Revenir à la correspondance</button><span class="grow"></span>
-        <button class="btn btn-primary" id="wizConfirm" ${(!s.valides || blocked) ? 'disabled' : ''} title="${blocked ? 'Corrigez la correspondance incohérente pour continuer' : ''}">${svgI('check')}Confirmer l'import (${s.valides || 0} facture${(s.valides || 0) > 1 ? 's' : ''})</button></div>
+        <button class="btn btn-primary" id="wizConfirm" ${(!s.valides || blocked || (mism && !state.wiz.accepteHorsPeriode)) ? 'disabled' : ''} title="${blocked ? 'Corrigez la correspondance incohérente pour continuer' : (mism && !state.wiz.accepteHorsPeriode ? 'Confirmez d’abord le rattachement des lignes hors période' : '')}">${svgI('check')}Confirmer l'import dans ${TRI_LABEL(state.period.trimestre)} ${state.period.annee} (${s.valides || 0} facture${(s.valides || 0) > 1 ? 's' : ''})</button></div>
     </div></div>`;
 }
 // Prévisualisation de l'import des CONVENTIONS (mapping libre) — vrais numéros de ligne dans les erreurs.
@@ -1487,7 +1531,8 @@ function wizConvPreviewHtml() {
     </div></div>`;
 }
 function wizWirePreview() {
-  $('#wizBack2').onclick = () => { state.wiz.step = 'map'; drawWizard(); };
+  $('#wizBack2').onclick = () => { state.wiz.step = 'map'; state.wiz.accepteHorsPeriode = false; drawWizard(); };
+  const ack = $('#wizAckPer'); if (ack) ack.onchange = () => { state.wiz.accepteHorsPeriode = ack.checked; const c = $('#wizConfirm'); if (c) c.disabled = !ack.checked; };
   const c = $('#wizConfirm'); if (c) c.onclick = () => wizConfirm();
 }
 async function wizConfirm() {
@@ -1500,7 +1545,8 @@ async function wizConfirm() {
       toast(`${r.conventionsCreated || 0} convention(s) créée(s).`, 'ok', 'Import confirmé');
       refreshAlertsBadge();
     } else {
-      const r = await api(`/clients/${state.clientId}/import/confirm${perQuery()}`, { method: 'POST', body: { ...body, requireNumero: state.wiz.requireNumero } });
+      const r = await api(`/clients/${state.clientId}/import/confirm${perQuery()}`, { method: 'POST', body: { ...body, requireNumero: state.wiz.requireNumero, strictPeriode: true, accepteHorsPeriode: !!state.wiz.accepteHorsPeriode } });
+      await refreshPeriodsKeep();   // la nouvelle période importée apparaît immédiatement (sélecteur, onboarding)
       state.wiz.result = r; state.wiz.step = 'done'; drawWizard();
       toast(`${r.imported} facture(s) importée(s).`, 'ok', 'Import confirmé');
       refreshAlertsBadge();
@@ -1888,11 +1934,13 @@ async function renderSettings(tab = 'workspace') {
   <div id="setBody"></div>`;
   $$('.tab[data-tab]').forEach(b => b.onclick = () => { if (b.dataset.tab === 'taux') return setView('taux'); if (state.view !== 'settings') return setView('settings'); renderSettings(b.dataset.tab); });
   const box = $('#setBody');
-  if (tab === 'taux') return renderTaux(box);
-  if (tab === 'compte') return renderAccount(box);
-  if (tab === 'users') return renderUsers(box);
-  if (tab === 'security') return renderSecurity(box);
-  return renderWorkspace(box);
+  const fn = { taux: renderTaux, compte: renderAccount, users: renderUsers, security: renderSecurity }[tab] || renderWorkspace;
+  try { await fn(box); }
+  catch (e) {  // jamais d'onglet vide : message explicite + action
+    box.innerHTML = `<div class="card"><div class="empty err"><div class="ic">${svgI('warn', '')}</div><h4>Cette section n'a pas pu être chargée</h4><p>${esc(e.message)}</p>
+      <div class="actions"><button class="btn btn-ghost" id="setRetry">${svgI('refresh')}Réessayer</button></div></div></div>`;
+    const r = $('#setRetry'); if (r) r.onclick = () => renderSettings(tab);
+  }
 }
 async function renderWorkspace(box) {
   const d = await api('/workspace', { fresh: true });
@@ -2055,7 +2103,7 @@ function renderSecurity(box) {
 function renderAccount(box) {
   const m = state.me || {};
   box.innerHTML = `<div class="card" style="max-width:640px"><div class="card-h"><h3>Mon compte</h3></div><div class="card-b">
-    <dl class="kv"><dt>Nom</dt><dd>${esc(m.nom || '—')}</dd><dt>E-mail</dt><dd>${esc(m.email || '—')}</dd><dt>Fonction</dt><dd>${esc(m.titre || '—')}</dd>
+    <dl class="kv"><dt>Nom</dt><dd>${esc(m.nom || '—')}</dd><dt>E-mail</dt><dd>${esc(m.email || '—')}</dd>${m.titre && !Object.values(ROLE_INFO).some(r => r[0] === m.titre) ? `<dt>Fonction</dt><dd>${esc(m.titre)}</dd>` : ''}
       <dt>Rôle</dt><dd>${esc(m.roleLabel || m.role)} — ${esc((ROLE_INFO[m.role] || ['', ''])[1])}</dd>
       <dt>Espace</dt><dd>${esc((state.workspace && state.workspace.displayName) || '—')}</dd></dl>
   </div></div>

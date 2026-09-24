@@ -2589,3 +2589,127 @@ test('saas1/UI : rôles reflétés, invitation hors URL, logo en image uniquemen
   assert.match(app, /\$\('#wsName'\)\.textContent = name/, 'nom d’espace inséré en texte (pas de HTML)');
   assert.doesNotMatch(app + inv + login, /image\/svg\+xml/, 'aucun téléversement SVG proposé');
 });
+
+/* ================================================================================
+ * SaaS — CORRECTIFS COWORK INCRÉMENT 1 (ROLE-1, AUTH-1, SESS-1, ONB-1, ONB-2, AUTH-3)
+ * ================================================================================ */
+function reqFull(method, pathUrl, opts = {}) {
+  const http = require('http'); const u = new URL(baseUrl() + pathUrl);
+  const payload = opts.body ? JSON.stringify(opts.body) : null; const headers = {};
+  if (opts.cookie) headers.Cookie = opts.cookie; if (opts.host) headers.Host = opts.host;
+  if (payload) { headers['Content-Type'] = 'application/json'; headers['Content-Length'] = Buffer.byteLength(payload); }
+  return new Promise((resolve, reject) => {
+    const r = http.request({ hostname: u.hostname, port: u.port, path: u.pathname + u.search, method, headers }, res => {
+      let d = ''; res.on('data', c => { d += c; }); res.on('end', () => { let j = null; try { j = JSON.parse(d); } catch (_) {} resolve({ status: res.statusCode, body: j, headers: res.headers }); });
+    }); r.on('error', reject); if (payload) r.write(payload); r.end();
+  });
+}
+function invoiceBuf(rows) {
+  const ws = XLSX.utils.aoa_to_sheet([['N° facture', 'Fournisseur', 'ICE fournisseur', 'Date facture', 'Date paiement', 'Montant TTC'], ...rows]);
+  const wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, ws, 'Achats');
+  return XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
+}
+async function analyzeInvoices(t, ck, rows) {
+  const an = await postFile(`/api/clients/${t.ent}/import/analyze`, ck, invoiceBuf(rows), 'achats.xlsx', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+  assert.equal(an.status, 200, 'analyse OK');
+  const sh = an.body.feuilles.find(f => f.nom === an.body.suggestion) || an.body.feuilles[0];
+  const mapping = {}; for (const [k, v] of Object.entries(sh.mapping || {})) mapping[k] = v.col;
+  return { token: an.body.token, sheetName: sh.nom, headerRow: sh.ligneEntete, mapping, sourceName: 'achats.xlsx' };
+}
+
+test('fix/ROLE-1 : le rôle affiché suit le rôle réel (pas de « fonction » figée à l’invitation)', async () => {
+  const W = mkWorkspace('role1');
+  const inv = await reqJson('POST', '/api/invitations', { cookie: cookieOf(W.u), body: { email: 'r1@ex.ma', role: 'lecture' } });
+  await reqJson('POST', '/api/invitations/accept', { host: 'role1.localhost', body: { token: inv.body.invitation.token, nom: 'Rita Un', password: 'Motdepasse2026' } });
+  const u = db.prepare("SELECT * FROM utilisateur WHERE email='r1@ex.ma'").get();
+  assert.equal(u.titre, null, 'la fonction n’est plus déduite du rôle d’invitation');
+  await reqJson('PATCH', `/api/users/${u.id}`, { cookie: cookieOf(W.u), body: { role: 'collaborateur' } });
+  const me = await reqJson('GET', '/api/me', { cookie: cookieOf(u.id) });
+  assert.equal(me.body.user.role, 'collaborateur'); assert.equal(me.body.user.roleLabel, 'Comptable'); assert.notEqual(me.body.user.titre, 'Lecture seule');
+  // Donnée héritée : une fonction égale à un libellé de rôle est effacée au changement de rôle.
+  const old = addUser(W.cab, 'lecture'); db.prepare("UPDATE utilisateur SET titre='Lecture seule' WHERE id=?").run(old);
+  await reqJson('PATCH', `/api/users/${old}`, { cookie: cookieOf(W.u), body: { role: 'collaborateur' } });
+  assert.equal(db.prepare('SELECT titre FROM utilisateur WHERE id=?').get(old).titre, null);
+  // Une vraie fonction (non liée au rôle) est conservée.
+  const real = addUser(W.cab, 'lecture'); db.prepare("UPDATE utilisateur SET titre='Expert-comptable' WHERE id=?").run(real);
+  await reqJson('PATCH', `/api/users/${real}`, { cookie: cookieOf(W.u), body: { role: 'collaborateur' } });
+  assert.equal(db.prepare('SELECT titre FROM utilisateur WHERE id=?').get(real).titre, 'Expert-comptable');
+  const app = fs.readFileSync(path.join(__dirname, '..', 'public', 'js', 'app.js'), 'utf8');
+  assert.match(app, /\$\('#sideTitle'\)\.textContent = state\.me\.roleLabel/, 'barre latérale : rôle effectif');
+});
+
+test('fix/AUTH-1 : e-mail présent dans plusieurs espaces — réponse cohérente quel que soit le compte', async () => {
+  const A = mkWorkspace('auth1-a'), B = mkWorkspace('auth1-b');
+  const mail = 'double-auth1@ex.ma';
+  const ua = addUser(A.cab, 'collaborateur', mail), ub = addUser(B.cab, 'collaborateur', mail);
+  db.prepare('UPDATE utilisateur SET password_hash=? WHERE id=?').run(auth.hashPassword('MdpEspaceB-2026'), ub);
+  const post = (host, email, password) => reqJson('POST', '/api/auth/login', { host, body: { email, password } });
+  const r1 = await post('localhost', mail, 'Motdepasse1!');       // mdp du compte A
+  const r2 = await post('localhost', mail, 'MdpEspaceB-2026');    // mdp du compte B (était « Identifiants incorrects »)
+  assert.equal(r1.status, 409); assert.equal(r2.status, 409, '1. hôte neutre : même réponse « plusieurs espaces » pour le mdp de B');
+  assert.equal(r1.body.error, r2.body.error, 'aucune indication de l’espace concerné');
+  assert.equal((await post('auth1-b.localhost', mail, 'MdpEspaceB-2026')).status, 200, '2. sur l’hôte de son espace : connexion');
+  assert.equal((await post('localhost', 'inconnu-auth1@ex.ma', 'Motdepasse1!')).status, 401, '3. e-mail inconnu : 401 générique');
+  const wrong = await post('localhost', mail, 'mauvais-mdp-9');
+  assert.equal(wrong.status, 401, '4. mauvais mot de passe : 401 (pas de révélation du multi-espace)');
+  assert.equal(wrong.body.error, 'Identifiants incorrects.');
+  assert.equal((await post('auth1-a.localhost', mail, 'MdpEspaceB-2026')).status, 401, '5. mdp de B sur l’hôte de A : refusé');
+  assert.ok(ua && ub);
+});
+
+test('fix/SESS-1 : chaque réponse porte l’identité de la session réelle ; l’UI se réhydrate', async () => {
+  const W = mkWorkspace('sess1'); const c = addUser(W.cab, 'lecture');
+  const r1 = await reqFull('GET', '/api/me', { cookie: cookieOf(c) });
+  assert.equal(r1.headers['x-dp-session'], `${c}:lecture`);
+  db.prepare("UPDATE utilisateur SET role='collaborateur' WHERE id=?").run(c);
+  const r2 = await reqFull('GET', '/api/clients', { cookie: cookieOf(c) });
+  assert.equal(r2.headers['x-dp-session'], `${c}:collaborateur`, 'le rôle relu en base est annoncé immédiatement');
+  const r3 = await reqFull('GET', '/api/clients', { cookie: cookieOf(W.u) });
+  assert.equal(r3.headers['x-dp-session'].split(':')[0], W.u, 'un autre utilisateur = une autre empreinte');
+  const app = fs.readFileSync(path.join(__dirname, '..', 'public', 'js', 'app.js'), 'utf8');
+  assert.match(app, /function checkSessionFingerprint/); assert.match(app, /checkSessionFingerprint\(res\.headers\.get\('X-DP-Session'\)\)/);
+  assert.match(app, /Cette section n'a pas pu être chargée/, 'onglet Paramètres : jamais vide sans message');
+});
+
+test('fix/ONB-2 + ONB-1 : trimestre choisi AVANT l’import, rattachement explicite, périodes relues', async () => {
+  const W = mkWorkspace('onb2'); const ck = cookieOf(W.u);
+  db.prepare('DELETE FROM entreprise WHERE cabinet_id=?').run(W.cab);
+  const st0 = (await reqJson('GET', '/api/onboarding', { cookie: ck })).body;
+  const keys = st0.steps.map(x => x.key);
+  assert.ok(keys.indexOf('periode') < keys.indexOf('factures'), 'étape période AVANT l’import');
+  const cl = await reqJson('POST', '/api/clients', { cookie: ck, body: { raison_sociale: 'Client ONB2' } });   // 2. créer le client
+  const t = { cab: W.cab, ent: cl.body.id };
+  assert.equal((await reqJson('PUT', '/api/onboarding', { cookie: ck, body: { step: 'periode', status: 'done' } })).status, 400, 'étape période impossible sans trimestre');
+  assert.equal((await reqJson('PUT', '/api/onboarding', { cookie: ck, body: { periode: { annee: 2026, trimestre: 7 } } })).status, 400, 'trimestre invalide refusé');
+  const sel = await reqJson('PUT', '/api/onboarding', { cookie: ck, body: { periode: { annee: 2026, trimestre: 1 } } });   // 3. choisir T1
+  assert.deepEqual(sel.body.periode, { annee: 2026, trimestre: 1 }); assert.equal(sel.body.steps.find(x => x.key === 'periode').status, 'done');
+  const rows = [['F-1', 'FRS UN', '000000000000111', '2026-01-10', '2026-02-01', 1200], ['F-2', 'FRS DEUX', '000000000000222', '2026-02-15', '2026-03-01', 800]];
+  const body = await analyzeInvoices(t, ck, rows);
+  const noPer = await reqJson('POST', `/api/clients/${t.ent}/import/confirm`, { cookie: ck, body: { ...body, strictPeriode: true } });   // 6. sans période
+  assert.equal(noPer.status, 400, 'import sans période : bloqué');
+  const wrong = await reqJson('POST', `/api/clients/${t.ent}/import/confirm?annee=2026&trimestre=2`, { cookie: ck, body: { ...body, strictPeriode: true } });   // 8. en T2
+  assert.equal(wrong.status, 409, 'factures T1 importées « dans T2 » : refus sans confirmation explicite'); assert.equal(wrong.body.code, 'hors_periode');
+  assert.equal(db.prepare('SELECT COUNT(*) n FROM facture WHERE entreprise_id=?').get(t.ent).n, 0, 'aucune facture rattachée par erreur à T2');
+  const ok = await reqJson('POST', `/api/clients/${t.ent}/import/confirm?annee=2026&trimestre=1`, { cookie: ck, body: { ...body, strictPeriode: true } });   // 4. en T1
+  assert.equal(ok.status, 200); assert.equal(ok.body.imported, 2);
+  const per = db.prepare('SELECT annee, trimestre, COUNT(*) n FROM facture WHERE entreprise_id=? GROUP BY 1,2').all(t.ent);
+  assert.deepEqual(per.map(p => [p.annee, p.trimestre, p.n]), [[2026, 1, 2]], '5. factures associées à T1');
+  const periods = await reqJson('GET', `/api/clients/${t.ent}/periods`, { cookie: ck });   // ONB-1 : source unique des périodes
+  assert.ok(periods.body.disponibles.some(p => p.annee === 2026 && p.trimestre === 1 && p.nbFactures === 2), 'T1 disponible après import');
+  const app = fs.readFileSync(path.join(__dirname, '..', 'public', 'js', 'app.js'), 'utf8');
+  assert.match(app, /async function renderOnboarding[\s\S]{0,300}refreshPeriodsKeep\(\)/, 'onboarding relit les périodes');
+  assert.match(app, /strictPeriode: true, accepteHorsPeriode/, 'l’assistant exige le contrôle de rattachement');
+});
+
+test('fix/AUTH-3 : limitation par identité ciblée, pas par poste entier', async () => {
+  const A = mkWorkspace('rl-a'), B = mkWorkspace('rl-b');
+  const post = (host, email, password) => reqJson('POST', '/api/auth/login', { host, body: { email, password } });
+  for (let i = 0; i < 10; i++) assert.equal((await post('rl-a.localhost', A.email, 'faux-' + i)).status, 401);
+  assert.equal((await post('rl-a.localhost', A.email, 'faux-x')).status, 429, '1. échecs répétés sur A : limités');
+  assert.equal((await post('rl-a.localhost', A.email, 'Motdepasse1!')).status, 429, '3. A reste protégé (même avec le bon mot de passe)');
+  assert.equal((await post('rl-b.localhost', B.email, 'Motdepasse1!')).status, 200, '2. B n’est pas bloqué par A depuis le même poste');
+  const C = mkWorkspace('rl-c');
+  for (let i = 0; i < 6; i++) await post('rl-c.localhost', C.email, 'faux-' + i);
+  assert.equal((await post('rl-c.localhost', C.email, 'Motdepasse1!')).status, 200);
+  for (let i = 0; i < 9; i++) assert.equal((await post('rl-c.localhost', C.email, 'faux2-' + i)).status, 401, '4. compteur remis à zéro après succès');
+});

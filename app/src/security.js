@@ -53,7 +53,7 @@ function rateLimit(opts = {}) {
   }, windowMs);
   if (timer.unref) timer.unref();
 
-  return function (req, res, next) {
+  const mw = function (req, res, next) {
     const now = Date.now();
     const key = keyGen(req);
     let rec = hits.get(key);
@@ -69,6 +69,9 @@ function rateLimit(opts = {}) {
     }
     next();
   };
+  // Remise à zéro du compteur de CETTE clé (ex. connexion réussie).
+  mw.reset = (req) => { hits.delete(keyGen(req)); };
+  return mw;
 }
 
 module.exports = { securityHeaders, rateLimit, CSP };

@@ -114,10 +114,11 @@ const ONBOARDING_STEPS = [
   { key: 'bienvenue', label: 'Bienvenue dans DelaiPay', optional: false },
   { key: 'cabinet', label: 'Configurez votre cabinet', optional: false },
   { key: 'client', label: 'Créez votre premier dossier client', optional: false },
+  // La période PRÉCÈDE l'import : les factures sont rattachées au trimestre choisi (jamais au trimestre par défaut).
+  { key: 'periode', label: 'Choisissez le trimestre à traiter', optional: false },
   { key: 'factures', label: 'Importez vos factures (journal TVA)', optional: false },
   { key: 'conventions', label: 'Ajoutez vos conventions', optional: true },
   { key: 'reseau', label: 'Vérifiez les opérateurs réseau', optional: true },
-  { key: 'periode', label: 'Sélectionnez votre première période', optional: false },
   { key: 'pret', label: 'Vous êtes prêt', optional: false },
 ];
 function onboardingFacts(cabinetId) {
@@ -148,7 +149,7 @@ function onboardingState(cabinetId) {
   const required = steps.filter(s => !s.optional && !['bienvenue', 'pret'].includes(s.key));
   const complete = !!saved.completedAt;
   const progress = Math.round(100 * steps.filter(s => s.status !== 'todo' && s.key !== 'pret').length / (steps.length - 1));
-  return { steps, facts: f, current: saved.current || 'bienvenue', dismissed: !!saved.dismissed, completedAt: saved.completedAt || null,
+  return { steps, facts: f, periode: saved.periode || null, current: saved.current || 'bienvenue', dismissed: !!saved.dismissed, completedAt: saved.completedAt || null,
     complete, readyToFinish: required.every(s => s.status === 'done'), progress };
 }
 function updateOnboarding(cabinetId, userId, patch) {
@@ -162,6 +163,12 @@ function updateOnboarding(cabinetId, userId, patch) {
     if (patch.status === 'skipped' && !step.optional) throw new WorkspaceError('Cette étape est indispensable et ne peut pas être ignorée.');
     if (patch.status === 'todo') delete s.done[patch.step]; else s.done[patch.step] = patch.status;
   }
+  if (patch.periode !== undefined) {
+    const a = +(patch.periode && patch.periode.annee), t = +(patch.periode && patch.periode.trimestre);
+    if (!(Number.isInteger(a) && a >= 2000 && a <= 2100 && [1, 2, 3, 4].includes(t))) throw new WorkspaceError('Trimestre invalide.');
+    s.periode = { annee: a, trimestre: t }; s.done.periode = 'done';
+  }
+  if (patch.step === 'periode' && patch.status === 'done' && !s.periode) throw new WorkspaceError('Choisissez un trimestre.');
   if (patch.dismissed != null) s.dismissed = !!patch.dismissed;
   if (patch.complete) {
     const st = onboardingState(cabinetId);
@@ -189,7 +196,9 @@ function updateUser(cabinetId, actorId, targetId, patch) {
   if (targetId === actorId && (next.role !== 'admin' || !next.actif)) throw new WorkspaceError('Vous ne pouvez pas retirer vos propres droits d’administration ni désactiver votre propre compte.');
   const losingAdmin = u.role === 'admin' && u.actif && (next.role !== 'admin' || !next.actif);
   if (losingAdmin && activeAdminCount(cabinetId) <= 1) throw new WorkspaceError('L’espace doit conserver au moins un administrateur actif.');
-  db.prepare('UPDATE utilisateur SET role=?, actif=? WHERE id=?').run(next.role, next.actif, u.id);
+  // Une ancienne « fonction » qui n'était que le libellé d'un rôle est effacée (jamais de rôle périmé affiché).
+  const staleTitre = u.titre && Object.values(permissions.ROLES).some(r => r.label === u.titre);
+  db.prepare('UPDATE utilisateur SET role=?, actif=?, titre=? WHERE id=?').run(next.role, next.actif, staleTitre ? null : u.titre, u.id);
   audit(cabinetId, actorId, 'update', 'utilisateur', { utilisateur: u.email, avant: { role: u.role, actif: !!u.actif }, apres: { role: next.role, actif: !!next.actif } }, null);
   return listUsers(cabinetId).find(x => x.id === u.id);
 }
@@ -244,7 +253,8 @@ function acceptInvitation(token, hostCabinetId, { nom, password }) {
     const upd = db.prepare(`UPDATE invitation SET accepted_at=datetime('now'), accepted_user_id=? WHERE id=? AND accepted_at IS NULL AND revoked_at IS NULL`).run(userId, inv.id);
     if (!upd.changes) throw new WorkspaceError('Cette invitation vient d’être utilisée.', 410);
     db.prepare(`INSERT INTO utilisateur (id, cabinet_id, nom, email, password_hash, role, initiales, titre, actif, invite_par)
-                VALUES (?,?,?,?,?,?,?,?,1,?)`).run(userId, inv.cabinet_id, n, inv.email, hashPassword(password), inv.role, initialsOfName(n), (permissions.ROLES[inv.role] || {}).label || null, inv.created_by);
+                VALUES (?,?,?,?,?,?,?,?,1,?)`).run(userId, inv.cabinet_id, n, inv.email, hashPassword(password), inv.role, initialsOfName(n), null, inv.created_by);
+    // (la « fonction » n'est plus déduite du rôle : le rôle effectif est toujours lu en base)
     db.exec('COMMIT');
   } catch (e) { db.exec('ROLLBACK'); throw e; }
   audit(inv.cabinet_id, userId, 'acceptation', 'invitation', { email: inv.email, role: inv.role }, null);
