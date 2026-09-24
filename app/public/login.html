@@ -3,41 +3,57 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>DelaiPay — Connexion</title>
+<title>Connexion — DelaiPay</title>
+<meta name="theme-color" content="#0C2A36">
+<link rel="icon" type="image/svg+xml" href="/assets/brand/favicon.svg">
+<link rel="icon" type="image/png" sizes="32x32" href="/assets/brand/favicon-32.png">
+<link rel="apple-touch-icon" href="/assets/brand/apple-touch-icon.png">
+<link rel="preload" href="/assets/fonts/inter-latin-var.woff2" as="font" type="font/woff2" crossorigin>
 <link rel="stylesheet" href="/css/app.css">
-<style>body{background:var(--bg)}</style>
 </head>
 <body>
 <div class="login-wrap">
-  <aside class="login-aside">
-    <div class="brand2">
-      <div class="mark"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 2l1.6 6.4L20 10l-6.4 1.6L12 18l-1.6-6.4L4 10l6.4-1.6z"/></svg></div>
-      <b>DelaiPay</b>
-    </div>
-    <h2>Le pilotage des délais de paiement, automatisé.</h2>
-    <p>Conformité loi 69-21 pour les cabinets d'expertise comptable : import, calcul des amendes, déclaration DGI et visa — en quelques clics.</p>
+  <aside class="login-aside" aria-hidden="false">
+    <div class="brand2"><img src="/assets/brand/delaipay-logo-dark-bg.svg" alt="DelaiPay" width="117" height="34"></div>
+    <h2>Les délais de paiement, <em>sous contrôle</em>.</h2>
+    <p>L'espace de travail des cabinets pour la loi 69-21 : du journal d'achats à la déclaration trimestrielle, chaque montant est calculé, vérifiable et tracé.</p>
     <div class="login-feats">
-      <div class="f"><span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 3v12m0 0l-4-4m4 4l4-4M4 19h16"/></svg></span>Import Excel des journaux d'achats</div>
-      <div class="f"><span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 4h16v4H4zM4 12h10v8H4zM17 12h3v8h-3z"/></svg></span>Calcul des retards & amendes (69-21)</div>
-      <div class="f"><span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M9 12l2 2 4-4"/><circle cx="12" cy="12" r="9"/></svg></span>Déclaration DGI & visa générés</div>
+      <div class="f"><span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 3v12m0 0l-4-4m4 4l4-4M4 19h16"/></svg></span>
+        <div><b>Import contrôlé</b><small>Analyse et correspondance des colonnes validées avant tout enregistrement.</small></div></div>
+      <div class="f"><span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="4" y="3" width="16" height="18" rx="2"/><path d="M4 9h16M10 9v12"/></svg></span>
+        <div><b>Calcul au mois calendaire</b><small>Retards et amendes détaillés facture par facture, taux Bank Al-Maghrib historisés.</small></div></div>
+      <div class="f"><span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V7a4 4 0 018 0v4"/></svg></span>
+        <div><b>Périodes clôturées immuables</b><small>Déclaration, exports et visa figés à la clôture ; toute réouverture est motivée et tracée.</small></div></div>
     </div>
-    <div class="foot">© 2026 DelaiPay · Confidentiel · Données hébergées conformément à la loi 09-08</div>
+    <div class="foot"><span>© 2026 DelaiPay</span><span>Suivi des délais de paiement — loi 69-21</span></div>
   </aside>
 
   <main class="login-main">
-    <form class="login-card" id="loginForm" autocomplete="on">
-      <h1>Connexion</h1>
-      <p class="lead">Accédez à votre espace cabinet.</p>
-      <div id="err" class="login-err hidden"></div>
+    <form class="login-card" id="loginForm" autocomplete="on" novalidate>
+      <div class="login-mobile-brand"><img src="/assets/brand/delaipay-logo-light-bg.svg" alt="DelaiPay" width="104" height="30"></div>
+      <div class="login-ws hidden" id="wsBox">
+        <div class="ws-mono" id="wsMono">··</div>
+        <div><small>Espace de travail</small><b id="wsName">—</b></div>
+      </div>
+      <h1 id="loginTitle">Connexion</h1>
+      <p class="lead" id="loginLead">Accédez à l'espace de travail de votre cabinet.</p>
+      <div id="err" class="login-err hidden" role="alert"></div>
       <div class="fld">
-        <label class="fld-lbl" for="email">Adresse e-mail</label>
-        <input class="input-fld" id="email" name="email" type="email" required placeholder="vous@cabinet.ma" autofocus>
+        <label class="fld-lbl" for="email">Adresse e-mail professionnelle</label>
+        <input class="input-fld" id="email" name="email" type="email" required placeholder="vous@cabinet.ma" autocomplete="username" autofocus>
       </div>
       <div class="fld">
         <label class="fld-lbl" for="password">Mot de passe</label>
-        <input class="input-fld" id="password" name="password" type="password" required placeholder="••••••••">
+        <div class="pw-wrap">
+          <input class="input-fld" id="password" name="password" type="password" required placeholder="••••••••" autocomplete="current-password">
+          <button type="button" class="pw-toggle" id="pwToggle" aria-label="Afficher le mot de passe" aria-pressed="false">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></svg></button>
+        </div>
       </div>
-      <button class="btn btn-primary" id="submitBtn" type="submit" style="width:100%;justify-content:center;padding:11px">Se connecter</button>
+      <button class="btn btn-primary login-submit" id="submitBtn" type="submit">Se connecter</button>
+      <div class="login-meta"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V7a4 4 0 018 0v4"/></svg>
+        <span>Session signée, inaccessible aux scripts de la page, expirant après 12 heures. Chaque action sensible est inscrite au journal d'audit du cabinet.</span></div>
+      <div class="login-legal">DelaiPay · Accès réservé aux utilisateurs autorisés du cabinet.</div>
     </form>
   </main>
 </div>

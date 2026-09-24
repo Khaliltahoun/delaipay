@@ -11,6 +11,7 @@ const { importWorkbook } = require('./importer');
 const reseau = require('./reseau');
 const auth = require('./auth');
 const visa = require('./visa');
+const tenant = require('./tenant');
 const { rateLimit } = require('./security');
 const { uid, normalizeIce, fmtMoney, slugify } = require('./util');
 
@@ -181,7 +182,13 @@ function recomputeOpenPeriodsForFournisseurs(cabinetId, entrepriseId, fournisseu
 router.post('/auth/login', loginLimiter, (req, res) => {
   const { email, password } = req.body || {};
   if (!email || !password) return res.status(400).json({ error: 'Email et mot de passe requis.' });
-  const u = db.prepare('SELECT * FROM utilisateur WHERE email=? AND actif=1').get(String(email).toLowerCase().trim());
+  // Espace de travail désigné par le nom d'hôte (premium.delaipay.local…) : la recherche du compte est
+  // limitée à CE cabinet. Hôte neutre (localhost, domaine actuel) : comportement historique inchangé.
+  const ws = tenant.resolve(req);
+  const mail = String(email).toLowerCase().trim();
+  const u = ws.slug
+    ? (ws.cabinet ? db.prepare('SELECT * FROM utilisateur WHERE email=? AND actif=1 AND cabinet_id=?').get(mail, ws.cabinet.id) : null)
+    : db.prepare('SELECT * FROM utilisateur WHERE email=? AND actif=1').get(mail);
   // Comparaison systématique (hash factice si l'utilisateur n'existe pas) pour
   // ne pas révéler l'existence d'un compte par le temps de réponse.
   const ok = auth.verifyPassword(password, u ? u.password_hash : auth.DUMMY_HASH);
@@ -195,8 +202,17 @@ router.post('/auth/login', loginLimiter, (req, res) => {
 router.post('/auth/logout', (req, res) => { auth.clearAuthCookie(res); res.json({ ok: true }); });
 
 router.get('/me', auth.requireAuth, (req, res) => {
-  const cab = db.prepare('SELECT id, nom, slug, plan FROM cabinet WHERE id=?').get(req.cabinetId);
-  res.json({ user: publicUser(req.user), cabinet: cab });
+  const row = db.prepare('SELECT * FROM cabinet WHERE id=?').get(req.cabinetId);
+  const cab = row ? { id: row.id, nom: row.nom, slug: row.slug, plan: row.plan } : null;
+  res.json({ user: publicUser(req.user), cabinet: cab, workspace: tenant.workspaceOf(row) });
+});
+
+// Identité PUBLIQUE de l'espace désigné par le nom d'hôte (page de connexion) : nom affiché,
+// initiales, couleurs. Aucune donnée interne (ni identifiant, ni contact, ni volumétrie).
+router.get('/tenant', (req, res) => {
+  const ws = tenant.resolve(req);
+  res.setHeader('Cache-Control', 'no-store');
+  res.json({ slug: ws.slug, ...tenant.publicBranding(ws.cabinet) });
 });
 function publicUser(u) {
   return { id: u.id, nom: u.nom, email: u.email, role: u.role,
@@ -206,6 +222,29 @@ function publicUser(u) {
 
 // tout ce qui suit exige l'authentification
 router.use(auth.requireAuth);
+
+/* ============================================================ ESPACE DE TRAVAIL (tenant) */
+// Identité d'affichage du cabinet connecté. Lecture : tout utilisateur du cabinet.
+router.get('/workspace', (req, res) => {
+  const cab = db.prepare('SELECT * FROM cabinet WHERE id=?').get(req.cabinetId);
+  const hosts = cab && cab.slug ? tenant.baseDomains().map(d => `${cab.slug}.${d}`) : [];
+  res.json({ workspace: tenant.workspaceOf(cab), hotes: hosts,
+    options: { locales: tenant.LOCALES, devises: tenant.DEVISES, fuseaux: tenant.FUSEAUX } });
+});
+// Modification (administrateur) : champs d'AFFICHAGE uniquement — le slug (sous-domaine) et le
+// plan relèvent du provisionnement. Aucun effet sur les calculs, périodes ou exports. Audité.
+router.put('/workspace', (req, res) => {
+  if (req.user.role !== 'admin') return res.status(403).json({ error: "Seul un administrateur peut modifier l'identité de l'espace." });
+  const v = tenant.validateWorkspacePatch(req.body);
+  if (!v.ok) return res.status(400).json({ error: v.error });
+  const before = db.prepare('SELECT * FROM cabinet WHERE id=?').get(req.cabinetId);
+  const cols = Object.keys(v.values);
+  db.prepare(`UPDATE cabinet SET ${cols.map(c => c + '=?').join(', ')} WHERE id=?`).run(...cols.map(c => v.values[c]), req.cabinetId);
+  const avant = {}; for (const c of cols) avant[c] = before[c] == null ? null : before[c];
+  audit(req.cabinetId, req.user.id, 'update', 'espace_travail', { avant, apres: v.values }, req.ip);
+  const cab = db.prepare('SELECT * FROM cabinet WHERE id=?').get(req.cabinetId);
+  res.json({ ok: true, workspace: tenant.workspaceOf(cab) });
+});
 
 /* ============================================================ DASHBOARD */
 router.get('/dashboard', (req, res) => {
@@ -431,10 +470,27 @@ router.get('/clients/:id/periods/:annee/:trimestre/summary', (req, res) => {
   res.json({
     periode: { annee: p.annee, trimestre: p.trimestre, ...info,
       statut: pr.statut, statutLabel: periode.STATUT_LABELS[pr.statut], verrouillee: periode.isLocked(pr.statut),
-      date_cloture: pr.date_cloture, joursAvantEcheance: periode.joursAvantEcheance(p.annee, p.trimestre) },
+      date_cloture: pr.date_cloture, joursAvantEcheance: periode.joursAvantEcheance(p.annee, p.trimestre),
+      date_reouverture: pr.date_reouverture || null, motif_reouverture: pr.motif_reouverture || null,
+      historique: periodHistory(req.cabinetId, e.id, p.annee, p.trimestre) },
     kpis: { documents: docs, lots, factures: agg.nb, aDeclarer: agg.aDecl, ttcRetard: agg.ttcRetard, amende: agg.amende, anomalies },
   });
 });
+
+// Historique LECTURE SEULE des clôtures / réouvertures d'une période, reconstitué depuis le journal
+// d'audit (qui, quand, motif). Aucune écriture : simple restitution de la traçabilité existante.
+function periodHistory(cabinetId, entrepriseId, annee, trimestre) {
+  return db.prepare(`SELECT a.action, a.created_at, a.details, u.nom user_nom FROM audit_log a
+      LEFT JOIN utilisateur u ON u.id=a.user_id
+      WHERE a.cabinet_id=? AND a.action IN ('cloture_periode','reouverture_periode')
+        AND (CASE WHEN json_valid(a.details) THEN json_extract(a.details,'$.entreprise') END)=?
+        AND (CASE WHEN json_valid(a.details) THEN json_extract(a.details,'$.annee') END)=?
+        AND (CASE WHEN json_valid(a.details) THEN json_extract(a.details,'$.trimestre') END)=?
+      ORDER BY a.created_at DESC, a.rowid DESC LIMIT 20`).all(cabinetId, entrepriseId, annee, trimestre)
+    .map(r => { let d = {}; try { d = JSON.parse(r.details || '{}'); } catch (_) {}
+      return { action: r.action === 'cloture_periode' ? 'cloture' : 'reouverture', date: r.created_at,
+               par: r.user_nom || null, avant: d.avant || null, apres: d.apres || null, motif: d.motif || null }; });
+}
 
 // Clôture d'une période (réservé admin) → lecture seule.
 router.post('/clients/:id/periods/:annee/:trimestre/close', (req, res) => {
@@ -497,11 +553,30 @@ router.get('/clients/:id/conventions', (req, res) => {
   const rows = db.prepare(`SELECT c.*, f.raison_sociale four_nom, f.ice four_ice, f.if_fiscal four_if
       FROM convention c LEFT JOIN fournisseur f ON f.id=c.fournisseur_id
       WHERE c.entreprise_id=? ORDER BY c.created_at DESC`).all(e.id);
-  res.json(rows.map(c => ({
-    id: c.id, fournisseur: c.four_nom, four_ice: c.four_ice, four_if: c.four_if, fournisseur_id: c.fournisseur_id,
-    objet: c.objet, delai: c.delai_convenu, date_debut: c.date_debut, date_fin: c.date_fin,
-    statut: computeConvStatut(c), conforme: !!c.conforme, fichier: c.fichier ? c.id : null, fichier_nom: c.fichier_nom,
-  })));
+  // Règle EFFECTIVEMENT appliquée au fournisseur (lecture seule) — via les fonctions centrales
+  // uniques (LOT 4 : activeConventionFor → resolveDelaiAutorise), jamais recalculée ici.
+  const regleCache = new Map();
+  const regleOf = (fid) => {
+    if (!fid) return null;
+    if (!regleCache.has(fid)) {
+      const four = db.prepare('SELECT * FROM fournisseur WHERE id=? AND entreprise_id=?').get(fid, e.id);
+      const active = activeConventionFor(e.id, fid);
+      const r = reseau.resolveDelaiAutorise({ fournisseur: four, convention: active });
+      regleCache.set(fid, { delai: r.delaiAutorise, source: r.sourceRegle, conventionId: active ? active.id : null });
+    }
+    return regleCache.get(fid);
+  };
+  res.json(rows.map(c => {
+    const regle = regleOf(c.fournisseur_id);
+    return {
+      id: c.id, fournisseur: c.four_nom, four_ice: c.four_ice, four_if: c.four_if, fournisseur_id: c.fournisseur_id,
+      objet: c.objet, delai: c.delai_convenu, date_debut: c.date_debut, date_fin: c.date_fin,
+      statut: computeConvStatut(c), conforme: !!c.conforme, fichier: c.fichier ? c.id : null, fichier_nom: c.fichier_nom,
+      created_at: c.created_at,
+      regle_fournisseur: regle ? { delai: regle.delai, source: regle.source } : null,
+      appliquee: !!(regle && regle.source === 'convention' && regle.conventionId === c.id),
+    };
+  }));
 });
 function computeConvStatut(c) {
   if (c.date_fin) {

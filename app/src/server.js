@@ -59,6 +59,12 @@ app.use('/assets', assetCache, express.static(path.join(PUB, 'assets'), staticOp
 app.use('/css', assetCache, express.static(path.join(PUB, 'css'), staticOpts));
 app.use('/js', assetCache, express.static(path.join(PUB, 'js'), staticOpts));
 
+// Icône de l'onglet (les navigateurs la demandent à la racine même avec <link rel="icon">).
+app.get('/favicon.ico', (req, res) => {
+  res.setHeader('Cache-Control', 'public, max-age=86400');
+  res.type('png').sendFile(path.join(PUB, 'assets', 'brand', 'favicon-32.png'));
+});
+
 // Pages
 app.get('/login', (req, res) => {
   if (readUser(req)) return res.redirect('/');

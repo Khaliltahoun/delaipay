@@ -194,7 +194,19 @@ for (const stmt of [
   // Traçabilité de résolution des anomalies (utilisée par la revue de doublon et par /anomalies/:id/resolve).
   "ALTER TABLE anomalie ADD COLUMN resolue_le TEXT",
   "ALTER TABLE anomalie ADD COLUMN motif_resolution TEXT",
+  // Identité d'ESPACE DE TRAVAIL (tenant = cabinet) — affichage uniquement, aucune incidence métier.
+  // slug / logo / plan existaient déjà ; le slug désigne le futur sous-domaine (premium.delaipay.com).
+  "ALTER TABLE cabinet ADD COLUMN nom_affiche TEXT",
+  "ALTER TABLE cabinet ADD COLUMN couleur_primaire TEXT",
+  "ALTER TABLE cabinet ADD COLUMN couleur_accent TEXT",
+  "ALTER TABLE cabinet ADD COLUMN locale TEXT DEFAULT 'fr-MA'",
+  "ALTER TABLE cabinet ADD COLUMN devise TEXT DEFAULT 'MAD'",
+  "ALTER TABLE cabinet ADD COLUMN fuseau_horaire TEXT DEFAULT 'Africa/Casablanca'",
+  "ALTER TABLE cabinet ADD COLUMN contact_email TEXT",
+  "ALTER TABLE cabinet ADD COLUMN contact_telephone TEXT",
 ]) { try { db.exec(stmt); } catch (_) {} }
+// Un slug désigne au plus un espace (index partiel : les cabinets sans slug restent autorisés).
+try { db.exec('CREATE UNIQUE INDEX IF NOT EXISTS ux_cabinet_slug ON cabinet(lower(slug)) WHERE slug IS NOT NULL'); } catch (_) {}
 
 /* Rétro-compatibilité : les factures détectées « doublon potentiel » AVANT l'ajout de
  * statut_doublon reçoivent l'état courant 'potentiel'. Idempotent (ne touche jamais une

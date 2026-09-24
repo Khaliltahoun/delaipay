@@ -10,7 +10,8 @@
     "migrate": "node src/migrate.js",
     "repair-delais": "node src/repair.js",
     "seed": "node src/seed.js",
-    "dev": "node --watch src/server.js"
+    "dev": "node --watch src/server.js",
+    "demo:tenant": "node src/tenant-demo.js"
   },
   "engines": {
     "node": ">=22.5"

@@ -2203,3 +2203,152 @@ test('lot7/UI : le frontend transmet toujours la période active aux liens d\'ex
   for (const fn of ['renderDecl', 'renderVisa', 'renderDelais'])
     assert.match(src, new RegExp(`async function ${fn}\\(\\)[\\s\\S]{0,200}ensurePeriod\\(\\)`), `${fn} garantit la période active`);
 });
+
+/* ================================================================================
+ * PRODUCTISATION SaaS — ESPACE DE TRAVAIL (tenant = cabinet), HÔTE → ESPACE, UI
+ * Aucune règle métier touchée : ces tests verrouillent la couche d'identité ajoutée
+ * et les contrats de l'interface redessinée.
+ * ================================================================================ */
+const tenantMod = require('../src/tenant');
+// http.request (et non fetch) : fetch ignore l'en-tête Host, indispensable pour simuler un sous-domaine.
+function reqJson(method, pathUrl, { cookie, host, body } = {}) {
+  const http = require('http');
+  const u = new URL(baseUrl() + pathUrl);
+  const payload = body ? JSON.stringify(body) : null;
+  const headers = {};
+  if (cookie) headers.Cookie = cookie;
+  if (host) headers.Host = host;
+  if (payload) { headers['Content-Type'] = 'application/json'; headers['Content-Length'] = Buffer.byteLength(payload); }
+  return new Promise((resolve, reject) => {
+    const r = http.request({ hostname: u.hostname, port: u.port, path: u.pathname + u.search, method, headers }, res => {
+      let data = ''; res.setEncoding('utf8'); res.on('data', c => { data += c; });
+      res.on('end', () => { let json = null; try { json = JSON.parse(data); } catch (_) {} resolve({ status: res.statusCode, body: json }); });
+    });
+    r.on('error', reject); if (payload) r.write(payload); r.end();
+  });
+}
+function tenantWithSlug(slug, nom = 'Cab ' + slug) {
+  const t = newTenant(nom);
+  db.prepare('UPDATE cabinet SET slug=? WHERE id=?').run(slug, t.cab);
+  const email = `${slug}-${uid('m')}@ex.ma`.toLowerCase();
+  db.prepare('UPDATE utilisateur SET email=?, password_hash=? WHERE id=?').run(email, auth.hashPassword('Secret-123'), t.u);
+  return { ...t, email };
+}
+
+test('saas/tenant : résolution nom d\'hôte → slug (sous-domaine unique, réservés et IP ignorés)', () => {
+  const d = ['localhost', 'delaipay.local'];
+  assert.equal(tenantMod.slugFromHost('premium.localhost:4100', d), 'premium');
+  assert.equal(tenantMod.slugFromHost('Premium.DelaiPay.Local', d), 'premium');
+  assert.equal(tenantMod.slugFromHost('localhost:3000', d), null, 'hôte nu = aucun espace');
+  assert.equal(tenantMod.slugFromHost('127.0.0.1:3000', d), null, 'IP = aucun espace');
+  assert.equal(tenantMod.slugFromHost('a.b.localhost', d), null, 'un seul niveau de sous-domaine');
+  assert.equal(tenantMod.slugFromHost('www.delaipay.local', d), null, 'sous-domaine réservé');
+  assert.equal(tenantMod.slugFromHost('delaipay.hlzconsulting.ma', d), null, 'domaine de production actuel : aucun effet');
+  assert.equal(tenantMod.slugFromHost('evil_slug.localhost', d), null, 'slug invalide refusé');
+});
+
+test('saas/tenant : /api/tenant est public et ne divulgue aucune donnée interne', async () => {
+  const t = tenantWithSlug('pubcheck');
+  db.prepare("UPDATE cabinet SET nom_affiche='Pub Check', couleur_primaire='#2F3E6B', contact_email='x@ex.ma' WHERE id=?").run(t.cab);
+  const r = await reqJson('GET', '/api/tenant', { host: 'pubcheck.localhost' });
+  assert.equal(r.status, 200);
+  assert.equal(r.body.known, true); assert.equal(r.body.displayName, 'Pub Check'); assert.equal(r.body.primaryColor, '#2F3E6B');
+  const raw = JSON.stringify(r.body);
+  assert.ok(!raw.includes(t.cab) && !raw.includes('x@ex.ma'), 'ni identifiant interne ni contact');
+  const n = await reqJson('GET', '/api/tenant', { host: 'localhost' });
+  assert.equal(n.body.known, false); assert.equal(n.body.slug, null);
+  const u = await reqJson('GET', '/api/tenant', { host: 'inconnu-xyz.localhost' });
+  assert.equal(u.body.known, false); assert.equal(u.body.slug, 'inconnu-xyz');
+});
+
+test('saas/tenant : la connexion sur un sous-domaine est limitée aux comptes de CET espace', async () => {
+  const a = tenantWithSlug('alpha'), b = tenantWithSlug('beta');
+  const ok = await reqJson('POST', '/api/auth/login', { host: 'alpha.localhost', body: { email: a.email, password: 'Secret-123' } });
+  assert.equal(ok.status, 200, 'compte de l\'espace : accepté');
+  const cross = await reqJson('POST', '/api/auth/login', { host: 'beta.localhost', body: { email: a.email, password: 'Secret-123' } });
+  assert.equal(cross.status, 401, 'compte d\'un autre espace : refusé');
+  assert.equal(cross.body.error, 'Identifiants incorrects.', 'même message qu\'un mauvais mot de passe (aucune énumération)');
+  const unknown = await reqJson('POST', '/api/auth/login', { host: 'nulle-part.localhost', body: { email: a.email, password: 'Secret-123' } });
+  assert.equal(unknown.status, 401, 'espace inconnu : refusé');
+  const neutral = await reqJson('POST', '/api/auth/login', { host: 'localhost', body: { email: b.email, password: 'Secret-123' } });
+  assert.equal(neutral.status, 200, 'hôte neutre : comportement historique inchangé');
+});
+
+test('saas/workspace : lecture par tout utilisateur, modification admin seule, validée et auditée', async () => {
+  const t = tenantWithSlug('wsedit', 'Cabinet Réel SARL');
+  const me = await reqJson('GET', '/api/me', { cookie: cookieOf(t.u) });
+  assert.equal(me.body.workspace.displayName, 'Cabinet Réel SARL', 'repli sur la raison sociale');
+  const bad = await reqJson('PUT', '/api/workspace', { cookie: cookieOf(t.u), body: { primaryColor: 'red' } });
+  assert.equal(bad.status, 400, 'couleur invalide refusée');
+  const badLoc = await reqJson('PUT', '/api/workspace', { cookie: cookieOf(t.u), body: { locale: 'xx-XX' } });
+  assert.equal(badLoc.status, 400, 'locale hors liste refusée');
+  const ok = await reqJson('PUT', '/api/workspace', { cookie: cookieOf(t.u), body: { nomAffiche: 'Réel', primaryColor: '#2f3e6b', slug: 'pirate', plan: 'gratuit' } });
+  assert.equal(ok.status, 200);
+  assert.equal(ok.body.workspace.displayName, 'Réel'); assert.equal(ok.body.workspace.primaryColor, '#2F3E6B');
+  const cab = db.prepare('SELECT slug, plan FROM cabinet WHERE id=?').get(t.cab);
+  assert.equal(cab.slug, 'wsedit', 'le slug (sous-domaine) n\'est jamais modifiable par l\'interface');
+  assert.notEqual(cab.plan, 'gratuit', 'le plan n\'est jamais modifiable par l\'interface');
+  const log = db.prepare("SELECT details FROM audit_log WHERE cabinet_id=? AND entite='espace_travail'").get(t.cab);
+  assert.ok(log && JSON.parse(log.details).avant, 'modification auditée avec avant/après');
+  const collab = nonAdminUser(t);
+  const ro = await reqJson('GET', '/api/workspace', { cookie: cookieOf(collab) });
+  assert.equal(ro.status, 200, 'lecture autorisée au collaborateur');
+  const deny = await reqJson('PUT', '/api/workspace', { cookie: cookieOf(collab), body: { nomAffiche: 'X' } });
+  assert.equal(deny.status, 403, 'modification refusée au collaborateur');
+  const other = tenantWithSlug('wsother');
+  const iso = await reqJson('GET', '/api/workspace', { cookie: cookieOf(other.u) });
+  assert.notEqual(iso.body.workspace.displayName, 'Réel', 'chaque cabinet ne voit que son propre espace');
+});
+
+test('saas/conventions : la règle appliquée affichée est celle du moteur central (lecture seule)', async () => {
+  const t = newTenant();
+  const four = uid('four');
+  db.prepare('INSERT INTO fournisseur (id,cabinet_id,entreprise_id,raison_sociale,delai_applicable) VALUES (?,?,?,?,60)').run(four, t.cab, t.ent, 'FRS REGLE');
+  const c1 = uid('conv'), c2 = uid('conv');
+  db.prepare("INSERT INTO convention (id,cabinet_id,entreprise_id,fournisseur_id,delai_convenu,statut,created_at) VALUES (?,?,?,?,90,'valide','2026-01-01 10:00:00')").run(c1, t.cab, t.ent, four);
+  db.prepare("INSERT INTO convention (id,cabinet_id,entreprise_id,fournisseur_id,delai_convenu,statut,created_at) VALUES (?,?,?,?,110,'valide','2026-02-01 10:00:00')").run(c2, t.cab, t.ent, four);
+  const r = await reqJson('GET', `/api/clients/${t.ent}/conventions`, { cookie: cookieOf(t.u) });
+  assert.equal(r.status, 200);
+  const byId = Object.fromEntries(r.body.map(c => [c.id, c]));
+  const active = require('../src/db').activeConventionFor(t.ent, four);
+  assert.equal(active.id, c2);
+  assert.equal(byId[c2].appliquee, true, 'la plus récente est appliquée');
+  assert.equal(byId[c1].appliquee, false, 'l\'ancienne ne l\'est pas');
+  assert.deepEqual(byId[c1].regle_fournisseur, { delai: 110, source: 'convention' });
+});
+
+test('saas/périodes : l\'historique clôture / réouverture (qui, quand, motif) est restitué', async () => {
+  const t = newTenant();
+  seedLateFactL6(t, { annee: 2026, trimestre: 1, date: '2026-01-05', num: 'HIST-1' });
+  const ck = cookieOf(t.u);
+  assert.equal((await reqJson('POST', `/api/clients/${t.ent}/periods/2026/1/close`, { cookie: ck, body: {} })).status, 200);
+  assert.equal((await reqJson('POST', `/api/clients/${t.ent}/periods/2026/1/reopen`, { cookie: ck, body: { motif: 'Régularisation test' } })).status, 200);
+  const s = await reqJson('GET', `/api/clients/${t.ent}/periods/2026/1/summary`, { cookie: ck });
+  const h = s.body.periode.historique;
+  assert.equal(h.length, 2);
+  assert.equal(h[0].action, 'reouverture'); assert.equal(h[0].motif, 'Régularisation test');
+  assert.equal(h[1].action, 'cloture'); assert.equal(h[1].par, 'U');
+  assert.equal(s.body.periode.motif_reouverture, 'Régularisation test');
+  const other = newTenant();
+  const leak = await reqJson('GET', `/api/clients/${t.ent}/periods/2026/1/summary`, { cookie: cookieOf(other.u) });
+  assert.equal(leak.status, 404, 'historique invisible depuis un autre cabinet');
+});
+
+test('saas/UI : dialogues in-app, identité de marque, aucun actif externe', () => {
+  const pub = path.join(__dirname, '..', 'public');
+  const app = fs.readFileSync(path.join(pub, 'js', 'app.js'), 'utf8');
+  const html = fs.readFileSync(path.join(pub, 'app.html'), 'utf8') + fs.readFileSync(path.join(pub, 'login.html'), 'utf8');
+  const css = fs.readFileSync(path.join(pub, 'css', 'app.css'), 'utf8');
+  // Plus aucun confirm()/prompt() natif : actions sensibles via ui.confirm / ui.prompt.
+  assert.doesNotMatch(app.replace(/ui\.(confirm|prompt)\(|(confirm|prompt)\(o\)/g, ''), /\b(window\.)?(confirm|prompt)\(/, 'aucun dialogue natif');
+  assert.match(app, /closePeriodAction[\s\S]{0,600}ui\.confirm\(/, 'clôture confirmée par un dialogue explicite');
+  // Actifs de marque présents et référencés ; CSP 'self' respectée (aucune origine externe).
+  for (const f of ['brand/favicon.svg', 'brand/favicon-32.png', 'brand/apple-touch-icon.png', 'brand/delaipay-mark.svg', 'brand/delaipay-logo-light-bg.svg', 'brand/delaipay-logo-dark-bg.svg', 'fonts/inter-latin-var.woff2'])
+    assert.ok(fs.existsSync(path.join(pub, 'assets', f)), 'actif présent : ' + f);
+  assert.doesNotMatch(html + css, /https?:\/\/(?!www\.w3\.org)/, 'aucune ressource externe (CSP self)');
+  // Aucune affirmation de conformité non démontrée sur la page de connexion.
+  assert.doesNotMatch(html, /09-08|certifi|ISO 27001|SOC ?2|RGPD/i, 'aucune certification revendiquée');
+  // Les couleurs de risque restent distinctes des couleurs de marque / d'espace.
+  assert.match(css, /--late:#[0-9A-Fa-f]{6}/); assert.match(css, /--info:#[0-9A-Fa-f]{6}/); assert.match(css, /--locked:#[0-9A-Fa-f]{6}/);
+  assert.match(css, /prefers-reduced-motion/, 'mouvement réduit respecté');
+});
