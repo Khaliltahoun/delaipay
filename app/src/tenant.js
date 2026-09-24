@@ -82,6 +82,9 @@ function publicBranding(cab) {
     primaryColor: COLOR_RE.test(cab.couleur_primaire || '') ? cab.couleur_primaire : null,
     accentColor: COLOR_RE.test(cab.couleur_accent || '') ? cab.couleur_accent : null,
     locale: cab.locale || 'fr-MA',
+    active: cab.actif !== 0,
+    // Logo servi par /api/tenant/logo (public, hôte) ; le suffixe ?v= change à chaque remplacement.
+    logoUrl: cab.logo ? `/api/tenant/logo?v=${encodeURIComponent(String(cab.logo).slice(5, 13))}` : null,
   };
 }
 
@@ -93,7 +96,10 @@ function workspaceOf(cab) {
     nom: cab.nom, nomAffiche: cab.nom_affiche || null, plan: cab.plan || null,
     devise: cab.devise || 'MAD', fuseauHoraire: cab.fuseau_horaire || 'Africa/Casablanca',
     contactEmail: cab.contact_email || null, contactTelephone: cab.contact_telephone || null,
+    raisonLegale: cab.raison_legale || null, adresse: cab.adresse || null,
     hasLogo: !!cab.logo,
+    logoUrl: cab.logo ? `/api/workspace/logo?v=${encodeURIComponent(String(cab.logo).slice(5, 13))}` : null,
+    createdAt: cab.created_at || null, updatedAt: cab.updated_at || null,
   };
 }
 
@@ -102,19 +108,22 @@ function workspaceOf(cab) {
  * le slug (= sous-domaine) et le plan relèvent du provisionnement, jamais de l'interface.
  * @returns {{ok:true, values:object}|{ok:false, error:string}}
  */
-function validateWorkspacePatch(b) {
+function validateWorkspacePatch(b, opts = {}) {
   b = b || {};
   const v = {};
+  const LBL = { nomAffiche: 'Nom affiché', contactEmail: 'E-mail de contact', contactTelephone: 'Téléphone', raisonLegale: 'Raison sociale', adresse: 'Adresse', locale: 'Langue', devise: 'Devise', fuseauHoraire: 'Fuseau horaire' };
   const txt = (k, col, max) => {
     if (b[k] === undefined) return null;
     const s = b[k] == null ? '' : String(b[k]).trim();
-    if (s.length > max) return `« ${k} » : ${max} caractères maximum.`;
+    if (s.length > max) return `« ${LBL[k] || k} » : ${max} caractères maximum.`;
     v[col] = s || null; return null;
   };
   const errs = [
     txt('nomAffiche', 'nom_affiche', 80),
     txt('contactEmail', 'contact_email', 120),
     txt('contactTelephone', 'contact_telephone', 40),
+    txt('raisonLegale', 'raison_legale', 160),
+    txt('adresse', 'adresse', 240),
   ].filter(Boolean);
   if (errs.length) return { ok: false, error: errs[0] };
   if (v.contact_email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v.contact_email)) return { ok: false, error: 'Adresse e-mail de contact invalide.' };
@@ -125,11 +134,11 @@ function validateWorkspacePatch(b) {
     v[col] = String(b[k]).toUpperCase();
   }
   for (const [k, col, allowed] of [['locale', 'locale', LOCALES], ['devise', 'devise', DEVISES], ['fuseauHoraire', 'fuseau_horaire', FUSEAUX]]) {
-    if (b[k] === undefined) continue;
-    if (!allowed.includes(b[k])) return { ok: false, error: `Valeur non prise en charge pour « ${k} ».` };
+    if (b[k] === undefined || (opts.allowEmpty && (b[k] == null || b[k] === ''))) continue;
+    if (!allowed.includes(b[k])) return { ok: false, error: `Valeur non prise en charge pour « ${LBL[k] || k} ».` };
     v[col] = b[k];
   }
-  if (!Object.keys(v).length) return { ok: false, error: 'Aucun champ modifiable fourni.' };
+  if (!Object.keys(v).length && !opts.allowEmpty) return { ok: false, error: 'Aucun champ modifiable fourni.' };
   return { ok: true, values: v };
 }
 

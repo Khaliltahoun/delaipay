@@ -60,20 +60,46 @@ function readUser(req) {
   try { return jwt.verify(token, SECRET); } catch { return null; }
 }
 
+/**
+ * Vérifie une session CONTRE LA BASE (jamais sur la seule signature du jeton) :
+ * utilisateur actif, espace actif, hôte cohérent avec l'espace de la session.
+ * @returns {{ ok:true, user } | { ok:false, code, error }}
+ */
+function checkSession(req) {
+  const u = readUser(req);
+  if (!u) return { ok: false, code: 'expired', error: 'Non authentifié' };
+  const dbUser = db.prepare('SELECT id, cabinet_id, nom, email, role, initiales, titre, actif FROM utilisateur WHERE id=?').get(u.uid);
+  if (!dbUser || !dbUser.actif) return { ok: false, code: 'user_inactive', error: 'Votre compte a été désactivé ou n’existe plus.' };
+  // Espace revérifié à CHAQUE requête (rôle, statut et espace relus en base, jamais depuis le jeton) :
+  //  - espace désactivé → plus aucun accès, même avec une session encore valide ;
+  //  - hôte désignant un AUTRE espace que celui de la session → refus (défense en profondeur).
+  const cab = db.prepare('SELECT id, slug, actif FROM cabinet WHERE id=?').get(dbUser.cabinet_id);
+  if (!cab || cab.actif === 0) return { ok: false, code: 'workspace_inactive', error: 'Cet espace de travail est désactivé.' };
+  const hostSlug = require('./tenant').slugFromHost((req.hostname || (req.headers && req.headers.host)) || '');
+  if (hostSlug && String(cab.slug || '').toLowerCase() !== hostSlug)
+    return { ok: false, code: 'wrong_workspace', error: 'Cette session appartient à un autre espace de travail.' };
+  return { ok: true, user: dbUser };
+}
+
 /** Middleware API : exige une session valide, attache req.user + req.cabinetId. */
 function requireAuth(req, res, next) {
-  const u = readUser(req);
-  if (!u) return res.status(401).json({ error: 'Non authentifié' });
-  const dbUser = db.prepare('SELECT id, cabinet_id, nom, email, role, initiales, titre, actif FROM utilisateur WHERE id=?').get(u.uid);
-  if (!dbUser || !dbUser.actif) return res.status(401).json({ error: 'Session invalide' });
-  req.user = dbUser; req.cabinetId = dbUser.cabinet_id;
+  const s = checkSession(req);
+  if (!s.ok) {
+    if (s.code !== 'expired') clearAuthCookie(res);   // session devenue invalide : on la retire (évite toute boucle)
+    return res.status(401).json({ error: s.code === 'expired' ? 'Non authentifié' : s.error, code: s.code });
+  }
+  req.user = s.user; req.cabinetId = s.user.cabinet_id;
   next();
 }
 
-/** Garde de page : redirige vers /login si non authentifié. */
+/** Garde de page : redirige vers /login (avec motif) si la session n'est pas valide EN BASE. */
 function pageGuard(req, res, next) {
-  if (!readUser(req)) return res.redirect('/login');
+  const s = checkSession(req);
+  if (!s.ok) {
+    if (s.code !== 'expired' || readUser(req)) clearAuthCookie(res);
+    return res.redirect(s.code === 'expired' && !req.cookies[COOKIE] ? '/login' : '/login?reason=' + encodeURIComponent(s.code));
+  }
   next();
 }
 
-module.exports = { hashPassword, verifyPassword, signToken, setAuthCookie, clearAuthCookie, requireAuth, pageGuard, readUser, COOKIE, DUMMY_HASH };
+module.exports = { hashPassword, verifyPassword, signToken, setAuthCookie, clearAuthCookie, requireAuth, pageGuard, readUser, checkSession, COOKIE, DUMMY_HASH };

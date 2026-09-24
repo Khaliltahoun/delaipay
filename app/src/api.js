@@ -12,6 +12,8 @@ const reseau = require('./reseau');
 const auth = require('./auth');
 const visa = require('./visa');
 const tenant = require('./tenant');
+const workspace = require('./workspace');
+const permissions = require('./permissions');
 const { rateLimit } = require('./security');
 const { uid, normalizeIce, fmtMoney, slugify } = require('./util');
 
@@ -186,14 +188,23 @@ router.post('/auth/login', loginLimiter, (req, res) => {
   // limitée à CE cabinet. Hôte neutre (localhost, domaine actuel) : comportement historique inchangé.
   const ws = tenant.resolve(req);
   const mail = String(email).toLowerCase().trim();
-  const u = ws.slug
-    ? (ws.cabinet ? db.prepare('SELECT * FROM utilisateur WHERE email=? AND actif=1 AND cabinet_id=?').get(mail, ws.cabinet.id) : null)
-    : db.prepare('SELECT * FROM utilisateur WHERE email=? AND actif=1').get(mail);
+  // Hôte neutre : le même e-mail peut exister dans PLUSIEURS espaces (UNIQUE cabinet+email) → jamais de
+  // choix implicite (on ouvrirait peut-être le mauvais espace) : l'utilisateur doit passer par l'adresse de son espace.
+  const candidates = ws.slug
+    ? (ws.cabinet ? db.prepare('SELECT * FROM utilisateur WHERE email=? AND actif=1 AND cabinet_id=?').all(mail, ws.cabinet.id) : [])
+    : db.prepare('SELECT * FROM utilisateur WHERE email=? AND actif=1').all(mail);
+  const u = candidates[0] || null;
   // Comparaison systématique (hash factice si l'utilisateur n'existe pas) pour
   // ne pas révéler l'existence d'un compte par le temps de réponse.
   const ok = auth.verifyPassword(password, u ? u.password_hash : auth.DUMMY_HASH);
   if (!u || !ok)
     return res.status(401).json({ error: 'Identifiants incorrects.' });
+  if (candidates.length > 1)
+    return res.status(409).json({ error: 'Cette adresse e-mail est rattachée à plusieurs espaces de travail. Connectez-vous depuis l’adresse de votre espace (ex. votre-cabinet.delaipay.com).', code: 'ambiguous_workspace' });
+  const ucab = db.prepare('SELECT actif FROM cabinet WHERE id=?').get(u.cabinet_id);
+  if (!ucab || ucab.actif === 0)
+    return res.status(403).json({ error: 'Cet espace de travail est désactivé. Contactez DelaiPay pour le réactiver.', code: 'workspace_inactive' });
+  try { db.prepare(`UPDATE utilisateur SET derniere_connexion=datetime('now') WHERE id=?`).run(u.id); } catch (_) {}
   const token = auth.signToken(u);
   auth.setAuthCookie(res, token);
   audit(u.cabinet_id, u.id, 'login', 'utilisateur', { email: u.email }, req.ip);
@@ -204,11 +215,47 @@ router.post('/auth/logout', (req, res) => { auth.clearAuthCookie(res); res.json(
 router.get('/me', auth.requireAuth, (req, res) => {
   const row = db.prepare('SELECT * FROM cabinet WHERE id=?').get(req.cabinetId);
   const cab = row ? { id: row.id, nom: row.nom, slug: row.slug, plan: row.plan } : null;
-  res.json({ user: publicUser(req.user), cabinet: cab, workspace: tenant.workspaceOf(row) });
+  const role = req.user.role;
+  const perms = {}; for (const a of Object.keys(permissions.MATRIX)) perms[a] = permissions.can(role, a);
+  res.json({ user: { ...publicUser(req.user), roleLabel: (permissions.ROLES[role] || {}).label || role }, cabinet: cab,
+    workspace: tenant.workspaceOf(row), permissions: perms });
 });
 
 // Identité PUBLIQUE de l'espace désigné par le nom d'hôte (page de connexion) : nom affiché,
 // initiales, couleurs. Aucune donnée interne (ni identifiant, ni contact, ni volumétrie).
+// Logo PUBLIC de l'espace désigné par l'hôte (page de connexion). Type imposé, jamais de SVG.
+router.get('/tenant/logo', (req, res) => {
+  const ws = tenant.resolve(req);
+  const f = ws.cabinet && ws.cabinet.actif !== 0 ? workspace.logoFile(ws.cabinet) : null;
+  if (!f) return res.status(404).end();
+  res.setHeader('Content-Type', f.mime); res.setHeader('Cache-Control', 'public, max-age=300');
+  res.setHeader('Content-Security-Policy', "default-src 'none'; sandbox");
+  res.sendFile(f.path);
+});
+// Invitations — routes PUBLIQUES (le jeton fait foi ; si l'hôte désigne un espace, il doit correspondre).
+const inviteLimiter = rateLimit({ windowMs: 15 * 60 * 1000, max: 30, message: 'Trop de tentatives. Réessayez dans quelques minutes.' });
+function hostCabinetId(req) {
+  const ws = tenant.resolve(req);
+  if (!ws.slug) return undefined;              // hôte neutre : pas de contrainte d'hôte
+  return ws.cabinet ? ws.cabinet.id : '__inconnu__';
+}
+// POST (et non GET) : le jeton ne transite jamais dans une URL (journaux, historique, Referer).
+router.post('/invitations/lookup', inviteLimiter, (req, res) => {
+  res.setHeader('Cache-Control', 'no-store');
+  const f = workspace.findValidInvitation(String((req.body && req.body.token) || ''), hostCabinetId(req));
+  if (!f) return res.status(410).json({ error: 'Cette invitation est invalide, expirée ou déjà utilisée.', code: 'invitation_invalid' });
+  res.json({ email: f.inv.email, role: f.inv.role, roleLabel: (permissions.ROLES[f.inv.role] || {}).label, expiresAt: f.inv.expires_at,
+    workspace: tenant.publicBranding(f.cab) });
+});
+router.post('/invitations/accept', inviteLimiter, (req, res) => {
+  const b = req.body || {};
+  try {
+    const u = workspace.acceptInvitation(String(b.token || ''), hostCabinetId(req), { nom: b.nom, password: b.password });
+    auth.setAuthCookie(res, auth.signToken(u));
+    res.json({ ok: true, user: publicUser(u) });
+  } catch (e) { res.status(e.status || 400).json({ error: e.message }); }
+});
+
 router.get('/tenant', (req, res) => {
   const ws = tenant.resolve(req);
   res.setHeader('Cache-Control', 'no-store');
@@ -222,6 +269,8 @@ function publicUser(u) {
 
 // tout ce qui suit exige l'authentification
 router.use(auth.requireAuth);
+// Compte « Lecture seule » : aucune méthode d'écriture, quelle que soit la route (filet global).
+router.use(permissions.readOnlyGuard);
 
 /* ============================================================ ESPACE DE TRAVAIL (tenant) */
 // Identité d'affichage du cabinet connecté. Lecture : tout utilisateur du cabinet.
@@ -234,7 +283,7 @@ router.get('/workspace', (req, res) => {
 // Modification (administrateur) : champs d'AFFICHAGE uniquement — le slug (sous-domaine) et le
 // plan relèvent du provisionnement. Aucun effet sur les calculs, périodes ou exports. Audité.
 router.put('/workspace', (req, res) => {
-  if (req.user.role !== 'admin') return res.status(403).json({ error: "Seul un administrateur peut modifier l'identité de l'espace." });
+  if (!permissions.guard(req, res, 'manage_workspace', "Seul un administrateur peut modifier l'identité de l'espace.")) return;
   const v = tenant.validateWorkspacePatch(req.body);
   if (!v.ok) return res.status(400).json({ error: v.error });
   const before = db.prepare('SELECT * FROM cabinet WHERE id=?').get(req.cabinetId);
@@ -242,8 +291,77 @@ router.put('/workspace', (req, res) => {
   db.prepare(`UPDATE cabinet SET ${cols.map(c => c + '=?').join(', ')} WHERE id=?`).run(...cols.map(c => v.values[c]), req.cabinetId);
   const avant = {}; for (const c of cols) avant[c] = before[c] == null ? null : before[c];
   audit(req.cabinetId, req.user.id, 'update', 'espace_travail', { avant, apres: v.values }, req.ip);
+  db.prepare(`UPDATE cabinet SET updated_at=datetime('now') WHERE id=?`).run(req.cabinetId);
   const cab = db.prepare('SELECT * FROM cabinet WHERE id=?').get(req.cabinetId);
   res.json({ ok: true, workspace: tenant.workspaceOf(cab) });
+});
+// Logo de l'espace (authentifié, propre cabinet uniquement).
+router.get('/workspace/logo', (req, res) => {
+  const f = workspace.logoFile(db.prepare('SELECT * FROM cabinet WHERE id=?').get(req.cabinetId));
+  if (!f) return res.status(404).end();
+  res.setHeader('Content-Type', f.mime); res.setHeader('Cache-Control', 'private, max-age=300');
+  res.setHeader('Content-Security-Policy', "default-src 'none'; sandbox");
+  res.sendFile(f.path);
+});
+router.post('/workspace/logo', upload.single('file'), (req, res) => {
+  if (!permissions.guard(req, res, 'manage_workspace', 'Seul un administrateur peut changer le logo.')) { cleanupUploads(req); return; }
+  if (!req.file) return res.status(400).json({ error: 'Aucun fichier reçu.' });
+  try {
+    workspace.saveLogo(req.cabinetId, req.file.path, req.file.size);
+    audit(req.cabinetId, req.user.id, 'update', 'espace_logo', { taille: req.file.size }, req.ip);
+    res.json({ ok: true, workspace: tenant.workspaceOf(db.prepare('SELECT * FROM cabinet WHERE id=?').get(req.cabinetId)) });
+  } catch (e) { res.status(e.status || 400).json({ error: e.message || 'Logo refusé.' }); }
+});
+router.delete('/workspace/logo', (req, res) => {
+  if (!permissions.guard(req, res, 'manage_workspace', 'Seul un administrateur peut retirer le logo.')) return;
+  workspace.removeLogo(req.cabinetId);
+  audit(req.cabinetId, req.user.id, 'delete', 'espace_logo', {}, req.ip);
+  res.json({ ok: true, workspace: tenant.workspaceOf(db.prepare('SELECT * FROM cabinet WHERE id=?').get(req.cabinetId)) });
+});
+
+// Changement de SON mot de passe (tout rôle) : mot de passe actuel exigé, audit sans aucun secret.
+router.put('/me/password', (req, res) => {
+  const b = req.body || {};
+  const u = db.prepare('SELECT * FROM utilisateur WHERE id=?').get(req.user.id);
+  if (!auth.verifyPassword(String(b.current || ''), u.password_hash)) return res.status(400).json({ error: 'Mot de passe actuel incorrect.' });
+  const err = workspace.passwordProblem(b.next); if (err) return res.status(400).json({ error: err });
+  if (b.next === b.current) return res.status(400).json({ error: 'Le nouveau mot de passe doit être différent de l’actuel.' });
+  db.prepare('UPDATE utilisateur SET password_hash=? WHERE id=?').run(auth.hashPassword(b.next), u.id);
+  audit(req.cabinetId, u.id, 'update', 'mot_de_passe', {}, req.ip);
+  res.json({ ok: true });
+});
+
+/* ============================================================ UTILISATEURS & INVITATIONS (admin) */
+router.get('/roles', (req, res) => res.json({ roles: permissions.ROLES, matrice: permissions.publicMatrix() }));
+router.get('/users', (req, res) => {
+  if (!permissions.guard(req, res, 'manage_users', 'Seul un administrateur peut gérer les utilisateurs.')) return;
+  res.json({ users: workspace.listUsers(req.cabinetId), invitations: workspace.listInvitations(req.cabinetId) });
+});
+router.patch('/users/:uid', (req, res) => {
+  if (!permissions.guard(req, res, 'manage_users', 'Seul un administrateur peut gérer les utilisateurs.')) return;
+  try { res.json({ ok: true, user: workspace.updateUser(req.cabinetId, req.user.id, req.params.uid, req.body || {}) }); }
+  catch (e) { res.status(e.status || 400).json({ error: e.message }); }
+});
+router.post('/invitations', (req, res) => {
+  if (!permissions.guard(req, res, 'manage_users', 'Seul un administrateur peut inviter des utilisateurs.')) return;
+  try {
+    const inv = workspace.createInvitation(req.cabinetId, req.user.id, req.body || {});
+    res.setHeader('Cache-Control', 'no-store');
+    res.json({ ok: true, invitation: inv }); // jeton renvoyé UNE seule fois, jamais journalisé
+  } catch (e) { res.status(e.status || 400).json({ error: e.message }); }
+});
+router.delete('/invitations/:iid', (req, res) => {
+  if (!permissions.guard(req, res, 'manage_users', 'Seul un administrateur peut révoquer une invitation.')) return;
+  try { workspace.revokeInvitation(req.cabinetId, req.user.id, req.params.iid); res.json({ ok: true }); }
+  catch (e) { res.status(e.status || 400).json({ error: e.message }); }
+});
+
+/* ============================================================ ONBOARDING (progression par espace) */
+router.get('/onboarding', (req, res) => res.json(workspace.onboardingState(req.cabinetId)));
+router.put('/onboarding', (req, res) => {
+  if (!permissions.guard(req, res, 'onboarding')) return;
+  try { res.json(workspace.updateOnboarding(req.cabinetId, req.user.id, req.body || {})); }
+  catch (e) { res.status(e.status || 400).json({ error: e.message }); }
 });
 
 /* ============================================================ DASHBOARD */
@@ -404,6 +522,7 @@ router.put('/clients/:id', (req, res) => {
 });
 router.delete('/clients/:id', (req, res) => {
   const e = ownedEntreprise(req, req.params.id); if (!e) return res.status(404).json({ error: 'Introuvable.' });
+  if (!permissions.guard(req, res, 'delete_client', 'Seul un administrateur peut supprimer un dossier client et toutes ses données.')) return;
   const declIds = db.prepare('SELECT id FROM declaration WHERE entreprise_id=?').all(e.id).map(d => d.id);
   for (const did of declIds) {
     db.prepare('DELETE FROM ligne_declaration WHERE declaration_id=?').run(did);
@@ -697,7 +816,7 @@ router.post('/clients/:id/conventions/import', heavyLimiter, upload.single('file
 router.post('/clients/:id/conventions/preview', (req, res) => {
   const e = ownedEntreprise(req, req.params.id); if (!e) return res.status(404).json({ error: 'Introuvable.' });
   const b = req.body || {};
-  const tmp = safeUploadPath(b.token); if (!tmp) return res.status(400).json({ error: 'Fichier expiré ou introuvable — relancez l\'analyse.' });
+  const tmp = safeUploadPath(b.token, req); if (!tmp) return res.status(400).json({ error: 'Fichier expiré ou introuvable — relancez l\'analyse.' });
   try {
     const r = importer.importConventions(fs.readFileSync(tmp), {
       cabinetId: req.cabinetId, entrepriseId: e.id, userId: req.user.id,
@@ -710,7 +829,7 @@ router.post('/clients/:id/conventions/preview', (req, res) => {
 router.post('/clients/:id/conventions/confirm', (req, res) => {
   const e = ownedEntreprise(req, req.params.id); if (!e) return res.status(404).json({ error: 'Introuvable.' });
   const b = req.body || {};
-  const tmp = safeUploadPath(b.token); if (!tmp) return res.status(400).json({ error: 'Fichier expiré ou introuvable — relancez l\'analyse.' });
+  const tmp = safeUploadPath(b.token, req); if (!tmp) return res.status(400).json({ error: 'Fichier expiré ou introuvable — relancez l\'analyse.' });
   try {
     const crypto = require('crypto');
     const buf = fs.readFileSync(tmp);
@@ -1126,9 +1245,12 @@ router.post('/clients/:id/import', heavyLimiter, upload.array('files', 30), (req
 
 /* ============================================================ ASSISTANT D'IMPORT (wizard) */
 const importer = require('./importer');
-function safeUploadPath(token) {
+function safeUploadPath(token, req) {
   const base = path.basename(String(token || ''));            // anti path-traversal
   if (!base || base.includes('/') || base.includes('\\')) return null;
+  // Jeton LIÉ à l'espace qui l'a créé : seul un fichier temporaire de CE cabinet est accepté
+  // (jamais un fichier d'un autre espace ni un document archivé).
+  if (!req || !base.startsWith(`tmp_${req.cabinetId}_`)) return null;
   const p = path.join(UP_DIR, base);
   return fs.existsSync(p) ? p : null;
 }
@@ -1138,7 +1260,7 @@ router.post('/clients/:id/import/analyze', upload.single('file'), (req, res) => 
   if (!req.file) return res.status(400).json({ error: 'Aucun fichier reçu.' });
   try {
     const buf = fs.readFileSync(req.file.path);
-    const token = 'tmp_' + path.basename(req.file.path);
+    const token = `tmp_${req.cabinetId}_` + path.basename(req.file.path);
     fs.renameSync(req.file.path, path.join(UP_DIR, token));
     const kind = (req.body && req.body.kind === 'conventions') ? 'conventions' : 'factures';
     const analyse = importer.analyzeWorkbook(buf, kind);
@@ -1151,7 +1273,7 @@ router.post('/clients/:id/import/preview', (req, res) => {
   const e = ownedEntreprise(req, req.params.id); if (!e) return res.status(404).json({ error: 'Introuvable.' });
   const b = req.body || {};
   const p = requirePeriod(req, res); if (!p) return;
-  const tmp = safeUploadPath(b.token); if (!tmp) return res.status(400).json({ error: 'Fichier expiré ou introuvable — relancez l\'analyse.' });
+  const tmp = safeUploadPath(b.token, req); if (!tmp) return res.status(400).json({ error: 'Fichier expiré ou introuvable — relancez l\'analyse.' });
   try {
     const out = importer.previewImport(fs.readFileSync(tmp), {
       sheetName: b.sheetName, headerRow: b.headerRow, mapping: b.mapping || {},
@@ -1166,7 +1288,7 @@ router.post('/clients/:id/import/confirm', (req, res) => {
   const b = req.body || {};
   const p = requirePeriod(req, res); if (!p) return;
   if (!assertWritable(res, req.cabinetId, e.id, p.annee, p.trimestre)) return;
-  const tmp = safeUploadPath(b.token); if (!tmp) return res.status(400).json({ error: 'Fichier expiré ou introuvable — relancez l\'analyse.' });
+  const tmp = safeUploadPath(b.token, req); if (!tmp) return res.status(400).json({ error: 'Fichier expiré ou introuvable — relancez l\'analyse.' });
   try {
     const buf = fs.readFileSync(tmp);
     const crypto = require('crypto');

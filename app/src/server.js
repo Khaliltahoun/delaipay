@@ -4,7 +4,7 @@ const cookieParser = require('cookie-parser');
 const path = require('path');
 const fs = require('fs');
 const crypto = require('crypto');
-const { pageGuard, readUser } = require('./auth');
+const { pageGuard, readUser, checkSession, clearAuthCookie } = require('./auth');
 const api = require('./api');
 const { ensureSeed } = require('./seed');
 const { securityHeaders } = require('./security');
@@ -29,7 +29,7 @@ app.use(express.urlencoded({ extended: true, limit: '2mb' }));
  */
 function buildVersion() {
   const h = crypto.createHash('sha1');
-  for (const rel of ['js/app.js', 'js/login.js', 'css/app.css']) {
+  for (const rel of ['js/app.js', 'js/login.js', 'js/invite.js', 'css/app.css']) {
     try { h.update(fs.readFileSync(path.join(PUB, rel))); } catch (_) {}
   }
   return h.digest('hex').slice(0, 10);
@@ -42,7 +42,7 @@ function renderPage(file) {
   html = html.replace(/(\/(?:css|js|assets)\/[\w./-]+?\.(?:css|js))"/g, `$1?v=${VERSION}"`);
   return html;
 }
-const PAGES = { app: renderPage('app.html'), login: renderPage('login.html') };
+const PAGES = { app: renderPage('app.html'), login: renderPage('login.html'), invite: renderPage('invite.html') };
 function sendPage(res, name) {
   res.setHeader('Cache-Control', 'no-store, must-revalidate');
   res.type('html').send(PAGES[name]);
@@ -67,9 +67,14 @@ app.get('/favicon.ico', (req, res) => {
 
 // Pages
 app.get('/login', (req, res) => {
-  if (readUser(req)) return res.redirect('/');
+  // Redirection vers l'application UNIQUEMENT si la session est valide en base (sinon boucle login ↔ app).
+  const s = checkSession(req);
+  if (s.ok) return res.redirect('/');
+  if (readUser(req)) clearAuthCookie(res);
   sendPage(res, 'login');
 });
+// Acceptation d'invitation (publique : le jeton fait foi, vérifié côté API).
+app.get('/invite', (req, res) => { res.setHeader('Referrer-Policy', 'no-referrer'); sendPage(res, 'invite'); });
 app.get(['/', '/app'], pageGuard, (req, res) => sendPage(res, 'app'));
 
 // API

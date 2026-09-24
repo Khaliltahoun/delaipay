@@ -18,8 +18,13 @@ fetch('/api/tenant', { credentials: 'same-origin' }).then(r => r.ok ? r.json() :
   if (t.known) {
     document.getElementById('wsBox').classList.remove('hidden');
     document.getElementById('wsName').textContent = t.displayName;
-    const m = document.getElementById('wsMono'); m.textContent = t.initials;
-    if (t.primaryColor) m.style.background = t.primaryColor;
+    const m = document.getElementById('wsMono');
+    if (t.logoUrl) { const img = new Image(); img.alt = ''; img.className = 'ws-logo-img'; img.src = t.logoUrl; m.textContent = ''; m.appendChild(img); m.classList.add('has-logo'); }
+    else { m.textContent = t.initials; if (t.primaryColor) m.style.background = t.primaryColor; }
+    if (t.active === false) {
+      showNotice('warn', 'Espace de travail désactivé', `L’accès à l’espace ${t.displayName} est suspendu. Contactez DelaiPay pour le réactiver.`);
+      btn.disabled = true;
+    }
     document.getElementById('loginTitle').textContent = 'Bienvenue';
     document.getElementById('loginLead').textContent = `Connectez-vous à l'espace ${t.displayName} sur DelaiPay.`;
     document.title = `Connexion — ${t.displayName} · DelaiPay`;
@@ -29,6 +34,24 @@ fetch('/api/tenant', { credentials: 'same-origin' }).then(r => r.ok ? r.json() :
     errBox.classList.remove('hidden');
   }
 }).catch(() => {});
+
+// Motif de retour à la connexion (session expirée, compte désactivé…) — jamais d'échec silencieux.
+function showNotice(kind, title, msg) {
+  const n = document.getElementById('notice');
+  const ico = kind === 'warn' ? '<path d="M12 9v4m0 4h.01M10.3 3.9L2 18a2 2 0 001.7 3h16.6a2 2 0 001.7-3L13.7 3.9a2 2 0 00-3.4 0z"/>' : '<circle cx="12" cy="12" r="9"/><path d="M12 11v5M12 8h.01"/>';
+  n.className = 'note note-' + (kind === 'warn' ? 'warn' : 'info');
+  n.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">${ico}</svg><div><div class="note-t">${esc(title)}</div>${esc(msg)}</div>`;
+}
+const REASONS = {
+  expired: ['info', 'Session expirée', 'Pour votre sécurité, votre session a pris fin. Reconnectez-vous pour reprendre là où vous en étiez — aucune donnée n’a été perdue.'],
+  user_inactive: ['warn', 'Compte désactivé', 'Votre accès a été désactivé par l’administrateur de votre espace.'],
+  workspace_inactive: ['warn', 'Espace désactivé', 'Cet espace de travail est suspendu. Contactez DelaiPay pour le réactiver.'],
+  wrong_workspace: ['info', 'Autre espace de travail', 'Vous étiez connecté·e à un autre espace. Connectez-vous avec un compte de cet espace.'],
+  logout: ['info', 'Déconnexion effectuée', 'À bientôt sur DelaiPay.'],
+};
+const reason = new URLSearchParams(location.search).get('reason');
+if (REASONS[reason]) showNotice(...REASONS[reason]);
+if (reason) { try { history.replaceState(null, '', '/login'); } catch (_) {} }
 
 const pw = document.getElementById('password'), tog = document.getElementById('pwToggle');
 tog.addEventListener('click', () => {
@@ -50,11 +73,12 @@ form.addEventListener('submit', async (e) => {
       body: JSON.stringify({ email, password: pw.value }),
     });
     const data = await res.json();
+    if (res.status === 429) throw new Error('Trop de tentatives de connexion depuis ce poste. Patientez quelques minutes avant de réessayer.');
     if (!res.ok) throw new Error(data.error || 'Échec de la connexion.');
     btn.innerHTML = 'Ouverture de l\'espace…';
     window.location.replace('/');
   } catch (err) {
-    showErr(err.message);
+    showErr(err.message === 'Failed to fetch' ? 'Connexion au service impossible. Vérifiez votre réseau puis réessayez.' : err.message);
     btn.disabled = false; btn.textContent = 'Se connecter';
   }
 });

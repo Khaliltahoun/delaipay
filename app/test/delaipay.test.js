@@ -2352,3 +2352,240 @@ test('saas/UI : dialogues in-app, identité de marque, aucun actif externe', () 
   assert.match(css, /--late:#[0-9A-Fa-f]{6}/); assert.match(css, /--info:#[0-9A-Fa-f]{6}/); assert.match(css, /--locked:#[0-9A-Fa-f]{6}/);
   assert.match(css, /prefers-reduced-motion/, 'mouvement réduit respecté');
 });
+
+/* ================================================================================
+ * SaaS — INCRÉMENT 1 : isolation inter-espaces, rôles, utilisateurs, invitations,
+ * création d'espace, logo, états de connexion, onboarding. Aucune règle métier touchée.
+ * ================================================================================ */
+const workspaceMod = require('../src/workspace');
+const permsMod = require('../src/permissions');
+function mkWorkspace(slug, extra = {}) {
+  const email = `admin-${slug}@ex.ma`;
+  const r = workspaceMod.createWorkspace({ slug, nom: 'Cabinet ' + slug, admin: { email, nom: 'Admin ' + slug, password: 'Motdepasse1!' }, ...extra });
+  const ent = uid('ent'); db.prepare('INSERT INTO entreprise (id,cabinet_id,raison_sociale) VALUES (?,?,?)').run(ent, r.cabinetId, 'Client ' + slug);
+  return { cab: r.cabinetId, u: r.userId, ent, email, slug };
+}
+function addUser(cab, role, email) {
+  const id = uid('u');
+  db.prepare('INSERT INTO utilisateur (id,cabinet_id,nom,email,password_hash,role,actif) VALUES (?,?,?,?,?,?,1)')
+    .run(id, cab, 'User ' + role, email || (uid('e') + '@ex.ma').toLowerCase(), auth.hashPassword('Motdepasse1!'), role);
+  return id;
+}
+const PNG_HEAD = Buffer.concat([Buffer.from([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A]), Buffer.alloc(64)]);
+
+test('saas1/création : espace + premier admin en une transaction ; aucun espace partiel', () => {
+  const ok = workspaceMod.createWorkspace({ slug: 'crea-ok', nom: 'Créa OK', raisonLegale: 'Créa OK SARL', admin: { email: 'A@Crea.ma', nom: 'Admin Créa', password: 'Motdepasse1!' } });
+  const cab = db.prepare('SELECT * FROM cabinet WHERE id=?').get(ok.cabinetId);
+  assert.equal(cab.slug, 'crea-ok'); assert.equal(cab.actif, 1); assert.equal(cab.raison_legale, 'Créa OK SARL');
+  const u = db.prepare('SELECT * FROM utilisateur WHERE id=?').get(ok.userId);
+  assert.equal(u.cabinet_id, ok.cabinetId, 'le premier admin appartient au nouvel espace'); assert.equal(u.role, 'admin'); assert.equal(u.email, 'a@crea.ma');
+  assert.throws(() => workspaceMod.createWorkspace({ slug: 'crea-rb', nom: 'RB', admin: { email: 'rb@ex.ma', nom: 'RB', password: 'Motdepasse1!' }, onInsideTransaction: () => { throw new Error('panne simulée'); } }), /panne simulée/);
+  assert.equal(db.prepare("SELECT COUNT(*) n FROM cabinet WHERE slug='crea-rb'").get().n, 0, 'rollback : aucun espace');
+  assert.equal(db.prepare("SELECT COUNT(*) n FROM utilisateur WHERE email='rb@ex.ma'").get().n, 0, 'rollback : aucun utilisateur');
+  assert.throws(() => workspaceMod.createWorkspace({ slug: 'crea-ok', nom: 'Doublon', admin: { email: 'x@ex.ma', nom: 'X', password: 'Motdepasse1!' } }), /déjà utilisé/);
+  assert.throws(() => workspaceMod.createWorkspace({ slug: 'www', nom: 'Réservé', admin: { email: 'x@ex.ma', nom: 'X', password: 'Motdepasse1!' } }), /invalide/);
+  assert.throws(() => workspaceMod.createWorkspace({ slug: 'faible', nom: 'Faible', admin: { email: 'x@ex.ma', nom: 'X', password: 'court' } }), /10 caractères/);
+});
+
+test('saas1/connexion : espace inactif, e-mail ambigu sur hôte neutre, mauvais espace', async () => {
+  const a = mkWorkspace('conn-a'), b = mkWorkspace('conn-b');
+  const shared = 'partage@ex.ma';
+  addUser(a.cab, 'collaborateur', shared); addUser(b.cab, 'collaborateur', shared);
+  const amb = await reqJson('POST', '/api/auth/login', { host: 'localhost', body: { email: shared, password: 'Motdepasse1!' } });
+  assert.equal(amb.status, 409, 'hôte neutre + e-mail dans 2 espaces : aucun choix implicite'); assert.equal(amb.body.code, 'ambiguous_workspace');
+  const badPw = await reqJson('POST', '/api/auth/login', { host: 'localhost', body: { email: shared, password: 'mauvais-mdp-1' } });
+  assert.equal(badPw.status, 401, 'mauvais mot de passe : message générique (pas de révélation de multi-espace)');
+  const own = await reqJson('POST', '/api/auth/login', { host: 'conn-a.localhost', body: { email: shared, password: 'Motdepasse1!' } });
+  assert.equal(own.status, 200, 'sur son sous-domaine : connexion non ambiguë');
+  workspaceMod.setWorkspaceActive(b.cab, false);
+  const inact = await reqJson('POST', '/api/auth/login', { host: 'conn-b.localhost', body: { email: b.email, password: 'Motdepasse1!' } });
+  assert.equal(inact.status, 403); assert.equal(inact.body.code, 'workspace_inactive');
+  const sess = await reqJson('GET', '/api/me', { cookie: cookieOf(b.u) });
+  assert.equal(sess.status, 401, 'session existante coupée quand l’espace est désactivé'); assert.equal(sess.body.code, 'workspace_inactive');
+  const pub = await reqJson('GET', '/api/tenant', { host: 'conn-b.localhost' });
+  assert.equal(pub.body.active, false, 'la page de connexion peut annoncer l’espace suspendu');
+  const cross = await reqJson('GET', '/api/me', { cookie: cookieOf(a.u), host: 'conn-b.localhost' });
+  assert.equal(cross.status, 401, 'session d’un espace présentée sur l’hôte d’un autre : refus'); assert.equal(cross.body.code, 'wrong_workspace');
+  const uid2 = addUser(a.cab, 'collaborateur'); db.prepare('UPDATE utilisateur SET actif=0 WHERE id=?').run(uid2);
+  const dis = await reqJson('GET', '/api/me', { cookie: cookieOf(uid2) });
+  assert.equal(dis.status, 401); assert.equal(dis.body.code, 'user_inactive');
+});
+
+test('saas1/isolation : l’espace B ne peut lire ni modifier AUCUNE ressource de l’espace A', async () => {
+  const A = mkWorkspace('iso-a'), B = mkWorkspace('iso-b');
+  const four = uid('four'); db.prepare('INSERT INTO fournisseur (id,cabinet_id,entreprise_id,raison_sociale) VALUES (?,?,?,?)').run(four, A.cab, A.ent, 'FRS A');
+  const conv = uid('conv'); db.prepare("INSERT INTO convention (id,cabinet_id,entreprise_id,fournisseur_id,delai_convenu,statut,fichier) VALUES (?,?,?,?,90,'valide','x.pdf')").run(conv, A.cab, A.ent, four);
+  const fac = uid('fac'); db.prepare('INSERT INTO facture (id,cabinet_id,entreprise_id,fournisseur_id,numero,ttc,date_facture,annee,trimestre) VALUES (?,?,?,?,?,?,?,?,?)').run(fac, A.cab, A.ent, four, 'A-1', 100, '2026-01-10', 2026, 1);
+  const ano = uid('ano'); db.prepare("INSERT INTO anomalie (id,cabinet_id,entreprise_id,type,statut) VALUES (?,?,?,'doublon','ouverte')").run(ano, A.cab, A.ent);
+  require('../src/db').audit(A.cab, A.u, 'create', 'secret_a', { marque: 'SECRET-A' }, null);
+  const ck = cookieOf(B.u);
+  const Q = '?annee=2026&trimestre=1';
+  for (const p of [`/api/clients/${A.ent}`, `/api/clients/${A.ent}/summary${Q}`, `/api/clients/${A.ent}/delais${Q}`, `/api/clients/${A.ent}/declaration${Q}`,
+    `/api/clients/${A.ent}/declaration/export.csv${Q}`, `/api/clients/${A.ent}/delais/export.xlsx${Q}`, `/api/clients/${A.ent}/visa/export.pdf${Q}`,
+    `/api/clients/${A.ent}/conventions`, `/api/conventions/${conv}/file`, `/api/clients/${A.ent}/periods`, `/api/clients/${A.ent}/periods/2026/1/summary`,
+    `/api/clients/${A.ent}/documents${Q}`, `/api/clients/${A.ent}/fournisseurs`]) {
+    const r = await reqJson('GET', p, { cookie: ck });
+    assert.equal(r.status, 404, 'lecture refusée : ' + p);
+  }
+  for (const [m, p, body] of [['PUT', `/api/clients/${A.ent}`, { raison_sociale: 'Pirate' }], ['DELETE', `/api/clients/${A.ent}`],
+    ['POST', `/api/clients/${A.ent}/conventions`, { fournisseur_id: four, delai: 90 }], ['DELETE', `/api/clients/${A.ent}/conventions/${conv}`],
+    ['PATCH', `/api/clients/${A.ent}/factures/${fac}/doublon`, { statut: 'confirme' }], ['PATCH', `/api/clients/${A.ent}/fournisseurs/${four}/classification`, { operateur_reseau: true, statut: 'confirme' }],
+    ['POST', `/api/clients/${A.ent}/periods/2026/1/close`, {}], ['POST', `/api/clients/${A.ent}/recompute${Q}`, {}], ['PATCH', `/api/users/${A.u}`, { role: 'lecture' }]]) {
+    const r = await reqJson(m, p, { cookie: ck, body });
+    assert.ok([403, 404].includes(r.status), `écriture refusée (${r.status}) : ${m} ${p}`);
+  }
+  await reqJson('POST', `/api/anomalies/${ano}/resolve`, { cookie: ck, body: {} });
+  assert.equal(db.prepare('SELECT statut FROM anomalie WHERE id=?').get(ano).statut, 'ouverte', 'anomalie de A intacte');
+  assert.equal(db.prepare('SELECT raison_sociale FROM entreprise WHERE id=?').get(A.ent).raison_sociale, 'Client iso-a', 'client de A intact');
+  const aud = await reqJson('GET', '/api/audit', { cookie: ck });
+  assert.ok(!JSON.stringify(aud.body).includes('SECRET-A'), 'journal d’audit cloisonné');
+  const users = await reqJson('GET', '/api/users', { cookie: ck });
+  assert.ok(users.body.users.every(u => u.id !== A.u), 'liste des utilisateurs cloisonnée');
+  const cl = await reqJson('GET', '/api/clients', { cookie: ck });
+  assert.ok(cl.body.every(c => c.id !== A.ent), 'portefeuille cloisonné');
+  const dash = await reqJson('GET', '/api/dashboard' + Q, { cookie: ck });
+  assert.equal(dash.body.kpis.facturesTrim, 0, 'tableau de bord cloisonné');
+});
+
+test('saas1/isolation : un jeton d’analyse d’import ne sert qu’à l’espace qui l’a créé', async () => {
+  const A = mkWorkspace('tok-a'), B = mkWorkspace('tok-b');
+  const buf = convBuf([['FRS JETON', '000000000000901', '', '', 'OUI', 90]]);
+  const an = await postFile(`/api/clients/${A.ent}/import/analyze`, cookieOf(A.u), buf, 'j.xlsx', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+  assert.equal(an.status, 200); assert.ok(an.body.token.startsWith(`tmp_${A.cab}_`), 'jeton lié à l’espace');
+  const steal = await reqJson('POST', `/api/clients/${B.ent}/import/preview?annee=2026&trimestre=1`, { cookie: cookieOf(B.u), body: { token: an.body.token, mapping: {} } });
+  assert.equal(steal.status, 400, 'jeton d’un autre espace refusé');
+  const forged = await reqJson('POST', `/api/clients/${B.ent}/import/preview?annee=2026&trimestre=1`, { cookie: cookieOf(B.u), body: { token: `tmp_${B.cab}_../../data/delaipay.db`, mapping: {} } });
+  assert.equal(forged.status, 400, 'jeton forgé / traversée refusés');
+});
+
+test('saas1/rôles : matrice serveur Administrateur / Comptable / Lecture seule', async () => {
+  const W = mkWorkspace('roles');
+  const compta = addUser(W.cab, 'collaborateur'), lect = addUser(W.cab, 'lecture');
+  // Lecture seule : consultation + export oui ; toute écriture non ; son propre mot de passe oui.
+  assert.equal((await reqJson('GET', `/api/clients/${W.ent}/declaration?annee=2026&trimestre=1`, { cookie: cookieOf(lect) })).status, 200);
+  assert.equal((await reqJson('GET', `/api/clients/${W.ent}/declaration/export.csv?annee=2026&trimestre=1`, { cookie: cookieOf(lect) })).status, 200, 'export autorisé');
+  for (const [m, p, b] of [['POST', '/api/clients', { raison_sociale: 'X' }], ['PUT', `/api/clients/${W.ent}`, { raison_sociale: 'Y' }], ['POST', `/api/clients/${W.ent}/recompute?annee=2026&trimestre=1`, {}], ['PUT', '/api/onboarding', { current: 'client' }]]) {
+    const r = await reqJson(m, p, { cookie: cookieOf(lect), body: b });
+    assert.equal(r.status, 403, `lecture seule refusée : ${m} ${p}`); assert.equal(r.body.code, 'read_only');
+  }
+  const pw = await reqJson('PUT', '/api/me/password', { cookie: cookieOf(lect), body: { current: 'Motdepasse1!', next: 'NouveauMdp2026' } });
+  assert.equal(pw.status, 200, 'la lecture seule peut changer SON mot de passe');
+  // Comptable : opérations comptables oui ; administration, suppression de client, clôture non.
+  assert.equal((await reqJson('POST', '/api/clients', { cookie: cookieOf(compta), body: { raison_sociale: 'Nouveau client' } })).status, 200);
+  for (const [m, p, b] of [['DELETE', `/api/clients/${W.ent}`], ['PUT', '/api/workspace', { nomAffiche: 'Z' }], ['GET', '/api/users'], ['POST', '/api/invitations', { email: 'z@ex.ma', role: 'lecture' }],
+    ['POST', `/api/clients/${W.ent}/periods/2026/1/close`, {}], ['POST', '/api/taux', { taux: 0.02, date_debut: '2027-01-01' }]]) {
+    const r = await reqJson(m, p, { cookie: cookieOf(compta), body: b });
+    assert.equal(r.status, 403, `comptable refusé : ${m} ${p}`);
+  }
+  assert.ok(db.prepare('SELECT 1 FROM entreprise WHERE id=?').get(W.ent), 'dossier non supprimé par le comptable');
+  // Administrateur : suppression autorisée.
+  const tmpEnt = uid('ent'); db.prepare('INSERT INTO entreprise (id,cabinet_id,raison_sociale) VALUES (?,?,?)').run(tmpEnt, W.cab, 'À supprimer');
+  assert.equal((await reqJson('DELETE', `/api/clients/${tmpEnt}`, { cookie: cookieOf(W.u) })).status, 200);
+  // Matrice exposée cohérente.
+  assert.equal(permsMod.can('lecture', 'export'), true); assert.equal(permsMod.can('lecture', 'import'), false);
+  assert.equal(permsMod.can('collaborateur', 'close_period'), false); assert.equal(permsMod.can('admin', 'manage_users'), true);
+  const me = await reqJson('GET', '/api/me', { cookie: cookieOf(compta) });
+  assert.equal(me.body.permissions.manage_users, false); assert.equal(me.body.user.roleLabel, 'Comptable');
+});
+
+test('saas1/utilisateurs : dernier administrateur et soi-même protégés, changements audités', async () => {
+  const W = mkWorkspace('users');
+  const self = await reqJson('PATCH', `/api/users/${W.u}`, { cookie: cookieOf(W.u), body: { role: 'lecture' } });
+  assert.equal(self.status, 400, 'impossible de se retirer ses droits');
+  const other = addUser(W.cab, 'admin');
+  assert.equal((await reqJson('PATCH', `/api/users/${other}`, { cookie: cookieOf(W.u), body: { role: 'collaborateur' } })).status, 200);
+  assert.throws(() => workspaceMod.updateUser(W.cab, other, W.u, { actif: false }), /au moins un administrateur|propres droits/);
+  const c = addUser(W.cab, 'collaborateur');
+  const off = await reqJson('PATCH', `/api/users/${c}`, { cookie: cookieOf(W.u), body: { actif: false } });
+  assert.equal(off.status, 200); assert.equal(off.body.user.actif, false);
+  assert.equal((await reqJson('GET', '/api/me', { cookie: cookieOf(c) })).status, 401, 'accès coupé immédiatement');
+  const bad = await reqJson('PATCH', `/api/users/${c}`, { cookie: cookieOf(W.u), body: { role: 'superadmin' } });
+  assert.equal(bad.status, 400, 'rôle inconnu refusé');
+  assert.ok(db.prepare("SELECT COUNT(*) n FROM audit_log WHERE cabinet_id=? AND entite='utilisateur'").get(W.cab).n >= 2);
+});
+
+test('saas1/invitations : jeton haché, usage unique, expiration, révocation, espace de l’hôte', async () => {
+  const W = mkWorkspace('invit'), X = mkWorkspace('invit-x');
+  const r = await reqJson('POST', '/api/invitations', { cookie: cookieOf(W.u), body: { email: 'Nouvelle@Cabinet.ma', role: 'collaborateur' } });
+  assert.equal(r.status, 200); const token = r.body.invitation.token; assert.ok(token.length >= 40);
+  const row = db.prepare('SELECT * FROM invitation WHERE id=?').get(r.body.invitation.id);
+  assert.notEqual(row.token_hash, token, 'jeton jamais stocké en clair');
+  const logs = db.prepare('SELECT details FROM audit_log WHERE cabinet_id=?').all(W.cab).map(x => x.details).join(' ');
+  assert.ok(!logs.includes(token), 'jeton jamais journalisé');
+  assert.equal((await reqJson('POST', '/api/invitations/lookup', { host: 'invit-x.localhost', body: { token } })).status, 410, 'hôte d’un autre espace : refus');
+  const lk = await reqJson('POST', '/api/invitations/lookup', { host: 'invit.localhost', body: { token } });
+  assert.equal(lk.status, 200); assert.equal(lk.body.email, 'nouvelle@cabinet.ma'); assert.equal(lk.body.workspace.displayName, 'Cabinet invit');
+  const weak = await reqJson('POST', '/api/invitations/accept', { host: 'invit.localhost', body: { token, nom: 'Nadia', password: 'court' } });
+  assert.equal(weak.status, 400, 'mot de passe faible refusé');
+  const acc = await reqJson('POST', '/api/invitations/accept', { host: 'invit.localhost', body: { token, nom: 'Nadia Alaoui', password: 'Motdepasse2026' } });
+  assert.equal(acc.status, 200);
+  const nu = db.prepare("SELECT * FROM utilisateur WHERE email='nouvelle@cabinet.ma'").get();
+  assert.equal(nu.cabinet_id, W.cab, 'compte créé DANS l’espace invitant'); assert.equal(nu.role, 'collaborateur'); assert.equal(nu.invite_par, W.u);
+  assert.equal((await reqJson('POST', '/api/invitations/accept', { body: { token, nom: 'Bis', password: 'Motdepasse2026' } })).status, 410, 'usage unique');
+  const r2 = await reqJson('POST', '/api/invitations', { cookie: cookieOf(W.u), body: { email: 'expire@ex.ma', role: 'lecture' } });
+  db.prepare("UPDATE invitation SET expires_at='2000-01-01 00:00:00' WHERE id=?").run(r2.body.invitation.id);
+  assert.equal((await reqJson('POST', '/api/invitations/lookup', { body: { token: r2.body.invitation.token } })).status, 410, 'invitation expirée');
+  const r3 = await reqJson('POST', '/api/invitations', { cookie: cookieOf(W.u), body: { email: 'revoque@ex.ma', role: 'lecture' } });
+  assert.equal((await reqJson('DELETE', `/api/invitations/${r3.body.invitation.id}`, { cookie: cookieOf(X.u) })).status, 404, 'révocation cross-tenant refusée');
+  assert.equal((await reqJson('DELETE', `/api/invitations/${r3.body.invitation.id}`, { cookie: cookieOf(W.u) })).status, 200);
+  assert.equal((await reqJson('POST', '/api/invitations/accept', { body: { token: r3.body.invitation.token, nom: 'R', password: 'Motdepasse2026' } })).status, 410, 'invitation révoquée');
+  assert.equal((await reqJson('POST', '/api/invitations', { cookie: cookieOf(W.u), body: { email: 'nouvelle@cabinet.ma', role: 'lecture' } })).status, 409, 'déjà membre');
+  assert.equal((await reqJson('POST', '/api/invitations/lookup', { body: { token: 'x'.repeat(43) } })).status, 410, 'jeton inventé');
+});
+
+test('saas1/marque : logo PNG accepté, SVG / HTML déguisé / trop lourd refusés, servi à son seul espace', async () => {
+  const W = mkWorkspace('logo'), X = mkWorkspace('logo-x');
+  const svg = await postFile('/api/workspace/logo', cookieOf(W.u), Buffer.from('<svg xmlns="http://www.w3.org/2000/svg"><script>alert(1)</script></svg>'), 'logo.png', 'image/png');
+  assert.equal(svg.status, 400, 'SVG refusé même renommé en .png');
+  const html = await postFile('/api/workspace/logo', cookieOf(W.u), Buffer.from('<html><script>alert(1)</script></html>'), 'x.jpg', 'image/jpeg');
+  assert.equal(html.status, 400, 'HTML déguisé refusé');
+  const big = await postFile('/api/workspace/logo', cookieOf(W.u), Buffer.concat([PNG_HEAD, Buffer.alloc(1024 * 1024 + 10)]), 'big.png', 'image/png');
+  assert.equal(big.status, 400, 'plus de 1 Mo refusé');
+  const collab = addUser(W.cab, 'collaborateur');
+  assert.equal((await postFile('/api/workspace/logo', cookieOf(collab), PNG_HEAD, 'l.png', 'image/png')).status, 403, 'comptable refusé');
+  const ok = await postFile('/api/workspace/logo', cookieOf(W.u), PNG_HEAD, '../../evil name.png', 'image/png');
+  assert.equal(ok.status, 200); assert.ok(ok.body.workspace.logoUrl);
+  const cab = db.prepare('SELECT logo FROM cabinet WHERE id=?').get(W.cab);
+  assert.match(cab.logo, /^logo_[a-f0-9]+\.png$/, 'nom de fichier généré, jamais celui du client');
+  const pub = await getText('/api/tenant/logo');
+  assert.equal(pub.status, 404, 'hôte neutre : aucun logo exposé');
+  const own = await getText('/api/workspace/logo', cookieOf(W.u));
+  assert.equal(own.status, 200); assert.equal(own.ct, 'image/png');
+  const other = await getText('/api/workspace/logo', cookieOf(X.u));
+  assert.equal(other.status, 404, 'un autre espace ne voit que SON logo (absent ici)');
+  const tn = await reqJson('GET', '/api/tenant', { host: 'logo.localhost' });
+  assert.ok(tn.body.logoUrl && tn.body.logoUrl.startsWith('/api/tenant/logo'), 'logo public annoncé pour la page de connexion');
+});
+
+test('saas1/onboarding : étapes détectées sur données réelles, étapes indispensables non ignorables', async () => {
+  const W = mkWorkspace('onb');
+  db.prepare('DELETE FROM entreprise WHERE cabinet_id=?').run(W.cab);
+  let s = (await reqJson('GET', '/api/onboarding', { cookie: cookieOf(W.u) })).body;
+  assert.equal(s.facts.clients, 0); assert.equal(s.steps.find(x => x.key === 'client').status, 'todo'); assert.equal(s.complete, false);
+  const sk = await reqJson('PUT', '/api/onboarding', { cookie: cookieOf(W.u), body: { step: 'client', status: 'skipped' } });
+  assert.equal(sk.status, 400, 'étape indispensable non ignorable');
+  assert.equal((await reqJson('PUT', '/api/onboarding', { cookie: cookieOf(W.u), body: { complete: true } })).status, 400, 'fin impossible tant que le socle manque');
+  await reqJson('POST', '/api/clients', { cookie: cookieOf(W.u), body: { raison_sociale: 'Premier client' } });
+  s = (await reqJson('GET', '/api/onboarding', { cookie: cookieOf(W.u) })).body;
+  assert.equal(s.steps.find(x => x.key === 'client').status, 'done', 'client détecté automatiquement');
+  const skc = await reqJson('PUT', '/api/onboarding', { cookie: cookieOf(W.u), body: { step: 'conventions', status: 'skipped' } });
+  assert.equal(skc.status, 200); assert.equal(skc.body.steps.find(x => x.key === 'conventions').status, 'skipped');
+  const later = await reqJson('PUT', '/api/onboarding', { cookie: cookieOf(W.u), body: { dismissed: true, current: 'factures' } });
+  assert.equal(later.body.dismissed, true); assert.equal(later.body.current, 'factures', 'progression mémorisée');
+  const X = mkWorkspace('onb-x');
+  assert.equal((await reqJson('GET', '/api/onboarding', { cookie: cookieOf(X.u) })).body.dismissed, false, 'progression propre à chaque espace');
+});
+
+test('saas1/UI : rôles reflétés, invitation hors URL, logo en image uniquement, messages de session', () => {
+  const pub = path.join(__dirname, '..', 'public');
+  const app = fs.readFileSync(path.join(pub, 'js', 'app.js'), 'utf8');
+  const inv = fs.readFileSync(path.join(pub, 'js', 'invite.js'), 'utf8');
+  const login = fs.readFileSync(path.join(pub, 'js', 'login.js'), 'utf8');
+  assert.match(app, /function can\(action\)/); assert.match(app, /data-perm="delete_client"/); assert.match(app, /data-perm="import"/);
+  assert.match(app, /reason=' \+ encodeURIComponent\(code\)/, '401 → connexion avec motif (fin du 401 silencieux)');
+  assert.match(login, /expired:/); assert.match(login, /workspace_inactive:/);
+  assert.match(inv, /location\.hash/, 'jeton lu dans le fragment d’URL'); assert.match(inv, /\/api\/invitations\/lookup', \{ token \}/, 'jeton envoyé en POST');
+  assert.match(app, /\/invite#t=/, 'lien d’invitation par fragment');
+  assert.match(app, /\$\('#wsName'\)\.textContent = name/, 'nom d’espace inséré en texte (pas de HTML)');
+  assert.doesNotMatch(app + inv + login, /image\/svg\+xml/, 'aucun téléversement SVG proposé');
+});

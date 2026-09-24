@@ -629,6 +629,42 @@ select.input-fld,.map-pick select,.selctb select{appearance:none;-webkit-appeara
 .tab:hover{color:var(--ink)}
 .tab[aria-selected="true"]{color:var(--ink);border-bottom-color:var(--brand-600);font-weight:var(--fw-semibold)}
 
+
+/* Logo d'espace (image téléversée, jamais de SVG) */
+.ws-mono.has-logo{background:#fff!important;padding:3px;overflow:hidden}
+.ws-mono .ws-logo-img{width:100%;height:100%;object-fit:contain;display:block;border-radius:inherit}
+.logo-proof{display:flex;gap:8px}
+.logo-proof .lp{display:grid;place-items:center;width:76px;height:76px;border-radius:var(--r-lg);border:1px solid var(--line)}
+.logo-proof .lp.light{background:#fff}.logo-proof .lp.dark{background:#0C2A36;border-color:#0C2A36}
+.powered{color:var(--faint);white-space:nowrap}
+.side-powered{display:block;font-size:10px;color:var(--side-muted);letter-spacing:.02em;margin-top:1px}
+.ro-pill{margin-right:6px}
+
+/* Onboarding */
+.ob-wrap{display:grid;grid-template-columns:260px minmax(0,1fr);gap:18px;align-items:start;max-width:1080px}
+.ob-rail{position:sticky;top:84px}
+.ob-steps{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:2px}
+.ob-step{display:flex;align-items:center;gap:10px;width:100%;padding:8px 10px;border:0;background:none;border-radius:var(--r-md);cursor:pointer;text-align:left;color:var(--ink-2);font-size:13px}
+.ob-step:hover{background:var(--surface-3)}
+.ob-step.cur{background:var(--surface);box-shadow:var(--shadow-sm);color:var(--ink);font-weight:var(--fw-semibold)}
+.ob-n{width:22px;height:22px;border-radius:50%;display:grid;place-items:center;font-size:11px;font-weight:var(--fw-semibold);border:1px solid var(--line-strong);background:var(--surface);flex:0 0 auto;font-variant-numeric:tabular-nums}
+.ob-n svg{width:12px;height:12px}
+.ob-step.is-done .ob-n{background:var(--ok-soft);border-color:var(--ok-line);color:var(--ok)}
+.ob-step.is-skipped .ob-n{background:var(--locked-soft);color:var(--locked)}
+.ob-step.cur .ob-n{background:var(--brand);border-color:var(--brand);color:#fff}
+.ob-l small{display:block;font-size:10.5px;color:var(--faint);font-weight:var(--fw-regular)}
+.ob-main .card-b{padding:28px 32px}
+.ob-ic{width:44px;height:44px;border-radius:var(--r-lg);display:grid;place-items:center;margin-bottom:14px}
+.ob-ic svg{width:22px;height:22px}
+.ob-title{font-size:22px;margin:4px 0 8px}
+.ob-lead{color:var(--ink-2);font-size:14px;max-width:62ch;margin:0 0 20px}
+.ob-points{list-style:none;margin:0 0 22px;padding:0;display:flex;flex-direction:column;gap:10px}
+.ob-points li{display:flex;gap:10px;align-items:flex-start;font-size:13.5px}
+.ob-points svg{width:16px;height:16px;color:var(--brand-600);margin-top:2px;flex:0 0 auto}
+.ob-periods{display:flex;flex-direction:column;gap:4px;max-width:420px}
+.ob-summary{max-width:560px}
+@media (max-width:860px){.ob-wrap{grid-template-columns:minmax(0,1fr)}.ob-rail{position:static}.ob-steps{flex-direction:row;overflow-x:auto}.ob-l{display:none}.ob-main .card-b{padding:20px}}
+
 /* 6 ─ Vues --------------------------------------------------------------------------- */
 
 /* Assistant d'import (étapes) */

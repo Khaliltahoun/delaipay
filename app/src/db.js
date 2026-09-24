@@ -204,7 +204,25 @@ for (const stmt of [
   "ALTER TABLE cabinet ADD COLUMN fuseau_horaire TEXT DEFAULT 'Africa/Casablanca'",
   "ALTER TABLE cabinet ADD COLUMN contact_email TEXT",
   "ALTER TABLE cabinet ADD COLUMN contact_telephone TEXT",
+  // Espace SaaS (incrément 1) : identité légale, adresse, statut, logo, onboarding — sans effet métier.
+  "ALTER TABLE cabinet ADD COLUMN raison_legale TEXT",
+  "ALTER TABLE cabinet ADD COLUMN adresse TEXT",
+  "ALTER TABLE cabinet ADD COLUMN actif INTEGER DEFAULT 1",
+  "ALTER TABLE cabinet ADD COLUMN updated_at TEXT",
+  "ALTER TABLE cabinet ADD COLUMN logo_mime TEXT",
+  "ALTER TABLE cabinet ADD COLUMN onboarding_json TEXT",
+  "ALTER TABLE utilisateur ADD COLUMN derniere_connexion TEXT",
+  "ALTER TABLE utilisateur ADD COLUMN invite_par TEXT",
 ]) { try { db.exec(stmt); } catch (_) {} }
+// Invitations d'utilisateurs : jeton stocké HACHÉ (sha256), usage unique, expiration.
+db.exec(`
+CREATE TABLE IF NOT EXISTS invitation (
+  id TEXT PRIMARY KEY, cabinet_id TEXT NOT NULL, email TEXT NOT NULL, role TEXT NOT NULL,
+  token_hash TEXT NOT NULL UNIQUE, expires_at TEXT NOT NULL, created_by TEXT,
+  created_at TEXT DEFAULT (datetime('now')), accepted_at TEXT, accepted_user_id TEXT, revoked_at TEXT
+);
+CREATE INDEX IF NOT EXISTS ix_invit_cab ON invitation(cabinet_id, created_at);
+`);
 // Un slug désigne au plus un espace (index partiel : les cabinets sans slug restent autorisés).
 try { db.exec('CREATE UNIQUE INDEX IF NOT EXISTS ux_cabinet_slug ON cabinet(lower(slug)) WHERE slug IS NOT NULL'); } catch (_) {}
 

@@ -39,11 +39,18 @@ async function api(path, opts = {}) {
   if (o.body && !(o.body instanceof FormData)) { o.headers['Content-Type'] = 'application/json'; o.body = JSON.stringify(o.body); }
 
   const run = (async () => {
-    const res = await fetch('/api' + path, o);
-    if (res.status === 401) { window.location.href = '/login'; throw new Error('401'); }
+    let res;
+    try { res = await fetch('/api' + path, o); }
+    catch (_) { throw new Error(method === 'GET' ? 'Connexion au service impossible. Vérifiez votre réseau puis réessayez.' : 'Connexion au service impossible : l’opération n’a pas été enregistrée. Vérifiez votre réseau puis réessayez.'); }
     const ct = res.headers.get('content-type') || '';
-    const data = ct.includes('json') ? await res.json() : await res.text();
-    if (!res.ok) throw new Error((data && data.error) || 'Erreur serveur');
+    const data = ct.includes('json') ? await res.json().catch(() => ({})) : await res.text();
+    // Session expirée / compte ou espace désactivé : retour à la connexion AVEC un motif lisible (jamais silencieux).
+    if (res.status === 401) { const code = (data && data.code) || 'expired'; window.location.href = '/login?reason=' + encodeURIComponent(code); throw new Error((data && data.error) || 'Session expirée.'); }
+    if (!res.ok) {
+      if (res.status >= 500) throw new Error(method === 'GET' ? 'Une erreur est survenue côté serveur. Réessayez ; si le problème persiste, contactez le support DelaiPay.' : 'Une erreur est survenue : l’opération n’a pas abouti et aucune donnée n’a été modifiée. Réessayez ou contactez le support.');
+      if (res.status === 429) throw new Error((data && data.error) || 'Trop de requêtes : patientez quelques instants.');
+      throw new Error((data && data.error) || 'Opération impossible.');
+    }
     return data;
   })();
 
@@ -202,18 +209,20 @@ const XICO = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-
 async function boot() {
   try {
     const me = await api('/me');
-    state.me = me.user; state.cabinet = me.cabinet; state.workspace = me.workspace || null;
+    state.me = me.user; state.cabinet = me.cabinet; state.workspace = me.workspace || null; state.perms = me.permissions || {};
   } catch { return; }
   applyWorkspace();
   // header/user
   $('#sideName').textContent = state.me.nom; $('#sideTitle').textContent = state.me.titre || state.me.role;
   $('#sideAv').textContent = state.me.initiales; $('#topAv').textContent = state.me.initiales;
-  $('#umName').textContent = state.me.nom || '—'; $('#umMail').textContent = `${state.me.email || ''} · ${state.me.role === 'admin' ? 'Administrateur' : 'Collaborateur'}`;
+  $('#umName').textContent = state.me.nom || '—'; $('#umMail').textContent = `${state.me.email || ''} · ${state.me.roleLabel || state.me.role}`;
+  if (state.me.role === 'lecture') { const b = document.createElement('span'); b.className = 'pill pill-sm pill-locked ro-pill'; b.innerHTML = svgI('lock', '') + 'Lecture seule'; b.title = 'Votre accès permet la consultation et les exports, sans modification.'; $('.top-right').prepend(b); }
   // thème : préférence mémorisée, sinon celle du système
   applyTheme(getTheme());
   $('#themeBtn').onclick = () => { const n = document.documentElement.getAttribute('data-theme') === 'dark' ? 'light' : 'dark'; applyTheme(n); try { localStorage.setItem('dp-theme', n); } catch (_) {} closeUserMenu(); };
-  $('#logoutBtn').onclick = async () => { await api('/auth/logout', { method: 'POST' }); window.location.href = '/login'; };
+  $('#logoutBtn').onclick = async () => { try { await api('/auth/logout', { method: 'POST' }); } catch (_) {} window.location.href = '/login?reason=logout'; };
   wireUserMenu(); wireMobileNav();
+  PERM_OBSERVER.observe(document.body, { childList: true, subtree: true });
   // nav
   $$('[data-view]').forEach(b => b.addEventListener('click', e => { e.preventDefault(); closeUserMenu(); setView(b.dataset.view); }));
   // clients
@@ -223,7 +232,11 @@ async function boot() {
   wireSwitcher(); wireGlobalSearch(); updateSwitcherLabel();
   await loadPeriods(); wirePeriodSelector();
   refreshAlertsBadge();
-  setView(location.hash.replace('#', '') || 'dash', { replace: true });
+  let first = location.hash.replace('#', '') || 'dash';
+  if (first === 'dash' && can('onboarding')) {
+    try { const ob = await api('/onboarding'); state.onboarding = ob; if (!ob.complete && !ob.dismissed && ob.facts.clients === 0) first = 'onboarding'; } catch (_) {}
+  }
+  setView(first, { replace: true });
 }
 
 // nav : vue mise en surbrillance dans la barre latérale (les vues filles pointent vers leur parent).
@@ -237,6 +250,7 @@ const VIEWS = {
   decl: { crumb: 'Déclaration DGI', fn: renderDecl },
   visa: { crumb: 'Visa', fn: renderVisa },
   exports: { crumb: 'Exports', fn: renderExports },
+  onboarding: { crumb: 'Configuration de l’espace', fn: renderOnboarding, nav: 'dash' },
   alerts: { crumb: 'Alertes', fn: renderAlerts },
   retards: { crumb: 'Factures en retard', fn: renderRetards },
   convmiss: { crumb: 'Conventions manquantes', fn: renderConvMiss, nav: 'dash' },
@@ -262,6 +276,7 @@ async function renderView(name) {
     await VIEWS[name].fn();
     if (seq === _renderSeq) { const v = $('#view'); v.classList.remove('view-enter'); void v.offsetWidth; v.classList.add('view-enter'); }
     $$('#view .kpi[data-goto], #view [data-goto]').forEach(el => { if (!el.onclick) el.onclick = () => setView(el.dataset.goto); });
+    applyPerms();
   } catch (e) {
     if (seq === _renderSeq) {
       $('#view').innerHTML = `<div class="card"><div class="empty err"><div class="ic">${svgI('warn', '')}</div><h4>Impossible d'afficher cette page</h4><p>${esc(e.message)}</p>
@@ -277,6 +292,14 @@ function skeleton() {
   return `<div class="skel-page" aria-busy="true" aria-label="Chargement">${b('220px', 12)}${b('340px', 26)}
     <div class="skel-row">${b('100%', 86)}${b('100%', 86)}${b('100%', 86)}${b('100%', 86)}</div>${b('100%', 260)}</div>`;
 }
+
+/* ============================== autorisations (reflet de la matrice serveur) ==============================
+ * L'interface MASQUE ce qui n'est pas permis ; le serveur, lui, REFUSE (403). Masquer n'est jamais autoriser. */
+function can(action) { return !!(state.perms && state.perms[action]); }
+function applyPerms(root = document) {
+  $$('[data-perm]', root).forEach(el => { if (!can(el.dataset.perm)) el.remove(); });
+}
+const PERM_OBSERVER = new MutationObserver(muts => { for (const m of muts) for (const n of m.addedNodes) if (n.nodeType === 1) { if (n.matches && n.matches('[data-perm]')) applyPerms(n.parentNode || document); else applyPerms(n); } });
 
 /* ============================== espace de travail, thème, menus ============================== */
 function getTheme() {
@@ -295,11 +318,18 @@ function applyWorkspace() {
   const name = w.displayName || cab.nom || 'Espace de travail';
   $('#cabName').textContent = name;
   $('#wsName').textContent = name;
-  $('#wsSub').textContent = w.slug ? `${w.slug} · espace DelaiPay` : 'Espace DelaiPay';
-  $('#wsMono').textContent = w.initials || 'DP';
-  $('#umWs').textContent = name; $('#umMono').textContent = w.initials || 'DP';
+  $('#wsSub').textContent = w.raisonLegale ? w.raisonLegale : 'Propulsé par DelaiPay';
+  setMono($('#wsMono'), w); setMono($('#umMono'), w);
+  $('#umWs').textContent = name;
   if (w.primaryColor) document.documentElement.style.setProperty('--tenant', w.primaryColor);
   else document.documentElement.style.removeProperty('--tenant');
+}
+// Monogramme ou logo de l'espace (logo servi par l'API, image uniquement — jamais de SVG téléversé).
+function setMono(el, w) {
+  if (!el) return; w = w || {};
+  el.classList.toggle('has-logo', !!w.logoUrl); el.style.background = '';
+  if (w.logoUrl) { el.innerHTML = `<img class="ws-logo-img" src="${esc(w.logoUrl)}" alt="">`; }
+  else el.textContent = w.initials || 'DP';
 }
 function closeUserMenu() { const m = $('#userMenu'); if (m) m.classList.add('hidden'); const b = $('#topAv'); if (b) b.setAttribute('aria-expanded', 'false'); }
 function wireUserMenu() {
@@ -551,7 +581,8 @@ function lockBanner() { return currentPeriodLocked() ? `<div class="lock-note">$
 /* ============================== DASHBOARD ============================== */
 async function renderDash() {
   await ensurePeriod();
-  const [d, audits] = await Promise.all([api('/dashboard' + perQuery()), api('/audit').catch(() => [])]);
+  const [d, audits, ob] = await Promise.all([api('/dashboard' + perQuery()), api('/audit').catch(() => []), api('/onboarding', { fresh: true }).catch(() => null)]);
+  state.onboarding = ob;
   const k = d.kpis;
   const cal = d.calendrier || {};
   const per = `${TRI_LABEL(d.periode.trimestre)} ${d.periode.annee}`;
@@ -600,16 +631,7 @@ async function renderDash() {
     <div class="actions"><button class="btn btn-ghost" data-goto="clients">${svgI('building')}Clients</button><button class="btn btn-primary" data-goto="retards">${svgI('table')}Factures en retard</button></div>
   </div>
 
-  ${!k.clients ? `<div class="card" style="margin-bottom:14px"><div class="card-b" style="display:flex;gap:20px;align-items:flex-start;flex-wrap:wrap">
-    <div class="dlg-ic tone-brand" style="margin:0">${svgI('bolt', '')}</div>
-    <div style="flex:1;min-width:260px"><h3 style="font-size:16px;margin-bottom:4px">Bienvenue dans l'espace ${esc(ws)}</h3>
-      <p class="dh" style="margin:0 0 14px">Votre espace est prêt et ses données sont isolées de tout autre cabinet. Trois étapes pour produire une première déclaration :</p>
-      <ol style="margin:0;padding-left:18px;display:flex;flex-direction:column;gap:6px;font-size:13px">
-        <li><b>Créer un dossier client</b> — raison sociale, ICE, IF, chiffre d'affaires.</li>
-        <li><b>Importer son journal d'achats</b> — l'assistant vérifie chaque colonne avant tout enregistrement.</li>
-        <li><b>Contrôler les délais</b>, enregistrer les conventions, puis générer la déclaration et le visa.</li></ol></div>
-    <div class="actions"><button class="btn btn-primary" data-goto="clients">${svgI('plus')}Créer un premier client</button><button class="btn btn-quiet" data-goto="settings">Personnaliser l'espace</button></div>
-  </div></div>` : ''}
+  ${onboardingBanner(ob)}
   <div class="hero">
     <div class="hero-main">
       <div class="lbl">Montant à verser au Trésor · ${per}</div>
@@ -691,6 +713,152 @@ async function renderDash() {
     </div>
   </div>`;
 }
+// Bandeau de reprise de la configuration (espace non terminé) — progression réelle.
+function onboardingBanner(ob) {
+  if (!ob || ob.complete || !can('onboarding')) return '';
+  const next = ob.steps.find(x => x.status === 'todo' && x.key !== 'bienvenue') || ob.steps[ob.steps.length - 1];
+  const ws = (state.workspace && state.workspace.displayName) || '';
+  return `<div class="card ob-banner" style="margin-bottom:14px"><div class="card-b" style="display:flex;gap:18px;align-items:center;flex-wrap:wrap">
+    <div class="dlg-ic tone-brand" style="margin:0">${svgI('bolt', '')}</div>
+    <div style="flex:1;min-width:240px"><h3 style="font-size:15px;margin-bottom:2px">${ob.facts.clients ? 'Terminez la configuration de ' : 'Bienvenue dans l’espace '}${esc(ws)}</h3>
+      <div class="dh" style="font-size:12.5px">Prochaine étape : <b style="color:var(--ink)">${esc(next.label)}</b> · ${ob.progress} % terminé</div>
+      <div class="meter" style="margin-top:8px;max-width:360px"><i style="width:${ob.progress}%;background:var(--brand-500)"></i></div></div>
+    <div class="actions"><button class="btn btn-primary" data-goto="onboarding">${ob.progress ? 'Reprendre' : 'Commencer'} la configuration</button></div>
+  </div></div>`;
+}
+/* ============================== ONBOARDING (8 étapes, capacités réelles uniquement) ============================== */
+const OB_ICON = { bienvenue: 'bolt', cabinet: 'building', client: 'users', factures: 'up', conventions: 'doc', reseau: 'info', periode: 'cal', pret: 'checkc' };
+async function renderOnboarding(stepKey) {
+  const ob = await api('/onboarding', { fresh: true }); state.onboarding = ob;
+  const editable = can('onboarding');
+  const key = stepKey || state._obStep || ob.current || 'bienvenue';
+  const idx = Math.max(0, ob.steps.findIndex(x => x.key === key));
+  const st = ob.steps[idx];
+  state._obStep = st.key;
+  if (editable && ob.current !== st.key) api('/onboarding', { method: 'PUT', body: { current: st.key } }).catch(() => {});
+  const ws = state.workspace || {};
+  const f = ob.facts;
+  const go = (k) => `<button class="btn btn-primary" data-ob-next="${k}">Continuer ${svgI('arrow')}</button>`;
+  const skip = st.optional && st.status === 'todo' ? `<button class="btn btn-quiet" data-ob-skip="${st.key}">Passer cette étape</button>` : '';
+  const nextKey = (ob.steps[idx + 1] || {}).key;
+  const doneNote = t => `<div class="note note-ok">${svgI('checkc')}<div>${t}</div></div>`;
+  let body = '';
+  if (st.key === 'bienvenue') body = `
+    <h2 class="ob-title">Bienvenue dans DelaiPay${ws.displayName ? ' — ' + esc(ws.displayName) : ''}</h2>
+    <p class="ob-lead">En quelques étapes, votre espace sera prêt à calculer les retards de paiement (loi 69-21), préparer la déclaration trimestrielle et générer le visa.</p>
+    <ul class="ob-points"><li>${svgI('lock')}<span>Vos données sont <b>isolées</b> de tout autre cabinet.</span></li><li>${svgI('check')}<span>Rien n'est enregistré sans votre validation : chaque import est contrôlé puis confirmé.</span></li><li>${svgI('history')}<span>Vous pouvez interrompre à tout moment et reprendre plus tard.</span></li></ul>
+    <div class="actions">${go(nextKey)}</div>`;
+  else if (st.key === 'cabinet') body = `
+    <h2 class="ob-title">Configurez votre cabinet</h2>
+    <p class="ob-lead">Nom affiché, raison sociale, logo et contact : ils identifient votre espace pour toute l'équipe.</p>
+    ${st.status === 'done' ? doneNote('Identité de l’espace renseignée. Vous pouvez l’ajuster à tout moment dans Paramètres.') : ''}
+    <div class="form-grid" style="max-width:640px">
+      <div><label class="fld-lbl" for="ob_name">Nom de l'espace</label><input class="input-fld" id="ob_name" value="${esc(ws.nomAffiche || ws.displayName || '')}"></div>
+      <div><label class="fld-lbl" for="ob_legal">Raison sociale</label><input class="input-fld" id="ob_legal" value="${esc(ws.raisonLegale || '')}" placeholder="Ex. Premium Conseil SARL"></div>
+      <div><label class="fld-lbl" for="ob_mail">E-mail de contact</label><input class="input-fld" id="ob_mail" type="email" value="${esc(ws.contactEmail || '')}"></div>
+      <div><label class="fld-lbl" for="ob_logo">Logo (optionnel)</label><input class="input-fld" id="ob_logo" type="file" accept="image/png,image/jpeg,image/webp"><span class="fld-help">PNG, JPEG ou WebP, 1 Mo maximum.</span></div>
+    </div>
+    <div class="actions" style="margin-top:18px"><button class="btn btn-primary" id="ob_save" data-perm="manage_workspace">Enregistrer et continuer ${svgI('arrow')}</button>${st.status === 'done' || !can('manage_workspace') ? go(nextKey).replace('btn-primary', 'btn-ghost') : ''}</div>
+    ${can('manage_workspace') ? '' : `<div class="hint" style="margin-top:12px">${svgI('info')}<span>Seul un administrateur peut modifier l'identité de l'espace.</span></div>`}`;
+  else if (st.key === 'client') body = `
+    <h2 class="ob-title">Créez votre premier dossier client</h2>
+    <p class="ob-lead">Un dossier = une entreprise dont vous suivez les délais de paiement fournisseurs. Le chiffre d'affaires détermine l'assujettissement et le type de visa.</p>
+    ${f.clients ? doneNote(`${f.clients} dossier(s) client déjà créé(s).`) + `<div class="actions">${go(nextKey)}</div>` : `
+    <div class="form-grid" style="max-width:640px">
+      <div class="full"><label class="fld-lbl" for="ob_rs">Raison sociale *</label><input class="input-fld" id="ob_rs" placeholder="Ex. STE ATLAS DISTRIBUTION SARL"></div>
+      <div><label class="fld-lbl" for="ob_ice">ICE</label><input class="input-fld mono" id="ob_ice" inputmode="numeric" maxlength="15"></div>
+      <div><label class="fld-lbl" for="ob_if">Identifiant fiscal</label><input class="input-fld mono" id="ob_if"></div>
+      <div><label class="fld-lbl" for="ob_ville">Ville</label><input class="input-fld" id="ob_ville"></div>
+      <div><label class="fld-lbl" for="ob_ca">CA HT (DH)</label><input class="input-fld mono" id="ob_ca" type="number" min="0"></div>
+    </div>
+    <div class="actions" style="margin-top:18px"><button class="btn btn-primary" id="ob_client">Créer le dossier et continuer ${svgI('arrow')}</button></div>`}`;
+  else if (st.key === 'factures') body = `
+    <h2 class="ob-title">Importez vos factures (journal TVA / achats)</h2>
+    <p class="ob-lead">L'assistant analyse votre fichier Excel, CSV ou XML SIMPL, propose la correspondance des colonnes et <b>bloque</b> toute correspondance incohérente avant le moindre enregistrement.</p>
+    ${f.factures ? doneNote(`${f.factures} facture(s) importée(s) dans l'espace.`) + `<div class="actions">${go(nextKey)}</div>`
+      : (f.clients ? `<div class="actions"><button class="btn btn-primary" id="ob_import">${svgI('up')}Ouvrir l'assistant d'import</button></div>
+         <div class="hint" style="margin-top:12px">${svgI('info')}<span>Choisissez la période (trimestre) dans la barre supérieure avant d'importer. Vous reviendrez ici ensuite.</span></div>`
+        : `<div class="note note-warn">${svgI('warn')}<div>Créez d'abord un dossier client (étape précédente).</div></div>`)}`;
+  else if (st.key === 'conventions') body = `
+    <h2 class="ob-title">Ajoutez vos conventions de délai</h2>
+    <p class="ob-lead">Sans convention, le délai légal de 60 jours s'applique. Une convention signée (jusqu'à 120 jours) se saisit une à une ou s'importe depuis une liste Excel ; le justificatif est archivé tel quel.</p>
+    ${f.conventions ? doneNote(`${f.conventions} convention(s) enregistrée(s).`) : ''}
+    <div class="actions"><button class="btn btn-primary" id="ob_conv" ${f.clients ? '' : 'disabled'}>${svgI('doc')}Ouvrir les conventions</button>${f.conventions ? go(nextKey).replace('btn-primary', 'btn-ghost') : ''}${skip}</div>`;
+  else if (st.key === 'reseau') body = `
+    <h2 class="ob-title">Vérifiez les opérateurs réseau</h2>
+    <p class="ob-lead">Télécoms, eau, électricité : DelaiPay repère les fournisseurs probables. <b>Rien n'est appliqué sans votre confirmation</b> (délai de 30 jours et exclusion des tableaux déclaratifs).</p>
+    ${!f.factures ? `<div class="note note-info">${svgI('info')}<div>Importez d'abord des factures : la détection s'appuie sur vos fournisseurs réels.</div></div>`
+      : f.reseauPropose ? `<div class="note note-warn">${svgI('warn')}<div><b>${f.reseauPropose}</b> fournisseur(s) à examiner — bouton « Réseau ? — confirmer » dans la feuille des délais.</div></div>`
+      : doneNote(`Aucun fournisseur en attente de confirmation${f.reseauConfirme ? ` · ${f.reseauConfirme} opérateur(s) confirmé(s)` : ''}.`)}
+    <div class="actions"><button class="btn btn-primary" id="ob_reseau" ${f.factures ? '' : 'disabled'}>${svgI('table')}Ouvrir la feuille des délais</button>${st.status !== 'todo' ? go(nextKey).replace('btn-primary', 'btn-ghost') : ''}${skip}</div>`;
+  else if (st.key === 'periode') {
+    const per = state.periods || [];
+    body = `
+    <h2 class="ob-title">Sélectionnez votre première période</h2>
+    <p class="ob-lead">Toute l'application travaille sur <b>une période (trimestre) active</b>, toujours affichée en haut de l'écran. Choisissez celle que vous allez déclarer.</p>
+    ${per.length ? `<div class="ob-periods">${per.map(p => `<button class="pp-item ${state.period && state.period.annee === p.annee && state.period.trimestre === p.trimestre ? 'active' : ''}" data-ob-per="${p.annee}-${p.trimestre}"><span><b>${TRI_LABEL(p.trimestre)} ${p.annee}</b> <small>${p.nbFactures} facture(s)</small></span><span class="period-badge ${(PERIOD_STATUT[p.statut] || ['', ''])[1]}">${esc((PERIOD_STATUT[p.statut] || [p.statut])[0])}</span></button>`).join('')}</div>`
+      : `<div class="note note-info">${svgI('info')}<div>Aucune période avec des factures pour le dossier actif. Importez des factures, ou choisissez un trimestre avec le sélecteur de période.</div></div>`}
+    <div class="actions" style="margin-top:16px"><button class="btn btn-primary" id="ob_per" ${state.period ? '' : 'disabled'}>Utiliser ${state.period ? TRI_LABEL(state.period.trimestre) + ' ' + state.period.annee : 'cette période'} ${svgI('arrow')}</button></div>`;
+  } else if (st.key === 'pret') {
+    const req = ob.steps.filter(x => !x.optional && !['bienvenue', 'pret'].includes(x.key));
+    body = `
+    <h2 class="ob-title">${ob.readyToFinish ? 'Votre espace est prêt' : 'Presque prêt'}</h2>
+    <p class="ob-lead">${ob.readyToFinish ? 'Les étapes indispensables sont terminées. Vous pouvez maintenant contrôler les délais, préparer la déclaration et générer le visa.' : 'Terminez les étapes indispensables ci-dessous pour finaliser la configuration.'}</p>
+    <div class="ob-summary">${ob.steps.filter(x => !['bienvenue', 'pret'].includes(x.key)).map(x => `<div class="list-row"><span class="ti-ic tone-${x.status === 'done' ? 'ok' : x.status === 'skipped' ? 'locked' : 'warn'}" style="width:26px;height:26px;border-radius:50%;display:grid;place-items:center">${svgI(x.status === 'done' ? 'check' : x.status === 'skipped' ? 'chev' : 'warn', '')}</span><span style="flex:1">${esc(x.label)}${x.optional ? ' <span class="dh">(optionnelle)</span>' : ''}</span><button class="btn btn-quiet btn-sm" data-ob-goto="${x.key}">${x.status === 'done' ? 'Revoir' : 'Ouvrir'}</button></div>`).join('')}</div>
+    <div class="actions" style="margin-top:18px"><button class="btn btn-primary" id="ob_finish" ${ob.readyToFinish ? '' : 'disabled'}>${svgI('check')}Terminer la configuration</button></div>`;
+  }
+  $('#view').innerHTML = `
+  <div class="ob-wrap">
+    <aside class="ob-rail" aria-label="Étapes">
+      <div class="eyebrow">Configuration de l'espace</div>
+      <div class="meter" style="margin:6px 0 14px"><i style="width:${ob.progress}%;background:var(--brand-500)"></i></div>
+      <ol class="ob-steps">${ob.steps.map((x, i) => `<li><button class="ob-step ${x.key === st.key ? 'cur' : ''} is-${x.status}" data-ob-goto="${x.key}" ${x.key === st.key ? 'aria-current="step"' : ''}>
+        <span class="ob-n">${x.status === 'done' ? svgI('check', '') : x.status === 'skipped' ? '–' : i + 1}</span><span class="ob-l">${esc(x.label)}${x.optional ? '<small>optionnelle</small>' : ''}</span></button></li>`).join('')}</ol>
+      <button class="btn btn-quiet btn-sm" id="ob_later" style="margin-top:10px">Terminer plus tard</button>
+    </aside>
+    <section class="card ob-main"><div class="card-b">
+      <div class="ob-ic tone-brand">${svgI(OB_ICON[st.key] || 'info', '')}</div>
+      <div class="eyebrow">Étape ${idx + 1} sur ${ob.steps.length}${st.optional ? ' · optionnelle' : ''}</div>
+      ${body}
+      ${editable ? '' : `<div class="note note-locked" style="margin-top:16px">${svgI('lock')}<div>Votre rôle ne permet pas de modifier la configuration ; vous pouvez consulter la progression.</div></div>`}
+    </div></section>
+  </div>`;
+  const goto = k => renderOnboarding(k);
+  $$('[data-ob-goto]').forEach(b => b.onclick = () => goto(b.dataset.obGoto));
+  $$('[data-ob-next]').forEach(b => b.onclick = async () => { if (editable && st.key === 'bienvenue') await api('/onboarding', { method: 'PUT', body: { step: 'bienvenue', status: 'done' } }).catch(() => {}); goto(b.dataset.obNext); });
+  $$('[data-ob-skip]').forEach(b => b.onclick = async () => { try { await api('/onboarding', { method: 'PUT', body: { step: b.dataset.obSkip, status: 'skipped' } }); goto(nextKey); } catch (e) { toast(e.message, 'err'); } });
+  const later = $('#ob_later'); if (later) later.onclick = async () => { if (editable) await api('/onboarding', { method: 'PUT', body: { dismissed: true } }).catch(() => {}); toast('Vous pourrez reprendre la configuration depuis la vue d’ensemble.', 'info', 'Configuration enregistrée'); setView('dash'); };
+  const save = $('#ob_save'); if (save) save.onclick = async () => {
+    save.disabled = true;
+    try {
+      const r = await api('/workspace', { method: 'PUT', body: { nomAffiche: $('#ob_name').value, raisonLegale: $('#ob_legal').value, contactEmail: $('#ob_mail').value } });
+      state.workspace = { ...state.workspace, ...r.workspace };
+      const lf = $('#ob_logo').files[0];
+      if (lf) { const fd = new FormData(); fd.append('file', lf); const r2 = await api('/workspace/logo', { method: 'POST', body: fd }); state.workspace = { ...state.workspace, ...r2.workspace }; }
+      applyWorkspace(); await api('/onboarding', { method: 'PUT', body: { step: 'cabinet', status: 'done' } }); goto(nextKey);
+    } catch (e) { toast(e.message, 'err', 'Configuration non enregistrée'); save.disabled = false; }
+  };
+  const oc = $('#ob_client'); if (oc) oc.onclick = async () => {
+    const rs = $('#ob_rs').value.trim(); if (!rs) { $('#ob_rs').setAttribute('aria-invalid', 'true'); toast('La raison sociale est obligatoire.', 'err'); return; }
+    oc.disabled = true;
+    try { const r = await api('/clients', { method: 'POST', body: { raison_sociale: rs, ice: $('#ob_ice').value, if_fiscal: $('#ob_if').value, ville: $('#ob_ville').value, ca_ht: $('#ob_ca').value } });
+      state.clients = await api('/clients'); state.clientId = r.id; try { localStorage.setItem('dp-client', r.id); } catch (_) {} updateSwitcherLabel(); await loadPeriods(); goto(nextKey); }
+    catch (e) { toast(e.message, 'err', 'Dossier non créé'); oc.disabled = false; }
+  };
+  const oi = $('#ob_import'); if (oi) oi.onclick = () => setView('import');
+  const ocv = $('#ob_conv'); if (ocv) ocv.onclick = () => setView('conv');
+  const orz = $('#ob_reseau'); if (orz) orz.onclick = () => setView('delais');
+  $$('[data-ob-per]').forEach(b => b.onclick = () => { const [a, t] = b.dataset.obPer.split('-'); setPeriod(+a, +t, { silent: true }); renderOnboarding('periode'); });
+  const op = $('#ob_per'); if (op) op.onclick = async () => { try { await api('/onboarding', { method: 'PUT', body: { step: 'periode', status: 'done' } }); goto('pret'); } catch (e) { toast(e.message, 'err'); } };
+  const fin = $('#ob_finish'); if (fin) fin.onclick = async () => {
+    try { await api('/onboarding', { method: 'PUT', body: { complete: true } });
+      modal(`<div class="modal-b" style="padding-top:26px;text-align:center"><div class="dlg-ic tone-ok" style="margin:0 auto 14px">${svgI('checkc', '')}</div>
+        <h3 class="dlg-t">Configuration terminée</h3><p class="dlg-m">L'espace ${esc(ws.displayName || '')} est prêt. La période active est ${state.period ? TRI_LABEL(state.period.trimestre) + ' ' + state.period.annee : 'sélectionnée en haut de l’écran'}.</p></div>
+        <div class="modal-f" style="justify-content:center"><button class="btn btn-primary" id="ob_done">Accéder à la vue d'ensemble</button></div>`, 'modal-sm');
+      $('#ob_done').onclick = () => { closeOverlay(); setView('dash'); };
+    } catch (e) { toast(e.message, 'err'); }
+  };
+}
 function initialsOf(name) { return (String(name || 'CL').replace(/\b(STE|SARL|SA|SAS|SNC|AU)\b/gi, '').trim().split(/\s+/).filter(Boolean).slice(0, 2).map(w => w[0]).join('').toUpperCase()) || 'CL'; }
 
 /* ============================== CLIENTS ============================== */
@@ -703,7 +871,7 @@ async function renderClients() {
   const th = (k, lbl, cls = '') => `<th class="${cls}" data-sort="${k}" ${state._csort.k === k ? `aria-sort="${state._csort.dir > 0 ? 'ascending' : 'descending'}"` : ''}>${lbl}<span class="sort">${state._csort.k === k ? (state._csort.dir > 0 ? '▲' : '▼') : '↕'}</span></th>`;
   $('#view').innerHTML = `
   <div class="page-head headrow"><div><div class="eyebrow">Cabinet</div><h1>Clients</h1><p id="clCount"></p></div>
-    <button class="btn btn-primary" id="newClient">${svgI('plus')}Nouveau client</button></div>
+    <button class="btn btn-primary" id="newClient" data-perm="create_client">${svgI('plus')}Nouveau client</button></div>
   <div class="toolbar">
     <div class="filters">${pill('all', 'Tous')}${pill('retard', 'Avec retard')}${pill('ok', 'Conformes')}${pill('assuj', 'Assujetties')}</div>
     <div class="search" style="display:block;flex:0 1 320px;margin:0">${svgI('search')}<input id="clSearch" placeholder="Rechercher (nom, ICE, ville)…" value="${esc(state._cq)}" aria-label="Filtrer les clients"></div></div>
@@ -728,7 +896,7 @@ async function renderClients() {
       : `<tr><td colspan="10"><div class="empty" style="padding:32px"><div class="ic">${svgI('search', '')}</div><h4>${state.clients.length ? 'Aucun client ne correspond' : 'Aucun client pour le moment'}</h4><p>${state.clients.length ? 'Modifiez la recherche ou le filtre.' : 'Créez un premier dossier client pour commencer le suivi des délais.'}</p></div></td></tr>`;
     $$('#clRows tr[data-id]').forEach(tr => tr.onclick = () => setClient(tr.dataset.id));
   };
-  $('#newClient').onclick = clientModal;
+  if ($('#newClient')) $('#newClient').onclick = clientModal;
   $('#clSearch').oninput = debounce(e => { state._cq = e.target.value; draw(); }, 120);
   $$('#view th[data-sort]').forEach(h => h.onclick = () => { const k = h.dataset.sort; state._csort = { k, dir: state._csort.k === k ? -state._csort.dir : (['ca', 'retards', 'amende'].includes(k) ? -1 : 1) }; renderClients(); });
   $$('.fpill[data-r]').forEach(b => b.onclick = () => { state._crisk = b.dataset.r; $$('.fpill[data-r]').forEach(x => x.setAttribute('aria-pressed', x.dataset.r === state._crisk)); draw(); });
@@ -760,8 +928,8 @@ async function renderClientOverview() {
         <span class="tag ${e.assujettie ? 'on' : ''}">${e.assujettie ? 'Assujettie' : 'Non assujettie'}</span>
         <span class="tag">${esc(e.regime)}</span><span class="tag">Visa ${e.type_visa}</span></div></div>
     <div class="actions">
-      <button class="btn btn-ghost" id="editClient">${svgI('edit')}Modifier</button>
-      <button class="btn btn-danger-ghost" id="delClient">${svgI('trash')}Supprimer</button>
+      <button class="btn btn-ghost" id="editClient" data-perm="edit_client">${svgI('edit')}Modifier</button>
+      <button class="btn btn-danger-ghost" id="delClient" data-perm="delete_client">${svgI('trash')}Supprimer</button>
     </div>
   </div>
   <div class="hero">
@@ -786,8 +954,8 @@ async function renderClientOverview() {
   </div>`;
   $$('.hub-card[data-view]').forEach(b => b.onclick = () => setView(b.dataset.view));
   renderPeriodCard(s.periode);
-  $('#editClient').onclick = () => editClientModal(e);
-  $('#delClient').onclick = () => {
+  if ($('#editClient')) $('#editClient').onclick = () => editClientModal(e);
+  if ($('#delClient')) $('#delClient').onclick = () => {
     modal(`<div class="modal-h"><h3>Supprimer le client</h3><button class="x" onclick="closeOverlay()">${XICO}</button></div>
     <div class="modal-b"><p style="margin:0 0 8px">Confirmez-vous la suppression de <b>${esc(e.raison_sociale)}</b> ?</p>
       <p class="dh" style="margin:0">Cette action supprime définitivement le client et toutes ses données associées (factures, fournisseurs, conventions, déclarations, visas). Elle est irréversible.</p></div>
@@ -915,7 +1083,7 @@ function reseauBadge(f) {
   // Proposition réseau non confirmée : badge + confirmation en un clic (opérateur télécom/eau/électricité → 30 j + exclusion).
   if (f.reseau_statut === 'propose' && f.four_id) {
     const tip = `Fournisseur possiblement opérateur de réseau${f.reseau_categorie ? ' (' + esc(f.reseau_categorie) + ')' : ''}${f.reseau_ambigu ? ' — à vérifier (nom générique)' : ''}. Confirmer applique le délai de 30 jours et l'exclusion déclarative.`;
-    return ` <button class="btn btn-ghost btn-xs reseau-confirm" data-four="${f.four_id}" data-fournom="${esc(f.four || '')}" title="${tip}" onclick="event.stopPropagation();confirmReseau(this)" style="color:var(--info)">Réseau ? — confirmer</button>`;
+    return ` <button class="btn btn-ghost btn-xs reseau-confirm" data-perm="classify_network" data-four="${f.four_id}" data-fournom="${esc(f.four || '')}" title="${tip}" onclick="event.stopPropagation();confirmReseau(this)" style="color:var(--info)">Réseau ? — confirmer</button>`;
   }
   return '';
 }
@@ -966,7 +1134,7 @@ async function renderDelais() {
   $('#view').innerHTML = `
   ${clientPeriodBar(periods)}${lockBanner()}
   <div class="page-head headrow"><div><div class="eyebrow">${esc(currentClient().name)} · T${data.periode.trimestre} ${data.periode.annee}</div><h1>Délais de paiement</h1><p>Calcul automatique des retards et amendes — loi 69-21, découpage au mois calendaire.</p></div>
-    <div class="actions"><button class="btn btn-ghost" id="recompute" ${locked ? 'disabled title="Période clôturée : montants figés, aucun recalcul"' : ''}>${svgI('refresh')}Recalculer</button>
+    <div class="actions"><button class="btn btn-ghost" id="recompute" data-perm="import" ${locked ? 'disabled title="Période clôturée : montants figés, aucun recalcul"' : ''}>${svgI('refresh')}Recalculer</button>
     <button class="btn btn-primary" onclick="setView('decl')">${svgI('doc')}Préparer la déclaration</button></div></div>
   <div class="stat-strip">
     <div class="stat"><div class="l">Factures analysées</div><div class="v">${t.count}</div></div>
@@ -989,7 +1157,7 @@ async function renderDelais() {
   $$('.fpill').forEach(b => b.onclick = () => { state._filter = b.dataset.f; renderDelais(); });
   $$('.xls-export').forEach(b => b.onclick = () => exportDelais(b.dataset.x, b));
   wireClientBar(renderDelais);
-  $('#recompute').onclick = async () => { if (locked) return; await api(`/clients/${state.clientId}/recompute${perQuery()}`, { method: 'POST' }); toast('Recalcul effectué.', 'ok'); renderDelais(); };
+  if ($('#recompute')) $('#recompute').onclick = async () => { if (locked) return; await api(`/clients/${state.clientId}/recompute${perQuery()}`, { method: 'POST' }); toast('Recalcul effectué.', 'ok'); renderDelais(); };
   if (rows.length) mountPaged(rows, f => `<tr class="clickable" data-id="${f.id}">
       <td class="mono"><b>${esc(f.numero || '—')}</b></td>
       <td><div class="fournisseur" title="${esc(f.four || '')}"><b>${esc(f.four || '—')}</b><small>IF ${esc(f.four_if || '—')}</small></div></td>
@@ -1002,7 +1170,7 @@ async function renderDelais() {
       <td><div class="cell-stack"><span class="badge ${f.operateur_reseau ? 'b30' : (f.has_conv || f.delai_applicable >= 120 ? 'b120' : 'b60')}">${f.delai_applicable} j ${f.operateur_reseau ? '<small>réseau</small>' : (!f.has_conv && f.delai_applicable === 60 ? '<small>légal</small>' : '')}</span>${f.delai_ecoule > 60 && !f.operateur_reseau ? (f.has_conv
         ? ' <span class="pill pill-sm pill-ok" title="Convention disponible">conv.</span>'
         : (f.four_id && !locked
-          ? ` <button class="btn btn-ghost btn-xs" style="color:var(--brand-600)" title="Ce fournisseur a une convention signée : l'enregistrer en un clic" data-four="${f.four_id}" data-fournom="${esc(f.four || '')}" data-delai="${f.delai_ecoule}" onclick="event.stopPropagation();convExpress(this)">+ Convention présente</button>`
+          ? ` <button class="btn btn-ghost btn-xs" data-perm="manage_conventions" style="color:var(--brand-600)" title="Ce fournisseur a une convention signée : l'enregistrer en un clic" data-four="${f.four_id}" data-fournom="${esc(f.four || '')}" data-delai="${f.delai_ecoule}" onclick="event.stopPropagation();convExpress(this)">+ Convention présente</button>`
           : ' <span class="pill pill-sm pill-late" title="Aucune convention pour ce fournisseur">sans conv.</span>')) : ''}</div>${(reseauBadge(f) + doublonBadge(f)).trim() ? `<div class="cell-stack">${reseauBadge(f)}${doublonBadge(f)}</div>` : ''}</td>
       <td class="retard ${f.retard > 0 ? 'pos' : 'neg'}">${f.retard == null ? '—' : (f.retard > 0 ? '+' + f.retard : f.retard)}</td>
       <td>${f.a_declarer ? '<span class="pill pill-sm pill-late"><span class="dot"></span>Oui</span>' : '<span class="tag-no">—</span>'}</td>
@@ -1044,7 +1212,7 @@ function doublonDrawer(f) {
   const st = f.statut_doublon || (f.doublon_potentiel ? 'potentiel' : 'aucun');
   if (!f.doublon_potentiel && st === 'aucun') return ''; // facture non concernée
   const meta = f.date_revue_doublon ? `<div class="dh" style="font-size:11.5px;margin-top:6px">Revue enregistrée le ${dateFr(f.date_revue_doublon)}.</div>` : '';
-  const A = (act, label, primary) => `<button class="btn ${primary ? 'btn-primary' : 'btn-ghost'} btn-sm" style="font-size:12px;padding:6px 12px" onclick="reviewDoublon(this)" data-fid="${f.id}" data-act="${act}">${esc(label)}</button>`;
+  const A = (act, label, primary) => `<button class="btn ${primary ? 'btn-primary' : 'btn-ghost'} btn-sm" data-perm="review_duplicates" onclick="reviewDoublon(this)" data-fid="${f.id}" data-act="${act}">${esc(label)}</button>`;
   let title, note, actions;
   if (st === 'confirme') {
     title = '<span class="pill pill-red"><span class="dot"></span>Doublon confirmé</span>';
@@ -1154,7 +1322,9 @@ function drawWizard() {
   const locked = !conv && currentPeriodLocked();
   const step = state.wiz.step;
   let inner = '';
-  if (locked) {
+  if (!can('import')) {
+    inner = `<div class="card"><div class="empty"><div class="ic">${svgI('lock', '')}</div><h4>Accès en lecture seule</h4><p>Votre rôle permet de consulter et d'exporter les données, pas d'en importer. Demandez à un administrateur de l'espace si vous avez besoin de ce droit.</p></div></div>`;
+  } else if (locked) {
     inner = `<div class="card"><div class="empty"><div class="ic">${svgI('lock', '')}</div><h4>Import impossible sur une période clôturée</h4><p>La période <b>${TRI_LABEL(state.period.trimestre)} ${state.period.annee}</b> est figée. Choisissez une autre période ou demandez une réouverture motivée à un administrateur.</p></div></div>`;
   } else if (step === 'upload') {
     const ctx = conv
@@ -1171,7 +1341,7 @@ function drawWizard() {
   else if (step === 'preview') { inner = wizPreviewHtml(); }
   else if (step === 'done') { inner = wizDoneHtml(); }
   $('#view').innerHTML = wizScaffold(inner);
-  if (step === 'upload' && !locked) {
+  if (step === 'upload' && !locked && can('import')) {
     const dz = $('#dz'), fi = $('#file');
     dz.onclick = () => fi.click();
     dz.onkeydown = e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); fi.click(); } };
@@ -1367,10 +1537,11 @@ function wizDoneHtml() {
         <div class="stat"><div class="l">TTC importé</div><div class="v">${money(r.totalTtc)}<small>DH</small></div></div>
       </div>
       <div class="wiz-actions">
-        <button class="btn btn-primary" onclick="setView('delais')">Voir les délais de paiement ${svgI('arrow')}</button>
+        ${state.onboarding && !state.onboarding.complete ? `<button class="btn btn-primary" onclick="setView('onboarding')">Revenir à la configuration ${svgI('arrow')}</button>` : ''}
+        <button class="btn ${state.onboarding && !state.onboarding.complete ? 'btn-ghost' : 'btn-primary'}" onclick="setView('delais')">Voir les délais de paiement ${svgI('arrow')}</button>
         ${(r.rejected || r.ignored || r.duplicates) ? `<a class="btn btn-ghost" href="/api/imports/${r.importId}/rejections.csv">${svgI('dl')}Rapport des rejets (CSV)</a>` : ''}
         <button class="btn btn-ghost" id="wizNew">Importer un autre fichier</button><span class="grow"></span>
-        <button class="btn btn-danger-ghost" id="wizCancel">Annuler cet import</button>
+        <button class="btn btn-danger-ghost" id="wizCancel" data-perm="import">Annuler cet import</button>
       </div></div></div>`;
 }
 function wizWireDone() {
@@ -1392,7 +1563,7 @@ async function renderDocs() {
       <tbody>${docs.map(d => `<tr><td><b>${esc(d.nom)}</b></td><td class="num">${d.nb_factures || 0}</td><td class="mono dh">${esc(dateTimeFr((d.created_at || '').replace('T', ' ')))}</td>
         <td style="text-align:right;white-space:nowrap"><a class="btn btn-quiet btn-sm" href="/api/clients/${state.clientId}/documents/${d.id}/download">${svgI('dl')}Télécharger</a>
           ${d.import_lot_id ? `<a class="btn btn-quiet btn-sm" href="/api/imports/${d.import_lot_id}/rejections.csv">Rejets</a>` : ''}
-          ${locked ? '' : `<button class="btn btn-danger-ghost btn-sm" data-del="${d.id}" data-nb="${d.nb_factures || 0}" data-nom="${esc(d.nom)}">Supprimer</button>`}</td></tr>`).join('')}</tbody></table></div>`
+          ${locked ? '' : `<button class="btn btn-danger-ghost btn-sm" data-perm="import" data-del="${d.id}" data-nb="${d.nb_factures || 0}" data-nom="${esc(d.nom)}">Supprimer</button>`}</td></tr>`).join('')}</tbody></table></div>`
     : `<div class="card-b dh">Aucun fichier importé pour cette période.</div>`}</div>`;
   $$('#docsList [data-del]').forEach(b => b.onclick = async () => {
     if (!await ui.confirm({ tone: 'danger', title: `Supprimer « ${b.dataset.nom} » ?`, message: `Les ${b.dataset.nb} facture(s) importée(s) depuis ce fichier seront également retirées.`, confirmLabel: 'Supprimer le fichier' })) return;
@@ -1420,8 +1591,8 @@ async function renderConv() {
   <div class="page-head headrow"><div><div class="eyebrow">${esc(currentClient().name)}</div><h1>Conventions fournisseurs</h1><p>Conventions de délai de paiement et justificatifs signés. <b>Les documents sont archivés : aucune extraction automatique n'est effectuée</b> — le délai est toujours celui que vous saisissez.</p></div>
     <div class="actions">
       <a class="btn btn-quiet" href="/api/conventions/template.xlsx" title="Fichier Excel prêt à remplir">${svgI('dl')}Modèle Excel</a>
-      <button class="btn btn-ghost" id="impConv" title="Assistant : associez librement les colonnes de votre fichier Excel">${svgI('up')}Importer une liste</button>
-      <button class="btn btn-primary" id="newConv">${svgI('plus')}Nouvelle convention</button></div></div>
+      <button class="btn btn-ghost" id="impConv" data-perm="manage_conventions" title="Assistant : associez librement les colonnes de votre fichier Excel">${svgI('up')}Importer une liste</button>
+      <button class="btn btn-primary" id="newConv" data-perm="manage_conventions">${svgI('plus')}Nouvelle convention</button></div></div>
   ${rows.length ? `<div class="stat-strip">
       <div class="stat"><div class="l">Conventions enregistrées</div><div class="v">${rows.length}</div></div>
       <div class="stat ok"><div class="l">Appliquées au calcul</div><div class="v">${applied}</div></div>
@@ -1434,14 +1605,14 @@ async function renderConv() {
       <td class="dh" style="white-space:nowrap">${c.date_debut ? `<span class="mono">${dateFr(c.date_debut)}</span> → ` : ''}${c.date_fin ? `<span class="mono">${dateFr(c.date_fin)}</span>` : 'Durée indéterminée'}</td>
       <td><span class="pill pill-sm ${st[0]}"><span class="dot"></span>${esc(st[1])}</span></td>
       <td>${c.fichier
-        ? `<a href="/api/conventions/${c.fichier}/file" target="_blank" rel="noopener">${svgI('doc')} Voir</a> <button class="btn btn-quiet btn-xs" data-replacepdf="${c.id}">Remplacer</button>`
-        : `<span class="pill pill-sm pill-warn">Manquant</span> <button class="btn btn-ghost btn-xs" data-addpdf="${c.id}">Ajouter</button>`}</td>
-      <td style="text-align:right"><button class="btn btn-danger-ghost btn-sm" data-delc="${c.id}" data-four="${esc(c.fournisseur || '')}">Supprimer</button></td></tr>`; }).join('')}</tbody></table></div>`
+        ? `<a href="/api/conventions/${c.fichier}/file" target="_blank" rel="noopener">${svgI('doc')} Voir</a> <button class="btn btn-quiet btn-xs" data-perm="manage_conventions" data-replacepdf="${c.id}">Remplacer</button>`
+        : `<span class="pill pill-sm pill-warn">Manquant</span> <button class="btn btn-ghost btn-xs" data-perm="manage_conventions" data-addpdf="${c.id}">Ajouter</button>`}</td>
+      <td style="text-align:right"><button class="btn btn-danger-ghost btn-sm" data-perm="manage_conventions" data-delc="${c.id}" data-four="${esc(c.fournisseur || '')}">Supprimer</button></td></tr>`; }).join('')}</tbody></table></div>`
     : emptyBox('Aucune convention', 'Importez la liste des conventions depuis Excel ou ajoutez-les une à une. Sans convention, le délai légal de 60 jours s\'applique.', null, null, 'doc')}`;
   wireClientBar(renderConv);
-  $('#newConv').onclick = convModal;
+  if ($('#newConv')) $('#newConv').onclick = convModal;
   // Import via l'ASSISTANT (mapping libre des colonnes) — même composant que l'import TVA.
-  $('#impConv').onclick = () => openConvWizard();
+  if ($('#impConv')) $('#impConv').onclick = () => openConvWizard();
   $$('#view [data-addpdf]').forEach(b => b.onclick = () => attachConvPdf(b, b.dataset.addpdf, false));
   $$('#view [data-replacepdf]').forEach(b => b.onclick = async () => {
     if (await ui.confirm({ tone: 'warn', title: 'Remplacer le justificatif ?', message: 'Le document déjà rattaché à cette convention sera remplacé par le nouveau fichier.', confirmLabel: 'Choisir le nouveau fichier' })) attachConvPdf(b, b.dataset.replacepdf, true);
@@ -1701,78 +1872,208 @@ async function renderAnomalies() {
     <div class="al-ic ${a.statut !== 'ouverte' ? 'info' : a.gravite === 'haute' ? 'red' : 'orange'}">${svgI(a.statut !== 'ouverte' ? 'check' : 'warn', '')}</div>
     <div class="al-body"><div class="t">${esc(LBL[a.type] || 'Anomalie')} <span class="sev ${a.gravite === 'haute' ? 'h' : 'm'}">${esc(a.gravite)}</span>${a.statut !== 'ouverte' ? '<span class="sev l">résolue</span>' : ''}</div>
       <div class="m">${esc(a.details || '')}</div><div class="d">${esc(a.ent || '—')} · ${esc(a.created_at || '')}</div></div>
-    ${a.statut === 'ouverte' ? `<button class="btn btn-ghost btn-sm" data-res="${a.id}">Marquer résolue</button>` : ''}</div>`).join('')
+    ${a.statut === 'ouverte' ? `<button class="btn btn-ghost btn-sm" data-perm="edit_client" data-res="${a.id}">Marquer résolue</button>` : ''}</div>`).join('')
     : `<div class="empty"><div class="ic">${svgI('checkc', '')}</div><h4>Aucune anomalie</h4><p>Aucune anomalie détectée sur le portefeuille.</p></div>`}</div>`;
   $$('#view [data-res]').forEach(b => b.onclick = async () => { await api(`/anomalies/${b.dataset.res}/resolve`, { method: 'POST' }); toast('Anomalie résolue.', 'ok'); refreshAlertsBadge(); renderAnomalies(); });
 }
 
-/* ============================== PARAMÈTRES (espace · taux · compte) ============================== */
+/* ============================== PARAMÈTRES (espace · utilisateurs · sécurité · taux · compte) ============================== */
 async function renderSettings(tab = 'workspace') {
-  const tabs = [['workspace', "Espace de travail"], ['taux', 'Taux Bank Al-Maghrib'], ['compte', 'Mon compte']];
+  const tabs = [['workspace', 'Espace de travail'], ...(can('manage_users') ? [['users', 'Utilisateurs']] : []), ['security', 'Sécurité'], ['taux', 'Taux Bank Al-Maghrib'], ['compte', 'Mon compte']];
+  if (!tabs.some(t => t[0] === tab)) tab = 'workspace';
+  state._settingsTab = tab;
   $('#view').innerHTML = `
-  <div class="page-head"><div class="eyebrow">${esc((state.workspace && state.workspace.displayName) || '')}</div><h1>Paramètres</h1><p>Identité de l'espace de travail, taux de référence et compte utilisateur.</p></div>
+  <div class="page-head"><div class="eyebrow">${esc((state.workspace && state.workspace.displayName) || '')} · Administration</div><h1>Paramètres</h1><p>Identité de l'espace, utilisateurs, sécurité, taux de référence et compte.</p></div>
   <div class="tabs" role="tablist">${tabs.map(([k, l]) => `<button class="tab" role="tab" data-tab="${k}" aria-selected="${k === tab}">${l}</button>`).join('')}</div>
   <div id="setBody"></div>`;
-  $$('.tab[data-tab]').forEach(b => b.onclick = () => { const v = b.dataset.tab === 'taux' ? 'taux' : 'settings'; if (b.dataset.tab === 'compte') { renderSettings('compte'); return; } setView(v); });
-  if (tab === 'taux') return renderTaux($('#setBody'));
-  if (tab === 'compte') return renderAccount($('#setBody'));
-  return renderWorkspace($('#setBody'));
+  $$('.tab[data-tab]').forEach(b => b.onclick = () => { if (b.dataset.tab === 'taux') return setView('taux'); if (state.view !== 'settings') return setView('settings'); renderSettings(b.dataset.tab); });
+  const box = $('#setBody');
+  if (tab === 'taux') return renderTaux(box);
+  if (tab === 'compte') return renderAccount(box);
+  if (tab === 'users') return renderUsers(box);
+  if (tab === 'security') return renderSecurity(box);
+  return renderWorkspace(box);
 }
 async function renderWorkspace(box) {
   const d = await api('/workspace', { fresh: true });
-  const w = d.workspace || {}; const isAdmin = state.me && state.me.role === 'admin';
+  const w = d.workspace || {}; const isAdmin = can('manage_workspace');
   const ro = isAdmin ? '' : 'readonly disabled';
-  const opt = (arr, v) => arr.map(x => `<option ${x === v ? 'selected' : ''}>${esc(x)}</option>`).join('');
+  const opt = (arr, v, lbl = x => x) => arr.map(x => `<option value="${esc(x)}" ${x === v ? 'selected' : ''}>${esc(lbl(x))}</option>`).join('');
+  const LOC = { 'fr-MA': 'Français (Maroc)', 'fr-FR': 'Français (France)', 'ar-MA': 'العربية (المغرب)', 'en-US': 'English (US)' };
+  const TZ = { 'Africa/Casablanca': 'Casablanca (GMT+1)', 'Europe/Paris': 'Paris', UTC: 'UTC' };
+  const monoHtml = (bg) => w.logoUrl ? `<div class="ws-mono has-logo" style="width:56px;height:56px;border-radius:12px;background:${bg}"><img class="ws-logo-img" src="${esc(w.logoUrl)}" alt="Logo actuel"></div>`
+    : `<div class="ws-mono" style="width:56px;height:56px;border-radius:12px;font-size:18px;background:${esc(w.primaryColor || 'var(--brand-600)')}">${esc(w.initials || 'DP')}</div>`;
   box.innerHTML = `<div class="settings-grid">
-    <div class="card"><div class="card-h"><div><h3>Identité de l'espace</h3><div class="sub">Affichée dans la navigation, la page de connexion et les en-têtes</div></div>${isAdmin ? '' : '<span class="pill pill-sm pill-locked">Lecture seule</span>'}</div>
-      <div class="card-b"><div class="form-grid">
-        <div class="full"><label class="fld-lbl" for="w_name">Nom affiché</label><input class="input-fld" id="w_name" maxlength="80" value="${esc(w.nomAffiche || '')}" placeholder="${esc(w.nom || '')}" ${ro}>
-          <span class="fld-help">Laissez vide pour utiliser la raison sociale du cabinet : « ${esc(w.nom || '')} ».</span></div>
-        <div><label class="fld-lbl" for="w_color">Couleur de l'espace</label><div class="color-row"><input type="color" id="w_colorPick" value="${esc(w.primaryColor || '#15475A')}" ${ro} aria-label="Choisir la couleur">
-          <input class="input-fld mono" id="w_color" value="${esc(w.primaryColor || '')}" placeholder="#15475A" maxlength="7" ${ro}></div>
-          <span class="fld-help">Utilisée uniquement pour le monogramme de l'espace — jamais pour les statuts métier.</span></div>
-        <div><label class="fld-lbl" for="w_locale">Langue et format</label><select class="input-fld" id="w_locale" ${ro}>${opt(d.options.locales, w.locale)}</select></div>
-        <div><label class="fld-lbl" for="w_devise">Devise</label><select class="input-fld" id="w_devise" ${ro}>${opt(d.options.devises, w.devise)}</select></div>
-        <div><label class="fld-lbl" for="w_tz">Fuseau horaire</label><select class="input-fld" id="w_tz" ${ro}>${opt(d.options.fuseaux, w.fuseauHoraire)}</select></div>
+    <div class="stack">
+      <div class="card"><div class="card-h"><div><h3>Identité</h3><div class="sub">Affichée dans la navigation, sur la page de connexion et l'accueil</div></div>${isAdmin ? '' : '<span class="pill pill-sm pill-locked">Lecture seule</span>'}</div>
+        <div class="card-b"><div class="form-grid">
+          <div><label class="fld-lbl" for="w_name">Nom de l'espace</label><input class="input-fld" id="w_name" maxlength="80" value="${esc(w.nomAffiche || '')}" placeholder="${esc(w.nom || '')}" ${ro}>
+            <span class="fld-help">Vide : « ${esc(w.nom || '')} » est utilisé.</span></div>
+          <div><label class="fld-lbl" for="w_legal">Raison sociale</label><input class="input-fld" id="w_legal" maxlength="160" value="${esc(w.raisonLegale || '')}" placeholder="Ex. Premium Conseil SARL" ${ro}></div>
+          <div class="full"><label class="fld-lbl">Logo</label>
+            <div style="display:flex;gap:14px;align-items:center;flex-wrap:wrap">
+              <div class="logo-proof"><span class="lp light">${monoHtml('#fff')}</span><span class="lp dark">${monoHtml('#0C2A36')}</span></div>
+              ${isAdmin ? `<div class="actions"><label class="btn btn-ghost btn-sm" for="w_logo">${svgI('up')}${w.logoUrl ? 'Remplacer' : 'Téléverser un logo'}</label>
+                <input type="file" id="w_logo" accept="image/png,image/jpeg,image/webp" class="sr-only">
+                ${w.logoUrl ? `<button class="btn btn-quiet btn-sm" id="w_logo_rm">Retirer</button>` : ''}</div>` : ''}
+            </div><span class="fld-help">PNG, JPEG ou WebP · 1 Mo maximum · de préférence carré, fond transparent. Le SVG n'est pas accepté (sécurité). Aperçu sur fond clair et sombre.</span></div>
+          <div><label class="fld-lbl" for="w_color">Couleur de l'espace</label><div class="color-row"><input type="color" id="w_colorPick" value="${esc(w.primaryColor || '#15475A')}" ${ro} aria-label="Choisir la couleur">
+            <input class="input-fld mono" id="w_color" value="${esc(w.primaryColor || '')}" placeholder="#15475A" maxlength="7" ${ro}></div>
+            <span class="fld-help">Réservée à l'identité de l'espace (monogramme) — jamais aux statuts métier.</span></div>
+        </div></div></div>
+      <div class="card"><div class="card-h"><div><h3>Localisation</h3><div class="sub">Préférences enregistrées pour l'espace</div></div></div><div class="card-b"><div class="form-grid">
+        <div><label class="fld-lbl" for="w_locale">Langue et format</label><select class="input-fld" id="w_locale" ${ro}>${opt(d.options.locales, w.locale, x => LOC[x] || x)}</select></div>
+        <div><label class="fld-lbl" for="w_devise">Devise</label><select class="input-fld" id="w_devise" ${ro}>${opt(d.options.devises, w.devise, x => x === 'MAD' ? 'Dirham marocain (MAD)' : x)}</select></div>
+        <div><label class="fld-lbl" for="w_tz">Fuseau horaire</label><select class="input-fld" id="w_tz" ${ro}>${opt(d.options.fuseaux, w.fuseauHoraire, x => TZ[x] || x)}</select></div>
+      </div><div class="hint" style="margin:12px 0 0">${svgI('info')}<span>L'interface est aujourd'hui en français, les montants en dirhams et les dates à l'heure du Maroc ; ces préférences préparent les versions suivantes.</span></div></div></div>
+      <div class="card"><div class="card-h"><div><h3>Contacts</h3><div class="sub">Coordonnées du cabinet</div></div></div><div class="card-b"><div class="form-grid">
         <div><label class="fld-lbl" for="w_mail">E-mail de contact</label><input class="input-fld" id="w_mail" type="email" value="${esc(w.contactEmail || '')}" ${ro}></div>
         <div><label class="fld-lbl" for="w_tel">Téléphone</label><input class="input-fld" id="w_tel" value="${esc(w.contactTelephone || '')}" ${ro}></div>
-      </div>
-      <div class="hint" style="margin:14px 0 0">${svgI('info')}<span>La langue, la devise et le fuseau sont enregistrés pour l'espace ; l'interface reste aujourd'hui en français, en dirhams (MAD), heure du Maroc.</span></div></div>
-      ${isAdmin ? `<div class="card-f"><button class="btn btn-primary" id="w_save">Enregistrer</button></div>` : ''}</div>
+        <div class="full"><label class="fld-lbl" for="w_adr">Adresse</label><input class="input-fld" id="w_adr" maxlength="240" value="${esc(w.adresse || '')}" ${ro}></div>
+      </div></div>${isAdmin ? `<div class="card-f"><button class="btn btn-primary" id="w_save">Enregistrer les modifications</button></div>` : ''}</div>
+    </div>
     <div class="stack">
       <div class="card"><div class="card-h"><h3>Aperçu</h3></div><div class="card-b"><div class="preview-ws"><div class="pv-side">
           <div class="brand" style="padding:0"><span class="mark"><img src="/assets/brand/delaipay-mark.svg" alt="" width="26" height="26"></span><span class="word" style="font-size:15px">Delai<em>Pay</em></span></div>
-          <div class="ws-card" style="margin:0"><div class="ws-mono" id="pvMono" style="background:${esc(w.primaryColor || 'var(--brand-600)')}">${esc(w.initials || 'DP')}</div><div class="ws-meta"><b id="pvName">${esc(w.displayName || '')}</b><small>${esc(w.slug || '—')} · espace DelaiPay</small></div></div></div>
-        <div class="pv-body">Chaque cabinet dispose de son espace, de ses données cloisonnées et de son identité, dans une interface DelaiPay commune.</div></div></div></div>
-      <div class="card"><div class="card-h"><div><h3>Adresse de l'espace</h3><div class="sub">attribuée au provisionnement</div></div></div><div class="card-b">
-        <dl class="kv"><dt>Identifiant</dt><dd><span class="code">${esc(w.slug || 'non attribué')}</span></dd><dt>Offre</dt><dd>${esc(w.plan || '—')}</dd>
-          <dt>Adresses locales</dt><dd>${(d.hotes || []).length ? d.hotes.map(h => `<span class="code">${esc(h)}</span>`).join(' ') : '—'}</dd></dl>
-        <div class="hint" style="margin:12px 0 0">${svgI('info')}<span>Le sous-domaine public (ex. <span class="code">${esc(w.slug || 'cabinet')}.delaipay.com</span>) sera activé lors de la mise en production multi-espaces — non disponible à ce stade.</span></div></div></div>
+          <div class="ws-card" style="margin:0"><div class="ws-mono ${w.logoUrl ? 'has-logo' : ''}" id="pvMono" style="${w.logoUrl ? '' : `background:${esc(w.primaryColor || 'var(--brand-600)')}`}">${w.logoUrl ? `<img class="ws-logo-img" src="${esc(w.logoUrl)}" alt="">` : esc(w.initials || 'DP')}</div><div class="ws-meta"><b id="pvName">${esc(w.displayName || '')}</b><small>Propulsé par DelaiPay</small></div></div></div>
+        <div class="pv-body">Chaque cabinet dispose de son espace, de ses données cloisonnées et de ses utilisateurs, dans une interface DelaiPay commune.</div></div></div></div>
+      <div class="card"><div class="card-h"><div><h3>Espace</h3><div class="sub">informations d'abonnement</div></div></div><div class="card-b">
+        <dl class="kv"><dt>Adresse</dt><dd><span class="code">${esc(w.slug || '—')}.delaipay.com</span></dd><dt>Statut</dt><dd>${w.active === false ? '<span class="pill pill-sm pill-late">Désactivé</span>' : '<span class="pill pill-sm pill-ok">Actif</span>'}</dd>
+          <dt>Créé le</dt><dd>${esc(dateFr(w.createdAt))}</dd>${w.updatedAt ? `<dt>Modifié le</dt><dd>${esc(dateTimeFr(w.updatedAt))}</dd>` : ''}</dl>
+        <div class="hint" style="margin:12px 0 0">${svgI('info')}<span>L'adresse publique sera active à l'ouverture de la plateforme en ligne. Pour la changer, contactez DelaiPay.</span></div></div></div>
     </div></div>`;
   if (!isAdmin) return;
   const pick = $('#w_colorPick'), col = $('#w_color');
-  pick.oninput = () => { col.value = pick.value.toUpperCase(); $('#pvMono').style.background = pick.value; };
-  col.oninput = () => { if (/^#[0-9a-f]{6}$/i.test(col.value)) { pick.value = col.value; $('#pvMono').style.background = col.value; } };
+  pick.oninput = () => { col.value = pick.value.toUpperCase(); if (!w.logoUrl) $('#pvMono').style.background = pick.value; };
+  col.oninput = () => { if (/^#[0-9a-f]{6}$/i.test(col.value)) { pick.value = col.value; if (!w.logoUrl) $('#pvMono').style.background = col.value; } };
   $('#w_name').oninput = e => { $('#pvName').textContent = e.target.value || w.nom || ''; };
+  const lf = $('#w_logo'); if (lf) lf.onchange = async () => {
+    const f = lf.files[0]; if (!f) return;
+    if (f.size > 1024 * 1024) { toast('Le logo dépasse 1 Mo. Réduisez-le puis réessayez.', 'err', 'Logo refusé'); return; }
+    const fd = new FormData(); fd.append('file', f);
+    try { const r = await api('/workspace/logo', { method: 'POST', body: fd }); state.workspace = { ...state.workspace, ...publicPart(r.workspace) }; applyWorkspace(); toast('Logo mis à jour.', 'ok', 'Espace de travail'); renderSettings('workspace'); }
+    catch (e) { toast(e.message, 'err', 'Logo refusé'); }
+  };
+  const rm = $('#w_logo_rm'); if (rm) rm.onclick = async () => {
+    if (!await ui.confirm({ tone: 'warn', title: 'Retirer le logo ?', message: 'Le monogramme de l’espace sera affiché à la place.', confirmLabel: 'Retirer le logo' })) return;
+    try { const r = await api('/workspace/logo', { method: 'DELETE' }); state.workspace = { ...state.workspace, ...publicPart(r.workspace) }; applyWorkspace(); renderSettings('workspace'); } catch (e) { toast(e.message, 'err'); }
+  };
   $('#w_save').onclick = async () => {
     const b = $('#w_save'); b.disabled = true; b.innerHTML = '<span class="spin"></span>Enregistrement…';
     try {
-      const r = await api('/workspace', { method: 'PUT', body: { nomAffiche: $('#w_name').value, primaryColor: col.value.trim(), locale: $('#w_locale').value, devise: $('#w_devise').value, fuseauHoraire: $('#w_tz').value, contactEmail: $('#w_mail').value, contactTelephone: $('#w_tel').value } });
-      state.workspace = r.workspace; applyWorkspace(); toast("Identité de l'espace enregistrée.", 'ok', 'Espace de travail'); renderSettings('workspace');
-    } catch (e) { toast(e.message, 'err', 'Enregistrement impossible'); b.disabled = false; b.textContent = 'Enregistrer'; }
+      const r = await api('/workspace', { method: 'PUT', body: { nomAffiche: $('#w_name').value, raisonLegale: $('#w_legal').value, primaryColor: col.value.trim(), locale: $('#w_locale').value, devise: $('#w_devise').value, fuseauHoraire: $('#w_tz').value, contactEmail: $('#w_mail').value, contactTelephone: $('#w_tel').value, adresse: $('#w_adr').value } });
+      state.workspace = { ...state.workspace, ...publicPart(r.workspace) }; applyWorkspace(); toast("Identité de l'espace enregistrée.", 'ok', 'Espace de travail'); renderSettings('workspace');
+    } catch (e) { toast(e.message + ' Aucune modification n’a été enregistrée.', 'err', 'Enregistrement impossible'); b.disabled = false; b.textContent = 'Enregistrer les modifications'; }
   };
+}
+function publicPart(w) { return w || {}; }
+
+/* ---------- Utilisateurs & invitations (administrateur) ---------- */
+const ROLE_INFO = {
+  admin: ['Administrateur', 'Tout, y compris l’espace, les utilisateurs, la clôture et la réouverture des périodes.'],
+  collaborateur: ['Comptable', 'Clients, imports, conventions, réseau, doublons et exports — sans administration ni clôture.'],
+  lecture: ['Lecture seule', 'Consultation et exports uniquement ; aucune modification possible.'],
+};
+async function renderUsers(box) {
+  const d = await api('/users', { fresh: true });
+  const roleSel = (u) => `<select class="input-fld" style="height:32px;width:auto;min-width:150px" data-role="${u.id}" ${u.id === state.me.id ? 'disabled title="Vous ne pouvez pas modifier votre propre rôle"' : ''}>${Object.entries(ROLE_INFO).map(([k, [l]]) => `<option value="${k}" ${u.role === k ? 'selected' : ''}>${l}</option>`).join('')}</select>`;
+  const INV = { en_attente: ['pill-brand', 'En attente'], acceptee: ['pill-ok', 'Acceptée'], revoquee: ['pill-locked', 'Révoquée'], expiree: ['pill-warn', 'Expirée'] };
+  const pending = d.invitations.filter(i => i.statut === 'en_attente');
+  box.innerHTML = `
+  <div class="toolbar"><div class="dh" style="font-size:13px">${d.users.filter(u => u.actif).length} utilisateur(s) actif(s) · ${pending.length} invitation(s) en attente</div>
+    <button class="btn btn-primary" id="invBtn">${svgI('plus')}Inviter un utilisateur</button></div>
+  <div class="table-wrap" style="margin-bottom:18px"><table style="min-width:760px"><thead><tr><th>Utilisateur</th><th>Rôle</th><th>Statut</th><th>Dernière connexion</th><th></th></tr></thead>
+    <tbody>${d.users.map(u => `<tr><td><div class="fournisseur"><b>${esc(u.nom || '—')}${u.id === state.me.id ? ' <span class="dh">(vous)</span>' : ''}</b><small>${esc(u.email)}</small></div></td>
+      <td>${roleSel(u)}</td>
+      <td>${u.actif ? '<span class="pill pill-sm pill-ok">Actif</span>' : '<span class="pill pill-sm pill-locked">Désactivé</span>'}</td>
+      <td class="dh">${u.derniere_connexion ? esc(dateTimeFr(u.derniere_connexion)) : 'Jamais'}</td>
+      <td style="text-align:right">${u.id === state.me.id ? '' : `<button class="btn ${u.actif ? 'btn-danger-ghost' : 'btn-ghost'} btn-sm" data-toggle="${u.id}" data-actif="${u.actif ? 1 : 0}" data-nom="${esc(u.nom || u.email)}">${u.actif ? 'Désactiver' : 'Réactiver'}</button>`}</td></tr>`).join('')}</tbody></table></div>
+  <div class="grid-2">
+    <div class="card"><div class="card-h"><div><h3>Invitations</h3><div class="sub">valables 7 jours, à usage unique</div></div></div>
+      ${d.invitations.length ? `<div class="table-wrap flat" style="border:0"><table style="min-width:520px"><thead><tr><th>E-mail</th><th>Rôle</th><th>Statut</th><th>Expire</th><th></th></tr></thead><tbody>
+        ${d.invitations.map(i => { const st = INV[i.statut] || ['', i.statut]; return `<tr><td>${esc(i.email)}</td><td class="dh">${esc((ROLE_INFO[i.role] || [i.role])[0])}</td><td><span class="pill pill-sm ${st[0]}">${st[1]}</span></td><td class="dh mono">${esc(dateFr(i.expires_at))}</td>
+          <td style="text-align:right">${i.statut === 'en_attente' ? `<button class="btn btn-quiet btn-sm" data-revoke="${i.id}" data-mail="${esc(i.email)}">Révoquer</button>` : ''}</td></tr>`; }).join('')}</tbody></table></div>`
+        : `<div class="empty" style="padding:28px"><p>Aucune invitation envoyée. Invitez une collaboratrice ou un collaborateur pour partager l'espace.</p></div>`}</div>
+    <div class="card"><div class="card-h"><h3>Rôles</h3></div><div class="card-b">
+      ${Object.entries(ROLE_INFO).map(([k, [l, t]]) => `<div class="list-row" style="align-items:flex-start"><span class="pill pill-sm ${k === 'admin' ? 'pill-brand' : k === 'lecture' ? 'pill-locked' : 'pill-ok'}" style="min-width:108px;justify-content:center">${l}</span><span class="dh" style="font-size:12.5px">${t}</span></div>`).join('')}
+      <div class="hint" style="margin:10px 0 0">${svgI('lock')}<span>Chaque droit est vérifié par le serveur : masquer un bouton ne donne ni ne retire aucun accès.</span></div></div></div>
+  </div>`;
+  $('#invBtn').onclick = inviteModal;
+  $$('[data-role]').forEach(sel => sel.onchange = async () => {
+    const prev = [...sel.options].find(o => o.defaultSelected); const role = sel.value;
+    if (!await ui.confirm({ tone: role === 'admin' ? 'warn' : 'brand', title: `Changer le rôle en « ${ROLE_INFO[role][0]} » ?`, message: ROLE_INFO[role][1], confirmLabel: 'Changer le rôle' })) { if (prev) sel.value = prev.value; return; }
+    try { await api(`/users/${sel.dataset.role}`, { method: 'PATCH', body: { role } }); toast('Rôle mis à jour. Il s’applique dès la prochaine action de l’utilisateur.', 'ok', 'Utilisateurs'); renderUsers(box); }
+    catch (e) { toast(e.message, 'err', 'Modification refusée'); if (prev) sel.value = prev.value; }
+  });
+  $$('[data-toggle]').forEach(b => b.onclick = async () => {
+    const on = b.dataset.actif === '1';
+    if (!await ui.confirm({ tone: on ? 'danger' : 'brand', title: `${on ? 'Désactiver' : 'Réactiver'} ${b.dataset.nom} ?`, message: on ? 'Son accès est coupé immédiatement, y compris la session en cours. Ses actions passées restent dans le journal d’audit.' : 'L’utilisateur pourra de nouveau se connecter avec son mot de passe.', confirmLabel: on ? 'Désactiver l’accès' : 'Réactiver' })) return;
+    try { await api(`/users/${b.dataset.toggle}`, { method: 'PATCH', body: { actif: !on } }); toast(on ? 'Accès désactivé.' : 'Accès réactivé.', 'ok', 'Utilisateurs'); renderUsers(box); }
+    catch (e) { toast(e.message, 'err', 'Modification refusée'); }
+  });
+  $$('[data-revoke]').forEach(b => b.onclick = async () => {
+    if (!await ui.confirm({ tone: 'warn', title: `Révoquer l’invitation de ${b.dataset.mail} ?`, message: 'Le lien ne permettra plus de créer un accès.', confirmLabel: 'Révoquer' })) return;
+    try { await api(`/invitations/${b.dataset.revoke}`, { method: 'DELETE' }); renderUsers(box); } catch (e) { toast(e.message, 'err'); }
+  });
+}
+function inviteModal() {
+  modal(`<div class="modal-h"><h3>Inviter un utilisateur</h3><button class="x" onclick="closeOverlay()" aria-label="Fermer">${XICO}</button></div>
+  <div class="modal-b" id="invBody"><div class="form-grid">
+    <div class="full"><label class="fld-lbl" for="i_mail">Adresse e-mail professionnelle</label><input class="input-fld" id="i_mail" type="email" placeholder="prenom.nom@cabinet.ma"></div>
+    <div class="full"><label class="fld-lbl">Rôle</label>${Object.entries(ROLE_INFO).map(([k, [l, t]]) => `<label class="check" style="align-items:flex-start;padding:8px 0"><input type="radio" name="i_role" value="${k}" ${k === 'collaborateur' ? 'checked' : ''}><span><b>${l}</b><br><span class="dh" style="font-size:12px">${t}</span></span></label>`).join('')}</div>
+  </div></div>
+  <div class="modal-f" id="invFoot"><button class="btn btn-ghost" onclick="closeOverlay()">Annuler</button><button class="btn btn-primary" id="i_send">Créer l'invitation</button></div>`);
+  $('#i_send').onclick = async () => {
+    const email = $('#i_mail').value.trim(), role = ($('input[name="i_role"]:checked') || {}).value;
+    const b = $('#i_send'); b.disabled = true;
+    try {
+      const r = await api('/invitations', { method: 'POST', body: { email, role } });
+      const link = `${location.origin}/invite#t=${r.invitation.token}`;
+      $('#invBody').innerHTML = `<div class="note note-ok">${svgI('checkc')}<div><div class="note-t">Invitation créée pour ${esc(r.invitation.email)}</div>Transmettez ce lien à la personne invitée. <b>Il n'est affiché qu'une seule fois</b> et expire le ${esc(dateFr(r.invitation.expires_at))}.</div></div>
+        <label class="fld-lbl" for="i_link">Lien d'invitation</label><div class="color-row"><input class="input-fld mono" id="i_link" readonly value="${esc(link)}"><button class="btn btn-ghost" id="i_copy">Copier</button></div>
+        <div class="hint" style="margin:10px 0 0">${svgI('info')}<span>L'envoi automatique par e-mail sera proposé ultérieurement. Le lien donne accès à cet espace uniquement.</span></div>`;
+      $('#invFoot').innerHTML = `<button class="btn btn-primary" id="i_done">Terminé</button>`;
+      $('#i_copy').onclick = async () => { try { await navigator.clipboard.writeText(link); toast('Lien copié.', 'ok'); } catch (_) { $('#i_link').select(); } };
+      $('#i_done').onclick = () => { closeOverlay(); renderSettings('users'); };
+    } catch (e) { toast(e.message, 'err', 'Invitation impossible'); b.disabled = false; }
+  };
+}
+function renderSecurity(box) {
+  box.innerHTML = `<div class="grid-2">
+    <div class="card"><div class="card-h"><h3>Accès et sessions</h3></div><div class="card-b">
+      <dl class="kv"><dt>Connexion</dt><dd>E-mail et mot de passe, limitée aux comptes de cet espace sur son adresse dédiée</dd>
+        <dt>Session</dt><dd>12 heures, cookie inaccessible aux scripts de la page</dd>
+        <dt>Contrôle</dt><dd>Rôle, statut du compte et de l'espace revérifiés à chaque action</dd>
+        <dt>Tentatives</dt><dd>Connexion limitée en cas d'essais répétés</dd>
+        <dt>Mots de passe</dt><dd>10 caractères minimum, stockés hachés (jamais en clair)</dd></dl></div></div>
+    <div class="card"><div class="card-h"><h3>Traçabilité</h3></div><div class="card-b">
+      <p class="dh" style="margin:0 0 12px;font-size:13px">Connexions, imports, conventions, clôtures et réouvertures, exports, invitations et changements de rôle sont inscrits au journal d'audit de l'espace.</p>
+      <button class="btn btn-ghost" data-goto="audit">${svgI('history')}Ouvrir le journal d'audit</button>
+      <div class="hint" style="margin:14px 0 0">${svgI('info')}<span>Double authentification et connexion d'entreprise (SSO) : prévues dans une version ultérieure.</span></div></div></div></div>`;
+  $$('#setBody [data-goto]').forEach(el => el.onclick = () => setView(el.dataset.goto));
 }
 function renderAccount(box) {
   const m = state.me || {};
   box.innerHTML = `<div class="card" style="max-width:640px"><div class="card-h"><h3>Mon compte</h3></div><div class="card-b">
     <dl class="kv"><dt>Nom</dt><dd>${esc(m.nom || '—')}</dd><dt>E-mail</dt><dd>${esc(m.email || '—')}</dd><dt>Fonction</dt><dd>${esc(m.titre || '—')}</dd>
-      <dt>Rôle</dt><dd>${m.role === 'admin' ? 'Administrateur — clôture, réouverture, taux et identité de l\'espace' : 'Collaborateur'}</dd>
-      <dt>Session</dt><dd>12 heures, cookie inaccessible aux scripts</dd></dl>
-    <div class="hint" style="margin:14px 0 0">${svgI('info')}<span>La gestion des utilisateurs et des rôles fins sera proposée dans une prochaine version.</span></div></div></div>`;
+      <dt>Rôle</dt><dd>${esc(m.roleLabel || m.role)} — ${esc((ROLE_INFO[m.role] || ['', ''])[1])}</dd>
+      <dt>Espace</dt><dd>${esc((state.workspace && state.workspace.displayName) || '—')}</dd></dl>
+  </div></div>
+  <div class="card" style="max-width:640px;margin-top:14px"><div class="card-h"><div><h3>Mot de passe</h3><div class="sub">10 caractères minimum, avec au moins une lettre et un chiffre</div></div></div><div class="card-b"><div class="form-grid">
+    <div class="full"><label class="fld-lbl" for="p_cur">Mot de passe actuel</label><input class="input-fld" id="p_cur" type="password" autocomplete="current-password"></div>
+    <div><label class="fld-lbl" for="p_new">Nouveau mot de passe</label><input class="input-fld" id="p_new" type="password" autocomplete="new-password"></div>
+    <div><label class="fld-lbl" for="p_new2">Confirmation</label><input class="input-fld" id="p_new2" type="password" autocomplete="new-password"></div>
+  </div></div><div class="card-f"><button class="btn btn-primary" id="p_save">Changer le mot de passe</button></div></div>`;
+  $('#p_save').onclick = async () => {
+    const cur = $('#p_cur').value, n1 = $('#p_new').value, n2 = $('#p_new2').value;
+    if (n1 !== n2) return toast('La confirmation ne correspond pas au nouveau mot de passe.', 'err', 'Mot de passe');
+    try { await api('/me/password', { method: 'PUT', body: { current: cur, next: n1 } }); toast('Mot de passe modifié.', 'ok', 'Mon compte'); ['#p_cur', '#p_new', '#p_new2'].forEach(x => { $(x).value = ''; }); }
+    catch (e) { toast(e.message, 'err', 'Mot de passe inchangé'); }
+  };
 }
 async function renderTaux(box = $('#view')) {
   const rows = await api('/taux');
-  const isAdmin = state.me && state.me.role === 'admin';
+  const isAdmin = can('manage_rates');
   box.innerHTML = `
   <div class="toolbar"><div class="dh" style="font-size:13px;max-width:70ch">Historique du taux directeur appliqué au 1ᵉʳ mois de retard. Le taux en vigueur au mois de retard concerné est utilisé.</div>
     ${isAdmin ? `<button class="btn btn-primary" id="addTaux">${svgI('plus')}Ajouter un taux</button>` : ''}</div>

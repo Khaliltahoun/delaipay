@@ -1,0 +1,43 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="referrer" content="no-referrer">
+<title>Invitation — DelaiPay</title>
+<meta name="theme-color" content="#0C2A36">
+<link rel="icon" type="image/svg+xml" href="/assets/brand/favicon.svg">
+<link rel="icon" type="image/png" sizes="32x32" href="/assets/brand/favicon-32.png">
+<link rel="apple-touch-icon" href="/assets/brand/apple-touch-icon.png">
+<link rel="stylesheet" href="/css/app.css">
+</head>
+<body>
+<div class="login-wrap">
+  <aside class="login-aside">
+    <div class="brand2"><img src="/assets/brand/delaipay-logo-dark-bg.svg" alt="DelaiPay" width="117" height="34"></div>
+    <h2>Rejoignez l'espace de votre cabinet.</h2>
+    <p>Vous avez été invité·e à collaborer sur DelaiPay : suivi des délais de paiement, calcul des amendes 69-21 et déclarations trimestrielles.</p>
+    <div class="foot"><span>© 2026 DelaiPay</span><span>Accès réservé aux personnes invitées</span></div>
+  </aside>
+  <main class="login-main">
+    <form class="login-card" id="inviteForm" novalidate>
+      <div class="login-mobile-brand"><img src="/assets/brand/delaipay-logo-light-bg.svg" alt="DelaiPay" width="104" height="30"></div>
+      <div id="state" class="empty" style="padding:24px 0"><span class="spin"></span><p>Vérification de l'invitation…</p></div>
+      <div id="formBox" class="hidden">
+        <div class="login-ws" id="wsBox"><div class="ws-mono" id="wsMono">··</div><div><small>Espace de travail</small><b id="wsName">—</b></div></div>
+        <h1>Créer votre accès</h1>
+        <p class="lead">Invitation pour <b id="invMail">—</b> · rôle <b id="invRole">—</b></p>
+        <div id="err" class="login-err hidden" role="alert"></div>
+        <div class="fld"><label class="fld-lbl" for="nom">Nom complet</label><input class="input-fld" id="nom" autocomplete="name" maxlength="80" required></div>
+        <div class="fld"><label class="fld-lbl" for="pw">Mot de passe</label><input class="input-fld" id="pw" type="password" autocomplete="new-password" required>
+          <span class="fld-help">10 caractères minimum, avec au moins une lettre et un chiffre.</span></div>
+        <div class="fld"><label class="fld-lbl" for="pw2">Confirmer le mot de passe</label><input class="input-fld" id="pw2" type="password" autocomplete="new-password" required></div>
+        <button class="btn btn-primary login-submit" id="submitBtn" type="submit">Créer mon accès</button>
+        <div class="login-legal" id="expires"></div>
+      </div>
+    </form>
+  </main>
+</div>
+<script src="/js/invite.js"></script>
+</body>
+</html>
