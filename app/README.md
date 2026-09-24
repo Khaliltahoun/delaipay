@@ -1,5 +1,8 @@
 # DelaiPay — SaaS de suivi des délais de paiement (loi 69-21)
 
+> **Nouvelle session — commencer ici :** lire `collaboration/STATE.md`, puis `collaboration/DECISIONS.md`
+> et `collaboration/CODE_HANDOFF.md` (dossier local, non versionné). Ces fichiers font foi sur l'état du projet.
+
 Plateforme web **multi-tenant** pour cabinets d'expertise comptable marocains : import des journaux
 d'achats, **calcul automatique des retards et amendes** (loi 69-21, modèle trimestriel apporté, mois
 calendaire), **déclaration DGI**, **visa** du commissaire aux comptes / expert-comptable, alertes et

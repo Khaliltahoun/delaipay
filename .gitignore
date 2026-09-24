@@ -29,3 +29,6 @@ DELAI DE PAIEMENT/
 
 # Coordination Claude Code <-> Claude Cowork (références locales/clients)
 collaboration/
+
+# Ancienne passation locale (remplacée par collaboration/STATE.md, DECISIONS.md, CODE_HANDOFF.md)
+HANDOFF.md
