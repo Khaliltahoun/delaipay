@@ -310,6 +310,7 @@ async function renderView(name) {
     $$('#view .kpi[data-goto], #view [data-goto]').forEach(el => { if (!el.onclick) el.onclick = () => setView(el.dataset.goto); });
     applyPerms();
   } catch (e) {
+    if (e && e.code === 'client_introuvable' && seq === _renderSeq) return clientGone();
     if (seq === _renderSeq) {
       $('#view').innerHTML = `<div class="card"><div class="empty err"><div class="ic">${svgI('warn', '')}</div><h4>Impossible d'afficher cette page</h4><p>${esc(e.message)}</p>
         <div class="actions"><button class="btn btn-ghost" id="retryView">${svgI('refresh')}Réessayer</button><button class="btn btn-quiet" onclick="setView('dash')">Vue d'ensemble</button></div></div></div>`;
@@ -401,6 +402,20 @@ window.addEventListener('popstate', (e) => {
 
 /* ============================== barre client + période ============================== */
 function currentClient() { return state.clients.find(c => c.id === state.clientId) || null; }
+// Dossier sélectionné qui n'existe plus (supprimé par un collègue, base réinitialisée) : on oublie la sélection.
+function forgetClient() {
+  const gone = state.clientId; state.clientId = null; state.period = null; state._goneClient = gone || state._goneClient;
+  state.clients = state.clients.filter(c => c.id !== gone);
+  try { localStorage.removeItem('dp-client'); } catch (_) {}
+  invalidateCache(); updateSwitcherLabel();
+}
+async function clientGone() {
+  const c = state.clients.find(x => x.id === state.clientId);
+  forgetClient();
+  try { state.clients = await api('/clients', { fresh: true }); } catch (_) {}
+  toast(`${c ? `Le dossier « ${c.name} »` : 'Ce dossier'} n’existe plus : il a peut-être été supprimé par un collègue. Choisissez un autre client.`, 'warn', 'Dossier indisponible');
+  setView('clients', { replace: true });
+}
 const SCOPED = ['delais', 'conv', 'decl', 'visa', 'import', 'client', 'exports', 'fournisseurs', 'reseau'];
 
 // La période est désormais GLOBALE (bandeau) — ces fonctions sont conservées pour compat mais neutres.
@@ -471,7 +486,9 @@ function currentPeriodLocked() {
 // Charge les périodes disponibles du client courant + fixe la période globale (persistée sinon période de travail).
 async function loadPeriods(opts = {}) {
   if (!state.clientId) { state.periods = []; state.periodMeta = null; return; }
-  const data = await api(`/clients/${state.clientId}/periods`, opts.fresh ? { fresh: true } : {});
+  let data;
+  try { data = await api(`/clients/${state.clientId}/periods`, opts.fresh ? { fresh: true } : {}); }
+  catch (e) { if (e.code === 'client_introuvable') { forgetClient(); state.periods = []; state.periodMeta = null; return; } throw e; }
   state.periods = data.disponibles || data.periods || [];
   state.periodMeta = { travail: data.travail, plusFournie: data.plusFournie };
   // priorité : période mémorisée (si dispo) → sinon période de travail → sinon plus fournie → sinon latest
@@ -952,7 +969,7 @@ async function renderClients() {
       <td class="dh" data-prio="3">${esc(c.regime)}</td><td class="dh" data-prio="3">${esc(c.expert)}</td>
       <td class="num amount ${c.retards ? 'amount-late' : 'dim'}" data-rc="s" data-label="En retard">${c.retards}</td>
       <td class="num" data-rc="a">${c.amende ? money(c.amende) : '—'}</td><td class="col-act" data-rc="s">${riskPill(c.risk)}</td></tr>`).join('')
-      : `<tr><td colspan="10"><div class="empty" style="padding:32px"><div class="ic">${svgI('search', '')}</div><h4>${state.clients.length ? 'Aucun client ne correspond' : 'Aucun client pour le moment'}</h4><p>${state.clients.length ? 'Modifiez la recherche ou le filtre.' : 'Créez un premier dossier client pour commencer le suivi des délais.'}</p></div></td></tr>`;
+      : `<tr><td colspan="10"><div class="empty" style="padding:32px"><div class="ic">${svgI('search', '')}</div><h4>${state.clients.length ? 'Aucun client ne correspond' : 'Aucun client pour le moment'}</h4><p>${state.clients.length ? 'Modifiez la recherche ou le filtre.' : (can('create_client') ? 'Créez un premier dossier client pour commencer le suivi des délais.' : 'Un administrateur ou un comptable du cabinet doit créer le premier dossier client.')}</p></div></td></tr>`;
     $$('#clRows tr[data-id]').forEach(tr => tr.onclick = () => setClient(tr.dataset.id));
   };
   if ($('#newClient')) $('#newClient').onclick = clientModal;
@@ -2304,7 +2321,11 @@ async function renderAudit() {
 }
 
 /* ============================== divers ============================== */
-function noClient() { $('#view').innerHTML = emptyBox('Aucun dossier client', 'Créez un premier client dans « Clients » pour accéder à ses délais, conventions et déclarations.', 'clients', 'Ouvrir les clients', 'building'); }
+function noClient() {
+  if (state.clients.length) { $('#view').innerHTML = emptyBox('Aucun dossier sélectionné', 'Choisissez un client dans la barre supérieure ou dans la liste pour afficher ses délais, conventions et déclarations.', 'clients', 'Choisir un client', 'building'); return; }
+  if (!can('create_client')) { $('#view').innerHTML = emptyBox('Aucun dossier client pour le moment', 'Cet espace ne contient encore aucun client. Un administrateur ou un comptable du cabinet doit le créer ; il apparaîtra ici automatiquement.', null, null, 'building'); return; }
+  $('#view').innerHTML = emptyBox('Aucun dossier client', 'Créez un premier client dans « Clients » pour accéder à ses délais, conventions et déclarations.', 'clients', 'Ouvrir les clients', 'building');
+}
 function emptyBox(title, msg, gotoView, ctaLabel, icon = 'table') {
   return `<div class="card"><div class="empty"><div class="ic">${svgI(icon, '')}</div><h4>${esc(title)}</h4><p>${esc(msg)}</p>${gotoView ? `<div class="actions"><button class="btn btn-primary" onclick="setView('${gotoView}')">${esc(ctaLabel || 'Continuer')}</button></div>` : ''}</div></div>`;
 }

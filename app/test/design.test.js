@@ -109,3 +109,11 @@ test('messages d’erreur : aucune clé technique visible (« four_nom » → «
   assert.equal(plainMsg('Mapping refusé : a | b'), 'Correspondance des colonnes refusée : a — b');
   assert.equal(plainMsg('La colonne « MONTANT » du champ « date_facture »'), 'La colonne « MONTANT » du champ « Date de facture »', 'un en-tête de fichier n’est pas traduit');
 });
+
+test('P3/NEW-1 : dossier supprimé ou identifiant périmé → sélection oubliée, jamais une page bloquée', () => {
+  const js = fs.readFileSync(path.join(__dirname, '..', 'public', 'js', 'app.js'), 'utf8');
+  assert.match(js, /e\.code === 'client_introuvable' && seq === _renderSeq\) return clientGone\(\)/, 'la vue redirige vers les clients');
+  assert.match(js, /catch \(e\) \{ if \(e\.code === 'client_introuvable'\) \{ forgetClient\(\);/, 'le chargement des périodes ne bloque pas le démarrage');
+  assert.match(js, /localStorage\.removeItem\('dp-client'\)/, 'la sélection mémorisée est effacée');
+  assert.match(js, /Aucun dossier sélectionné/, 'EMPTY-1 : « aucun sélectionné » distinct de « aucun client »');
+});
