@@ -2803,39 +2803,73 @@ test('P3/NEW-4 + P3-1 + P3-12 : reprise sur l’étape annoncée, bannière seul
   assert.match(js, /window\.resumeOnboarding = function \(key\) \{ state\._obStep = key; setView\('onboarding'\); \}/);
 });
 
-test('DATA-1 + P3-10 : levée d’une anomalie « convention absente » seulement si une convention COUVRE son trimestre, période non clôturée', async () => {
-  const W = mkWorkspace('ano-a');
-  const ck = cookieOf(W.u);
-  const get = async u => (await reqJson('GET', u, { cookie: ck })).body;
+/* ============ Incrément 2.1 — C : vérification des anomalies (plus de levée automatique) ============ */
+function anoSetup(slug) {
+  const W = mkWorkspace(slug);
   const four = (nom) => { const id = uid('four'); db.prepare('INSERT INTO fournisseur (id,cabinet_id,entreprise_id,raison_sociale,delai_applicable) VALUES (?,?,?,?,120)').run(id, W.cab, W.ent, nom); return id; };
-  const ano = (f, annee, trimestre) => { const id = uid('ano'); db.prepare("INSERT INTO anomalie (id,cabinet_id,entreprise_id,type,gravite,details,entite,entite_id,statut,annee,trimestre) VALUES (?,?,?,'convention_absente','moyenne','Facture SANS convention','facture',?,'ouverte',?,?)").run(id, W.cab, W.ent, f, annee, trimestre); return id; };
-  const conv = (f, debut, fin) => db.prepare("INSERT INTO convention (id,cabinet_id,entreprise_id,fournisseur_id,delai_convenu,statut,date_debut,date_fin) VALUES (?,?,?,?,120,'valide',?,?)").run(uid('conv'), W.cab, W.ent, f, debut, fin);
-  // 1. Période ouverte + convention couvrant T1 2026 → levée, affichée comme telle, hors compteurs.
-  const f1 = four('COUVERTE'); const a1 = ano(f1, 2026, 1); conv(f1, '2025-06-01', null);
-  // 2. Période CLÔTURÉE + convention couvrante → reste active.
-  const f2 = four('CLOTUREE'); const a2 = ano(f2, 2025, 4); conv(f2, '2025-01-01', null);
-  db.prepare("INSERT INTO periode_declaration (id,cabinet_id,entreprise_id,annee,trimestre,statut) VALUES (?,?,?,2025,4,'cloturee')").run(uid('pd'), W.cab, W.ent);
-  // 3. Convention « valide » mais FINIE avant le trimestre → reste active.
-  const f3 = four('EXPIREE'); const a3 = ano(f3, 2026, 1); conv(f3, '2024-01-01', '2025-12-31');
-  // 4. Convention signée APRÈS le trimestre → reste active.
-  const f4 = four('POSTERIEURE'); const a4 = ano(f4, 2026, 1); conv(f4, '2026-07-01', null);
-  // 5. Trimestre inconnu, ou convention sans date de début → couverture non prouvée → reste active.
-  const f5 = four('SANS-TRIMESTRE'); const a5 = ano(f5, null, null); conv(f5, '2020-01-01', null);
-  const f6 = four('SANS-DATE'); const a6 = ano(f6, 2026, 1); conv(f6, null, null);
-  const list = await get('/api/anomalies');
-  const by = id => list.find(x => x.id === id);
-  assert.equal(by(a1).levee, true, '1. levée');
-  assert.equal(by(a1).levee_convention.debut, '2025-06-01');
-  for (const [id, why] of [[a2, '2. période clôturée'], [a3, '3. convention finie avant le trimestre'], [a4, '4. convention postérieure'], [a5, '5a. trimestre inconnu'], [a6, '5b. convention sans date']])
-    assert.equal(by(id).levee, false, why + ' → reste active');
-  assert.equal(list.length, 6, 'toutes les anomalies restent listées (trace)');
-  assert.equal((await get('/api/dashboard')).kpis.anomalies, 5, 'compteur = anomalies actives seulement');
-  const al = await get('/api/alerts');
-  assert.equal(al.alerts.filter(x => x.type === 'convention_absente').length, 5);
-  assert.equal(db.prepare("SELECT COUNT(*) n FROM anomalie WHERE cabinet_id=? AND statut='ouverte'").get(W.cab).n, 6, 'rien n’est modifié en base');
+  const fac = (f, numero, dfac, dpai, amende) => db.prepare("INSERT INTO facture (id,cabinet_id,entreprise_id,fournisseur_id,numero,ttc,date_facture,date_paiement,annee,trimestre,a_declarer,montant_amende) VALUES (?,?,?,?,?,1000,?,?,2026,1,?,?)")
+    .run(uid('f'), W.cab, W.ent, f, numero, dfac, dpai, amende > 0 ? 1 : 0, amende);
+  const ano = (f, numero, annee = 2026, trimestre = 1) => { const id = uid('ano'); db.prepare("INSERT INTO anomalie (id,cabinet_id,entreprise_id,type,gravite,details,entite,entite_id,statut,annee,trimestre) VALUES (?,?,?,'convention_absente','moyenne',?,'facture',?,'ouverte',?,?)").run(id, W.cab, W.ent, `Facture ${numero} : délai de 95 j (> 60 j) SANS convention enregistrée pour le fournisseur X.`, f, annee, trimestre); return id; };
+  const conv = (f, debut, fin, fichier = null, signature = null) => { const id = uid('conv'); db.prepare("INSERT INTO convention (id,cabinet_id,entreprise_id,fournisseur_id,delai_convenu,statut,date_debut,date_fin,fichier,date_signature) VALUES (?,?,?,?,120,'valide',?,?,?,?)").run(id, W.cab, W.ent, f, debut, fin, fichier, signature); return id; };
+  return { W, four, fac, ano, conv };
+}
+test('INC2.1/C : rapprochement → « à vérifier » (compté) ; cas non couverts restent ouverts ; aucune levée automatique', async () => {
+  const { W, four, fac, ano, conv } = anoSetup('ano-c1'); const ck = cookieOf(W.u);
+  const f1 = four('COUVERTE'); fac(f1, 'F1', '2026-01-10', '2026-03-20', 25.9); const a1 = ano(f1, 'F1'); conv(f1, '2025-06-01', null, null, '2026-02-01');
+  const f3 = four('EXPIREE'); const a3 = ano(f3, 'F3'); conv(f3, '2024-01-01', '2025-12-31');
+  const f4 = four('POSTERIEURE'); const a4 = ano(f4, 'F4'); conv(f4, '2026-07-01', null);
+  const f5 = four('SANS-TRIMESTRE'); const a5 = ano(f5, 'F5', null, null); conv(f5, '2020-01-01', null);
+  const f6 = four('SANS-DATE'); const a6 = ano(f6, 'F6'); conv(f6, null, null);
+  const d = (await reqJson('GET', '/api/anomalies', { cookie: ck })).body; const by = id => d.rows.find(x => x.id === id);
+  assert.equal(by(a1).statut_calc, 'a_verifier', 'rapprochement automatique = à vérifier, jamais « levée »');
+  assert.deepEqual(by(a1).convention.avertissements, ['Convention enregistrée après la fin du trimestre', 'Signée après la date de la facture', 'Justificatif manquant']);
+  assert.equal(by(a1).facture.date_paiement, '2026-03-20', 'dates de la facture fournies pour la comparaison');
+  for (const [id, sit] of [[a3, 'hors_periode'], [a4, 'hors_periode'], [a5, 'trimestre_inconnu'], [a6, 'non_datee']]) { assert.equal(by(id).statut_calc, 'ouverte'); assert.equal(by(id).situation, sit); }
+  assert.deepEqual(d.counts, { ouvertes: 4, aVerifier: 1, levees: 0, resolues: 0, aTraiter: 5 }, 'l’anomalie à vérifier reste comptée');
+});
+test('INC2.1/C : valider la levée — justificatif exigé, lecture seule et période clôturée refusées, annulation admin, audit', async () => {
+  const { W, four, fac, ano, conv } = anoSetup('ano-c2'); const ck = cookieOf(W.u);
+  const f = four('BETA'); fac(f, 'B1', '2026-01-10', '2026-03-20', 25.93); const a = ano(f, 'B1'); const c = conv(f, '2026-01-01', null, null, '2025-12-15');
+  const lever = (cookie, body = {}) => reqJson('POST', `/api/anomalies/${a}/levee`, { cookie, body });
+  const r0 = await lever(ck); assert.equal(r0.status, 409); assert.equal(r0.body.code, 'justificatif_manquant', 'sans justificatif : refusée');
+  db.prepare("UPDATE convention SET fichier='up_x.pdf' WHERE id=?").run(c);
+  const ro = addUser(W.cab, 'lecture', 'ro-lev@ex.ma'); assert.equal((await lever(cookieOf(ro))).status, 403, 'lecture seule refusée côté serveur');
+  const compta = addUser(W.cab, 'collaborateur', 'compta-lev@ex.ma');
+  const ok = await lever(cookieOf(compta), { commentaire: 'Original vérifié' }); assert.equal(ok.status, 200, 'comptable autorisé');
+  let d = (await reqJson('GET', '/api/anomalies', { cookie: ck })).body;
+  assert.equal(d.rows.find(x => x.id === a).statut_calc, 'levee'); assert.equal(d.counts.aTraiter, 0, 'levée hors compteurs'); assert.equal(d.counts.levees, 1);
+  assert.equal((await reqJson('DELETE', `/api/anomalies/${a}/levee`, { cookie: cookieOf(compta) })).status, 403, 'annulation réservée à l’admin');
+  assert.equal((await reqJson('DELETE', `/api/anomalies/${a}/levee`, { cookie: ck })).status, 200, 'annulation admin');
+  d = (await reqJson('GET', '/api/anomalies', { cookie: ck })).body; assert.equal(d.rows.find(x => x.id === a).statut_calc, 'a_verifier'); assert.equal(d.counts.aTraiter, 1);
+  const logs = db.prepare("SELECT action, details, user_id FROM audit_log WHERE cabinet_id=? AND action IN ('levee_anomalie','annulation_levee') ORDER BY rowid").all(W.cab);
+  assert.deepEqual(logs.map(l => l.action), ['levee_anomalie', 'annulation_levee']);
+  assert.equal(logs[0].user_id, compta); assert.match(logs[0].details, /"facture":"B1".*"commentaire":"Original vérifié"/);
+  // Période clôturée : lecture seule (ni validation ni annulation).
+  db.prepare("INSERT INTO periode_declaration (id,cabinet_id,entreprise_id,annee,trimestre,statut) VALUES (?,?,?,2026,1,'cloturee')").run(uid('pd'), W.cab, W.ent);
+  const rc = await lever(ck); assert.equal(rc.status, 409); assert.equal(rc.body.code, 'periode_verrouillee');
+  assert.equal((await reqJson('GET', '/api/anomalies', { cookie: ck })).body.counts.aTraiter, 1, 'clôturée + couverte : reste à traiter');
+});
+test('INC2.1/A : un seul compteur pour tous les écrans, y compris après clôture et réouverture', async () => {
+  const { W, four, fac, ano, conv } = anoSetup('ano-a1'); const ck = cookieOf(W.u);
+  importer.importWorkbook(demoFixture.demoWorkbookBuffer(), { cabinetId: W.cab, entrepriseId: W.ent, sourceName: 'x', periode: { annee: 2026, trimestre: 1 } });
+  const f = four('ZETA'); fac(f, 'Z1', '2026-01-10', '2026-03-20', 10); ano(f, 'Z1'); conv(f, '2026-01-01', null, 'up_z.pdf');
+  const ANO_TYPES = new Set(['convention', 'echeance']);
+  const all = async () => {
+    const g = u => reqJson('GET', u, { cookie: ck }).then(r => r.body);
+    const [dash, list, counts, alerts, summary] = await Promise.all([g('/api/dashboard?annee=2026&trimestre=1'), g('/api/anomalies'), g('/api/anomalies/counts'), g('/api/alerts'), g(`/api/clients/${W.ent}/summary?annee=2026&trimestre=1`)]);
+    assert.equal(alerts.count, alerts.alerts.length, 'Alertes : en-tête = lignes (aucune troncature)');
+    return [dash.kpis.anomalies, list.counts.aTraiter, counts.aTraiter, alerts.alerts.filter(a => !ANO_TYPES.has(a.type)).length, summary.kpis.anomalies];
+  };
+  const v0 = await all(); assert.ok(v0[0] > 30, 'plus de 30 anomalies (l’ancienne troncature)'); assert.ok(v0.every(x => x === v0[0]), `écrans alignés : ${v0}`);
+  assert.equal((await reqJson('POST', `/api/clients/${W.ent}/periods/2026/1/close`, { cookie: ck, body: {} })).status, 200);
+  const v1 = await all(); assert.ok(v1.every(x => x === v1[0]), `après clôture : ${v1}`);
+  assert.equal((await reqJson('POST', `/api/clients/${W.ent}/periods/2026/1/reopen`, { cookie: ck, body: { motif: 'test' } })).status, 200);
+  const v2 = await all(); assert.ok(v2.every(x => x === v2[0]), `après réouverture : ${v2}`);
+});
+test('P3-10 : pas d’échéance annoncée sans dossier client', async () => {
   const V = mkWorkspace('ano-vide'); db.prepare('DELETE FROM entreprise WHERE cabinet_id=?').run(V.cab);
   const av = (await reqJson('GET', '/api/alerts', { cookie: cookieOf(V.u) })).body;
-  assert.equal(av.alerts.filter(a => a.type === 'echeance').length, 0, 'P3-10 : pas d’échéance annoncée sans dossier client');
+  assert.equal(av.alerts.filter(a => a.type === 'echeance').length, 0);
 });
 
 /* ============ Incrément 2.1 — E : contrôle hors trimestre = critère du moteur (date de paiement) ============ */

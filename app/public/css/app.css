@@ -417,6 +417,15 @@ td.dim{color:var(--faint)}
 .role-sel{height:32px;width:auto;min-width:150px}
 /* Anomalie levée automatiquement : visible, en retrait, hors compteurs */
 .row-focus td{background:var(--brand-50)!important}
+.sev.muted{background:var(--surface-3);color:var(--muted);border-color:var(--line)}
+.sev.info{background:var(--info-soft);color:var(--info);border-color:var(--info-line);margin-left:4px}
+.alert-row.is-verif{background:color-mix(in srgb,var(--info-soft) 45%,transparent)}
+.ano-facts{display:grid;grid-template-columns:repeat(auto-fill,minmax(120px,1fr));gap:6px 12px;margin:8px 0 4px;padding:8px 10px;border:1px solid var(--line-soft);border-radius:var(--r-md);background:var(--surface);font-size:var(--fs-sm)}
+.ano-facts div{display:flex;flex-direction:column}.ano-facts span{color:var(--muted);font-size:var(--fs-xs)}.ano-facts b{font-variant-numeric:tabular-nums}
+.ano-warns{display:flex;flex-wrap:wrap;gap:6px;margin:4px 0}
+.ano-keep{color:var(--st-penalty)}.ano-lock{color:var(--st-closed)}.ano-sit{color:var(--ink-2)}
+.ano-keep svg,.ano-lock svg,.levee-m svg{width:14px;height:14px;vertical-align:-2px;margin-right:4px}
+.al-acts{display:flex;flex-direction:column;gap:6px;align-items:flex-end}
 .alert-row.is-levee{background:var(--surface-2)}
 .alert-row.is-levee .t,.alert-row.is-levee .m{color:var(--muted)}
 .alert-row .levee-m{color:var(--ok);margin-top:2px}

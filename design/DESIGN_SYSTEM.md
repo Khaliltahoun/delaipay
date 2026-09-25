@@ -100,6 +100,13 @@ Barre latérale 248 px, groupes **métier** non repliables :
 - **Déclarations** — Déclaration DGI · Visa · Exports
 - **Paramètres** — Paramètres · Journal d'audit
 
+**Badges de la barre latérale** (relus sans cache à chaque changement de vue) :
+- **Anomalies** = anomalies **à traiter** du cabinet (ouvertes + « couvertes par une convention, à vérifier »), calculées par
+  `src/anomalies.js` — le même nombre que la vue d'ensemble, la page Anomalies et la synthèse du dossier (qui porte sur son dossier).
+- **Alertes** = nombre de lignes de la page Alertes : conventions manquantes + anomalies à traiter + échéances déclaratives
+  (toutes listées, « Voir plus » par 50, total toujours affiché).
+- Une anomalie levée (validée par un utilisateur) ou résolue n'est comptée nulle part ; elle reste listée, en retrait.
+
 En tête : carte d'espace (logo client ou monogramme, nom, « Propulsé par DelaiPay »). En pied : utilisateur, **rôle effectif**.
 Barre supérieure : fil d'Ariane, dossier actif, période active (avec statut), recherche, alertes, menu utilisateur. En mobile : tiroir de
 navigation plein-hauteur avec les mêmes groupes, barre supérieure réduite (menu, dossier, période, avatar).
