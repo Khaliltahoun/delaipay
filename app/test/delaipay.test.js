@@ -2783,3 +2783,22 @@ test('P3/NEW-3 : cookie d’un utilisateur qui n’existe plus → « session ex
   const d = await reqJson('GET', '/api/me', { cookie: cookieOf(A.u) });
   assert.equal(d.body.code, 'user_inactive', 'un compte réellement désactivé reste signalé comme tel');
 });
+
+test('P3/NEW-4 + P3-1 + P3-12 : reprise sur l’étape annoncée, bannière seulement pour un parcours entamé, étape 1 cochée', async () => {
+  const W = mkWorkspace('onb-r');
+  db.prepare('DELETE FROM entreprise WHERE cabinet_id=?').run(W.cab);
+  let s = (await reqJson('GET', '/api/onboarding', { cookie: cookieOf(W.u) })).body;
+  assert.equal(s.started, false, 'espace neuf : parcours non entamé');
+  assert.equal(s.steps.find(x => x.key === 'bienvenue').status, 'todo');
+  s = (await reqJson('PUT', '/api/onboarding', { cookie: cookieOf(W.u), body: { current: 'cabinet' } })).body;
+  assert.equal(s.started, true);
+  assert.equal(s.steps.find(x => x.key === 'bienvenue').status, 'done', 'P3-12 : « Bienvenue » cochée dès qu’on la quitte');
+  // Espace exploité avant l'onboarding (factures présentes, parcours jamais entamé) : pas de bannière « à configurer ».
+  const H = mkWorkspace('onb-h');
+  const h = (await reqJson('GET', '/api/onboarding', { cookie: cookieOf(H.u) })).body;
+  assert.equal(h.started, false);
+  const js = fs.readFileSync(path.join(__dirname, '..', 'public', 'js', 'app.js'), 'utf8');
+  assert.match(js, /!ob\.started && ob\.facts && ob\.facts\.factures > 0\)\) return ''/, 'P3-1 : bannière masquée pour un espace déjà exploité');
+  assert.match(js, /onclick="resumeOnboarding\('\$\{esc\(next\.key\)\}'\)"/, 'NEW-4 : le bouton ouvre l’étape annoncée');
+  assert.match(js, /window\.resumeOnboarding = function \(key\) \{ state\._obStep = key; setView\('onboarding'\); \}/);
+});

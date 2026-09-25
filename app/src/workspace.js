@@ -139,6 +139,8 @@ function onboardingState(cabinetId) {
   let saved = {}; try { saved = JSON.parse(cab.onboarding_json || '{}') || {}; } catch (_) {}
   const f = onboardingFacts(cabinetId);
   const auto = {
+    // P3-12 : « Bienvenue » est terminée dès que l'utilisateur est passé à une autre étape (ou qu'un client existe).
+    bienvenue: (!!saved.current && saved.current !== 'bienvenue') || f.clients > 0,
     cabinet: f.cabinetConfigure, client: f.clients > 0, factures: f.factures > 0, conventions: f.conventions > 0,
     reseau: f.factures > 0 && f.reseauPropose === 0,
   };
@@ -149,7 +151,10 @@ function onboardingState(cabinetId) {
   const required = steps.filter(s => !s.optional && !['bienvenue', 'pret'].includes(s.key));
   const complete = !!saved.completedAt;
   const progress = Math.round(100 * steps.filter(s => s.status !== 'todo' && s.key !== 'pret').length / (steps.length - 1));
-  return { steps, facts: f, periode: saved.periode || null, current: saved.current || 'bienvenue', dismissed: !!saved.dismissed, completedAt: saved.completedAt || null,
+  // Parcours réellement entamé par l'équipe (étape visitée, validée ou trimestre choisi) — distingue un espace neuf
+  // d'un espace déjà exploité avant l'existence de l'onboarding (P3-1).
+  const started = !!(saved.current || saved.periode || Object.keys(saved.done || {}).length);
+  return { steps, facts: f, periode: saved.periode || null, current: saved.current || 'bienvenue', dismissed: !!saved.dismissed, completedAt: saved.completedAt || null, started,
     complete, readyToFinish: required.every(s => s.status === 'done'), progress };
 }
 function updateOnboarding(cabinetId, userId, patch) {

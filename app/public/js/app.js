@@ -773,7 +773,8 @@ async function renderDash() {
 }
 // Bandeau de reprise de la configuration (espace non terminé) — progression réelle.
 function onboardingBanner(ob) {
-  if (!ob || ob.complete || !can('onboarding')) return '';
+  // P3-1 : un espace qui a déjà des factures n'est plus « en configuration » (l'onboarding reste accessible).
+  if (!ob || ob.complete || ob.dismissed || !can('onboarding') || (!ob.started && ob.facts && ob.facts.factures > 0)) return '';
   const next = ob.steps.find(x => x.status === 'todo' && x.key !== 'bienvenue') || ob.steps[ob.steps.length - 1];
   const ws = (state.workspace && state.workspace.displayName) || '';
   return `<div class="card ob-banner" style="margin-bottom:14px"><div class="card-b" style="display:flex;gap:18px;align-items:center;flex-wrap:wrap">
@@ -781,9 +782,11 @@ function onboardingBanner(ob) {
     <div style="flex:1;min-width:240px"><h3 style="font-size:var(--fs-lg);margin-bottom:2px">${ob.facts.clients ? 'Terminez la configuration de ' : 'Bienvenue dans l’espace '}${esc(ws)}</h3>
       <div class="dh" style="font-size:var(--fs-sm)">Prochaine étape : <b style="color:var(--ink)">${esc(next.label)}</b> · ${ob.progress} % terminé</div>
       <div class="meter" style="margin-top:8px;max-width:360px"><i style="width:${ob.progress}%;background:var(--brand-500)"></i></div></div>
-    <div class="actions"><button class="btn btn-primary" data-goto="onboarding">${ob.progress ? 'Reprendre' : 'Commencer'} la configuration</button></div>
+    <div class="actions"><button class="btn btn-primary" onclick="resumeOnboarding('${esc(next.key)}')">${ob.progress ? 'Reprendre' : 'Commencer'} la configuration</button></div>
   </div></div>`;
 }
+// NEW-4 : « Reprendre » ouvre l'étape annoncée par la bannière (la prochaine étape incomplète), pas la dernière visitée.
+window.resumeOnboarding = function (key) { state._obStep = key; setView('onboarding'); };
 /* ============================== ONBOARDING (8 étapes, capacités réelles uniquement) ============================== */
 const OB_ICON = { bienvenue: 'bolt', cabinet: 'building', client: 'users', factures: 'up', conventions: 'doc', reseau: 'info', periode: 'cal', pret: 'checkc' };
 async function renderOnboarding(stepKey) {
@@ -814,7 +817,7 @@ async function renderOnboarding(stepKey) {
     ${st.status === 'done' ? doneNote('Identité de l’espace renseignée. Vous pouvez l’ajuster à tout moment dans Paramètres.') : ''}
     <div class="form-grid" style="max-width:640px">
       <div><label class="fld-lbl" for="ob_name">Nom de l'espace</label><input class="input-fld" id="ob_name" value="${esc(ws.nomAffiche || ws.displayName || '')}"></div>
-      <div><label class="fld-lbl" for="ob_legal">Raison sociale</label><input class="input-fld" id="ob_legal" value="${esc(ws.raisonLegale || '')}" placeholder="Ex. Premium Conseil SARL"></div>
+      <div><label class="fld-lbl" for="ob_legal">Raison sociale</label><input class="input-fld" id="ob_legal" value="${esc(ws.raisonLegale || '')}" placeholder="Ex. Cabinet Exemple SARL"></div>
       <div><label class="fld-lbl" for="ob_mail">E-mail de contact</label><input class="input-fld" id="ob_mail" type="email" value="${esc(ws.contactEmail || '')}"></div>
       <div><label class="fld-lbl" for="ob_logo">Logo (optionnel)</label><input class="input-fld" id="ob_logo" type="file" accept="image/png,image/jpeg,image/webp"><span class="fld-help">PNG, JPEG ou WebP, 1 Mo maximum.</span></div>
     </div>
@@ -2062,7 +2065,7 @@ async function renderWorkspace(box) {
         <div class="card-b"><div class="form-grid">
           <div><label class="fld-lbl" for="w_name">Nom de l'espace</label><input class="input-fld" id="w_name" maxlength="80" value="${esc(w.nomAffiche || '')}" placeholder="${esc(w.nom || '')}" ${ro}>
             <span class="fld-help">Vide : « ${esc(w.nom || '')} » est utilisé.</span></div>
-          <div><label class="fld-lbl" for="w_legal">Raison sociale</label><input class="input-fld" id="w_legal" maxlength="160" value="${esc(w.raisonLegale || '')}" placeholder="Ex. Premium Conseil SARL" ${ro}></div>
+          <div><label class="fld-lbl" for="w_legal">Raison sociale</label><input class="input-fld" id="w_legal" maxlength="160" value="${esc(w.raisonLegale || '')}" placeholder="Ex. Cabinet Exemple SARL" ${ro}></div>
           <div class="full"><label class="fld-lbl">Logo</label>
             <div style="display:flex;gap:14px;align-items:center;flex-wrap:wrap">
               <div class="logo-proof"><span class="lp light">${monoHtml('#fff')}</span><span class="lp dark">${monoHtml('#0C2A36')}</span></div>
