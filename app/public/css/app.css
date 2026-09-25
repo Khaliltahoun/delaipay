@@ -419,6 +419,7 @@ table.dense thead th{letter-spacing:.04em}
 td.amount{font-weight:var(--fw-semibold)}
 td.dim{color:var(--faint)}
 .mb-18{margin-bottom:18px}
+.role-sel{height:32px;width:auto;min-width:150px}
 td.audit-det{max-width:420px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .nowrap{white-space:nowrap}
 .row-del{color:var(--muted)}

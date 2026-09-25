@@ -6,6 +6,8 @@ const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&a
 (function theme() { let t = null; try { t = localStorage.getItem('dp-theme'); } catch (_) {} if (!t && matchMedia('(prefers-color-scheme: dark)').matches) t = 'dark'; document.documentElement.setAttribute('data-theme', t || 'light'); })();
 const token = (new URLSearchParams(location.hash.slice(1))).get('t') || '';
 try { history.replaceState(null, '', location.pathname); } catch (_) {}
+// P3-13 : un second lien ouvert dans le même onglet ne change que le fragment — on relit le nouveau jeton.
+window.addEventListener('hashchange', () => { if (/[#&]t=/.test(location.hash)) location.reload(); });
 const post = (url, body) => fetch(url, { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
   .then(async r => ({ ok: r.ok, status: r.status, data: await r.json().catch(() => ({})) }));
 function fail(title, msg) {

@@ -1036,12 +1036,18 @@ async function renderClientOverview() {
   renderPeriodCard(s.periode);
   if ($('#editClient')) $('#editClient').onclick = () => editClientModal(e);
   if ($('#delClient')) $('#delClient').onclick = () => {
-    modal(`<div class="modal-h"><h3>Supprimer le client</h3><button class="x" onclick="closeOverlay()">${XICO}</button></div>
-    <div class="modal-b"><p style="margin:0 0 8px">Confirmez-vous la suppression de <b>${esc(e.raison_sociale)}</b> ?</p>
-      <p class="dh" style="margin:0">Cette action supprime définitivement le client et toutes ses données associées (factures, fournisseurs, conventions, déclarations, visas). Elle est irréversible.</p></div>
+    modal(`<div class="modal-h"><h3>Supprimer définitivement ${esc(e.raison_sociale)} ?</h3><button class="x" onclick="closeOverlay()">${XICO}</button></div>
+    <div class="modal-b"><div class="note note-danger">${svgI('warn')}<div><div class="note-t">Action irréversible</div>Le dossier et toutes ses données seront supprimés :</div></div>
+      <div class="dlg-facts"><div><span>Fournisseurs</span><b>${k.fournisseurs}</b></div><div><span>Conventions valides</span><b>${k.conventions}</b></div><div><span>Factures, déclarations, visas, fichiers</span><b>toutes les périodes</b></div></div>
+      <label class="fld-lbl" for="delName" style="margin-top:12px">Pour confirmer, saisissez le nom du client : <b>${esc(e.raison_sociale)}</b></label>
+      <input class="input-fld" id="delName" autocomplete="off" spellcheck="false"></div>
     <div class="modal-f"><button class="btn btn-ghost" onclick="closeOverlay()">Annuler</button>
-      <button class="btn btn-danger" id="delOk">Supprimer définitivement</button></div>`, 'modal-sm');
+      <button class="btn btn-danger" id="delOk" disabled>Supprimer définitivement</button></div>`, 'modal-sm');
+    const norm = v => String(v || '').trim().replace(/\s+/g, ' ').toUpperCase();
+    $('#delName').oninput = ev => { $('#delOk').disabled = norm(ev.target.value) !== norm(e.raison_sociale); };
+    setTimeout(() => { const i = $('#delName'); if (i) i.focus(); }, 30);
     $('#delOk').onclick = async () => {
+      if (norm($('#delName').value) !== norm(e.raison_sociale)) return;
       try {
         await api(`/clients/${e.id}`, { method: 'DELETE' });
         closeOverlay(); toast('Client supprimé.', 'ok');
@@ -1582,7 +1588,7 @@ function wizPreviewHtml() {
   const mism = s.autrePeriode > 0;
   const val = pv.validation || { ok: true, errors: [], warnings: [] };
   const blocked = !val.ok;
-  const rowsHtml = (arr, cls) => (arr || []).slice(0, 8).map(l => `<tr class="${cls}"><td class="mono"><b>Ligne ${l.ligne}</b></td><td>${esc(l.statut)}</td><td>${esc(l.motif || (l.avertissements || []).join(', ') || '—')}</td><td class="dh">${esc((l.brut || []).filter(Boolean).slice(0, 5).join(' · ')).slice(0, 90)}</td></tr>`).join('');
+  const rowsHtml = (arr, cls) => (arr || []).slice(0, 8).map(l => `<tr class="${cls}"><td class="mono"><b>Ligne ${l.ligne}</b></td><td>${esc(LIGNE_STATUT_FR[l.statut] || l.statut)}</td><td>${esc(l.motif || (l.avertissements || []).join(', ') || '—')}</td><td class="dh">${esc((l.brut || []).filter(Boolean).slice(0, 5).join(' · ')).slice(0, 90)}</td></tr>`).join('');
   const valBox = blocked
     ? `<div class="note note-danger" role="alert">${svgI('stop')}<div><div class="note-t">Correspondance incohérente — import bloqué</div>
         La protection anti-corruption a détecté des colonnes qui ne correspondent pas aux champs attendus. Aucune donnée ne peut être enregistrée tant que ce n'est pas corrigé.
@@ -1729,6 +1735,7 @@ async function renderDocs() {
 
 /* ============================== CONVENTIONS ============================== */
 // Libellés lisibles (jamais de jargon technique côté experte-comptable).
+const LIGNE_STATUT_FR = { valide: 'Valide', rejetee: 'Rejetée', ignoree: 'Ignorée', a_verifier: 'À vérifier', doublon: 'Doublon potentiel', conflit: 'Conflit à vérifier', hors_periode: 'Hors période' };
 const CONV_STATUT_LABEL = { creee: 'Convention créée', doublon: 'Doublon (déjà présente)', conflit: 'Conflit à vérifier', sans_convention: 'Sans convention', a_verifier: 'À vérifier', rejetee: 'Rejetée', ignoree: 'Ignorée' };
 async function renderConv() {
   if (!state.clientId) return noClient();
@@ -2135,7 +2142,7 @@ const ROLE_INFO = {
 };
 async function renderUsers(box) {
   const d = await api('/users', { fresh: true });
-  const roleSel = (u) => `<select class="input-fld" style="height:32px;width:auto;min-width:150px" data-role="${u.id}" ${u.id === state.me.id ? 'disabled title="Vous ne pouvez pas modifier votre propre rôle"' : ''}>${Object.entries(ROLE_INFO).map(([k, [l]]) => `<option value="${k}" ${u.role === k ? 'selected' : ''}>${l}</option>`).join('')}</select>`;
+  const roleSel = (u) => `<select class="input-fld role-sel" data-role="${u.id}" data-nom="${esc(u.nom || u.email)}" ${u.id === state.me.id ? 'disabled title="Vous ne pouvez pas modifier votre propre rôle"' : ''}>${Object.entries(ROLE_INFO).map(([k, [l]]) => `<option value="${k}" ${u.role === k ? 'selected' : ''}>${l}</option>`).join('')}</select>`;
   const INV = { en_attente: ['pill-brand', 'En attente'], acceptee: ['pill-ok', 'Acceptée'], revoquee: ['pill-locked', 'Révoquée'], expiree: ['pill-warn', 'Expirée'] };
   const pending = d.invitations.filter(i => i.statut === 'en_attente');
   box.innerHTML = `
@@ -2160,7 +2167,7 @@ async function renderUsers(box) {
   $('#invBtn').onclick = inviteModal;
   $$('[data-role]').forEach(sel => sel.onchange = async () => {
     const prev = [...sel.options].find(o => o.defaultSelected); const role = sel.value;
-    if (!await ui.confirm({ tone: role === 'admin' ? 'warn' : 'brand', title: `Changer le rôle en « ${ROLE_INFO[role][0]} » ?`, message: ROLE_INFO[role][1], confirmLabel: 'Changer le rôle' })) { if (prev) sel.value = prev.value; return; }
+    if (!await ui.confirm({ tone: role === 'admin' ? 'warn' : 'brand', title: `Changer le rôle de ${sel.dataset.nom || 'cet utilisateur'} en « ${ROLE_INFO[role][0]} » ?`, message: ROLE_INFO[role][1], confirmLabel: 'Changer le rôle' })) { if (prev) sel.value = prev.value; return; }
     try { await api(`/users/${sel.dataset.role}`, { method: 'PATCH', body: { role } }); toast('Rôle mis à jour. Il s’applique dès la prochaine action de l’utilisateur.', 'ok', 'Utilisateurs'); renderUsers(box); }
     catch (e) { toast(e.message, 'err', 'Modification refusée'); if (prev) sel.value = prev.value; }
   });

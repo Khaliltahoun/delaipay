@@ -75,6 +75,9 @@ const NOT_FOUND = {
   modele: 'Ce modèle de correspondance n’existe plus. Choisissez-en un autre ou enregistrez-le à nouveau.',
   fichier: 'Ce fichier n’est plus disponible (il a peut-être été supprimé). Actualisez la liste des fichiers.',
 };
+/* DATA-1 : une anomalie « convention absente » ne vaut que tant que le fournisseur n'a pas de convention valide.
+ * Filtre de LECTURE (rien n'est supprimé ni modifié en base) appliqué à toutes les listes et à tous les compteurs. */
+const ANO_ACTIVE = `NOT (a.type='convention_absente' AND EXISTS (SELECT 1 FROM convention cv WHERE cv.fournisseur_id=a.entite_id AND cv.statut='valide'))`;
 function notFound(res, what) { return res.status(404).json({ error: NOT_FOUND[what], code: what + '_introuvable' }); }
 // Téléchargements (réponse texte) : même message, sans JSON.
 function notFoundText(res, what) { return res.status(404).type('text/plain; charset=utf-8').send(NOT_FOUND[what]); }
@@ -297,6 +300,9 @@ router.post('/invitations/accept', inviteLimiter, (req, res) => {
   const b = req.body || {};
   try {
     const u = workspace.acceptInvitation(String(b.token || ''), hostCabinetId(req), { nom: b.nom, password: b.password });
+    // Connexion automatique après acceptation : c'est une vraie première connexion (P3-15).
+    try { db.prepare(`UPDATE utilisateur SET derniere_connexion=datetime('now') WHERE id=?`).run(u.id); } catch (_) {}
+    audit(u.cabinet_id, u.id, 'login', 'utilisateur', { email: u.email, motif: 'invitation acceptée' }, req.ip);
     auth.setAuthCookie(res, auth.signToken(u));
     res.json({ ok: true, user: publicUser(u) });
   } catch (e) { res.status(e.status || 400).json({ error: e.message }); }
@@ -460,7 +466,7 @@ router.get('/dashboard', (req, res) => {
   const paidAgg = db.prepare(`SELECT COUNT(*) paid, COALESCE(AVG(delai_ecoule),0) dso FROM facture WHERE cabinet_id=? AND annee=? AND trimestre=? AND date_paiement IS NOT NULL`).get(cid, per.annee, per.trimestre);
   const retMoy = db.prepare(`SELECT COALESCE(AVG(retard_jours),0) r FROM facture WHERE cabinet_id=? AND annee=? AND trimestre=? AND a_declarer=1`).get(cid, per.annee, per.trimestre).r;
   const tauxConf = paidAgg.paid > 0 ? Math.round(((paidAgg.paid - agg.nRet) / paidAgg.paid) * 1000) / 10 : 100;
-  const anomalies = db.prepare(`SELECT COUNT(*) n FROM anomalie WHERE cabinet_id=? AND statut='ouverte'`).get(cid).n;
+  const anomalies = db.prepare(`SELECT COUNT(*) n FROM anomalie a WHERE a.cabinet_id=? AND a.statut='ouverte' AND ${ANO_ACTIVE}`).get(cid).n;
   const seg = { ok: 0, app: 0, orange: 0, red: 0, dred: 0 };
   db.prepare(`SELECT couleur_risque c, COUNT(*) n FROM facture WHERE cabinet_id=? AND annee=? AND trimestre=? GROUP BY couleur_risque`).all(cid, per.annee, per.trimestre).forEach(r => { if (seg[r.c] != null) seg[r.c] = r.n; });
   const topFour = db.prepare(`SELECT fo.raison_sociale name, fo.ice, COALESCE(SUM(f.montant_amende),0) amende, COUNT(f.id) nb
@@ -634,7 +640,7 @@ router.get('/clients/:id/periods/:annee/:trimestre/summary', (req, res) => {
       FROM facture WHERE entreprise_id=? AND annee=? AND trimestre=?`).get(e.id, p.annee, p.trimestre);
   const docs = db.prepare('SELECT COUNT(*) n FROM document WHERE entreprise_id=? AND annee=? AND trimestre=?').get(e.id, p.annee, p.trimestre).n;
   const lots = db.prepare('SELECT COUNT(*) n FROM import_lot WHERE entreprise_id=? AND annee=? AND trimestre=? AND statut=?').get(e.id, p.annee, p.trimestre, 'confirme').n;
-  const anomalies = db.prepare(`SELECT COUNT(*) n FROM anomalie WHERE entreprise_id=? AND annee=? AND trimestre=? AND statut='ouverte'`).get(e.id, p.annee, p.trimestre).n;
+  const anomalies = db.prepare(`SELECT COUNT(*) n FROM anomalie a WHERE a.entreprise_id=? AND a.annee=? AND a.trimestre=? AND a.statut='ouverte' AND ${ANO_ACTIVE}`).get(e.id, p.annee, p.trimestre).n;
   res.json({
     periode: { annee: p.annee, trimestre: p.trimestre, ...info,
       statut: pr.statut, statutLabel: periode.STATUT_LABELS[pr.statut], verrouillee: periode.isLocked(pr.statut),
@@ -1715,12 +1721,16 @@ router.get('/alerts', (req, res) => {
   for (const r of cm) out.push({ type: 'convention', severite: 'm', icon: 'orange', titre: 'Convention manquante', message: `${r.four} — délai 120 j appliqué sans convention en GED (${r.ent}).`, date: 'Détecté à l\'import' });
   // anomalies de données
   const anos = db.prepare(`SELECT a.*, e.raison_sociale ent FROM anomalie a LEFT JOIN entreprise e ON e.id=a.entreprise_id
-     WHERE a.cabinet_id=? AND a.statut='ouverte' ORDER BY a.created_at DESC LIMIT 30`).all(cid);
+     WHERE a.cabinet_id=? AND a.statut='ouverte' AND ${ANO_ACTIVE} ORDER BY a.created_at DESC LIMIT 30`).all(cid);
+  const anosTotal = db.prepare(`SELECT COUNT(*) n FROM anomalie a WHERE a.cabinet_id=? AND a.statut='ouverte' AND ${ANO_ACTIVE}`).get(cid).n;
   for (const a of anos) out.push({ type: a.type, severite: a.gravite === 'haute' ? 'h' : (a.gravite === 'moyenne' ? 'm' : 'l'),
     icon: a.gravite === 'haute' ? 'red' : 'yellow', titre: anomalieLabel(a.type), message: a.details, date: a.created_at });
   // échéances
-  for (const d of nextDeadlines().slice(0, 2)) out.push({ type: 'echeance', severite: d.days <= 15 ? 'h' : 'm', icon: d.days <= 15 ? 'dred' : 'orange', titre: 'Échéance de déclaration', message: `${d.label} — dépôt SIMPL le ${d.day}/${monNum(d.mon)}.`, date: d.cd });
-  res.json({ count: out.length, alerts: out });
+  // P3-10 : aucune échéance déclarative à annoncer tant que l'espace n'a aucun dossier client.
+  const hasClients = !!db.prepare('SELECT 1 FROM entreprise WHERE cabinet_id=? LIMIT 1').get(cid);
+  if (hasClients) for (const d of nextDeadlines().slice(0, 2)) out.push({ type: 'echeance', severite: d.days <= 15 ? 'h' : 'm', icon: d.days <= 15 ? 'dred' : 'orange', titre: 'Échéance de déclaration', message: `${d.label} — dépôt SIMPL le ${d.day}/${monNum(d.mon)}.`, date: d.cd });
+  // Le compteur reflète le total réel (la liste, elle, est bornée) : même nombre d'anomalies que la vue d'ensemble.
+  res.json({ count: out.length - anos.length + anosTotal, alerts: out });
 });
 function anomalieLabel(t) { return ({ date_incoherente: 'Date incohérente', date_future: 'Date dans le futur', date_manquante: 'Date manquante', montant_incoherent: 'Montant incohérent', doublon: 'Doublon détecté', convention_absente: 'Convention absente (délai > 60 j)' })[t] || 'Anomalie'; }
 function monNum(m) { return ({ Avr: '04', Jul: '07', Oct: '10', Jan: '01' })[m] || m; }
@@ -1777,7 +1787,7 @@ router.get('/portfolio/conventions', (req, res) => {
 });
 router.get('/anomalies', (req, res) => {
   const rows = db.prepare(`SELECT a.*, e.raison_sociale ent, e.id ent_id FROM anomalie a LEFT JOIN entreprise e ON e.id=a.entreprise_id
-     WHERE a.cabinet_id=? ORDER BY (a.statut='ouverte') DESC, a.created_at DESC LIMIT 300`).all(req.cabinetId);
+     WHERE a.cabinet_id=? AND (a.statut<>'ouverte' OR ${ANO_ACTIVE}) ORDER BY (a.statut='ouverte') DESC, a.created_at DESC LIMIT 300`).all(req.cabinetId);
   res.json(rows);
 });
 router.post('/anomalies/:id/resolve', (req, res) => {

@@ -2802,3 +2802,26 @@ test('P3/NEW-4 + P3-1 + P3-12 : reprise sur l’étape annoncée, bannière seul
   assert.match(js, /onclick="resumeOnboarding\('\$\{esc\(next\.key\)\}'\)"/, 'NEW-4 : le bouton ouvre l’étape annoncée');
   assert.match(js, /window\.resumeOnboarding = function \(key\) \{ state\._obStep = key; setView\('onboarding'\); \}/);
 });
+
+test('DATA-1 + P3-10 : anomalie « convention absente » levée dès qu’une convention valide existe ; compteurs alignés ; pas d’échéance sans client', async () => {
+  const W = mkWorkspace('ano-a');
+  const four = uid('four');
+  db.prepare('INSERT INTO fournisseur (id,cabinet_id,entreprise_id,raison_sociale,delai_applicable) VALUES (?,?,?,?,120)').run(four, W.cab, W.ent, 'FRS CONV');
+  const ins = db.prepare("INSERT INTO anomalie (id,cabinet_id,entreprise_id,type,gravite,details,entite,entite_id,statut) VALUES (?,?,?,?,?,?,?,?,'ouverte')");
+  for (let i = 0; i < 34; i++) ins.run(uid('ano'), W.cab, W.ent, 'date_incoherente', 'moyenne', 'x', 'facture', null);
+  ins.run(uid('ano'), W.cab, W.ent, 'convention_absente', 'moyenne', 'Facture 1 SANS convention', 'facture', four);
+  const ck = cookieOf(W.u);
+  const get = async u => (await reqJson('GET', u, { cookie: ck })).body;
+  assert.equal((await get('/api/anomalies')).filter(a => a.statut === 'ouverte').length, 35);
+  const al0 = await get('/api/alerts');
+  assert.equal(al0.count - al0.alerts.filter(a => a.type === 'echeance' || a.type === 'convention').length, 35, 'compteur des alertes = total réel des anomalies (liste bornée à 30)');
+  db.prepare("INSERT INTO convention (id,cabinet_id,entreprise_id,fournisseur_id,delai_convenu,statut) VALUES (?,?,?,?,120,'valide')").run(uid('conv'), W.cab, W.ent, four);
+  const anos = (await get('/api/anomalies')).filter(a => a.statut === 'ouverte');
+  assert.equal(anos.length, 34, 'l’anomalie devenue fausse n’est plus affichée');
+  assert.ok(!anos.some(a => a.type === 'convention_absente'));
+  assert.equal((await get('/api/dashboard')).kpis.anomalies, 34, 'vue d’ensemble alignée');
+  assert.equal(db.prepare("SELECT COUNT(*) n FROM anomalie WHERE cabinet_id=? AND type='convention_absente' AND statut='ouverte'").get(W.cab).n, 1, 'rien n’est modifié en base (filtre de lecture)');
+  const V = mkWorkspace('ano-vide'); db.prepare('DELETE FROM entreprise WHERE cabinet_id=?').run(V.cab);
+  const av = (await reqJson('GET', '/api/alerts', { cookie: cookieOf(V.u) })).body;
+  assert.equal(av.alerts.filter(a => a.type === 'echeance').length, 0, 'P3-10 : pas d’échéance annoncée sans dossier client');
+});
