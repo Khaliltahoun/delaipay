@@ -1,0 +1,16 @@
+{
+  "name": "DelaiPay — délais de paiement 69-21",
+  "short_name": "DelaiPay",
+  "lang": "fr-MA",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#F4F6F7",
+  "theme_color": "#0E3544",
+  "icons": [
+    { "src": "/assets/brand/favicon-32.png", "sizes": "32x32", "type": "image/png" },
+    { "src": "/assets/brand/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "/assets/brand/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "/assets/brand/icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}

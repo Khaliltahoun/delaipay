@@ -124,7 +124,9 @@ button,input,select,textarea{font:inherit;color:inherit}
 .brand .word{font-size:17px;font-weight:var(--fw-semibold);letter-spacing:-.02em;color:#F6F2EA;line-height:1}
 .brand .word em{font-style:normal;color:inherit}
 
-/* Carte d'espace de travail (tenant) */
+/* Carte d'espace de travail (tenant) — identité principale de la barre latérale */
+a.ws-card{text-decoration:none;color:inherit}
+a.ws-card:hover{background:rgba(255,255,255,.07);text-decoration:none}
 .ws-card{display:flex;align-items:center;gap:10px;margin:0 2px 14px;padding:10px;border-radius:var(--r-lg);
   background:rgba(255,255,255,.04);border:1px solid var(--side-line)}
 .ws-mono{width:32px;height:32px;border-radius:var(--r-md);background:var(--tenant);color:#fff;display:grid;place-items:center;
@@ -153,6 +155,10 @@ button,input,select,textarea{font:inherit;color:inherit}
 .side-foot .av{width:28px;height:28px;border-radius:50%;background:rgba(255,255,255,.1);color:#fff;font-weight:var(--fw-semibold);
   font-size:11px;display:grid;place-items:center;flex:0 0 auto}
 .side-foot b{color:#fff!important;font-weight:var(--fw-medium)!important}
+/* « Propulsé par DelaiPay » : identité DelaiPay discrète, sous celle du cabinet */
+.powered-by{display:flex;align-items:center;gap:6px;padding:10px 8px 2px;font-size:var(--fs-2xs);color:var(--side-muted);letter-spacing:.01em}
+.powered-by img{width:14px;height:14px;flex:0 0 auto;display:block}
+.powered-by b{color:var(--side-ink);font-weight:var(--fw-semibold)}
 .side-foot .ver{margin-left:auto;font-size:10px;opacity:.7}
 
 /* Colonne principale + barre supérieure */
@@ -832,7 +838,9 @@ tr.ign td{background:var(--surface-2)}
 .login-ws small{display:block;color:var(--muted);font-size:11.5px}
 .login-ws b{display:block;font-size:14px}
 .login-mobile-brand{display:none;margin-bottom:28px}
-.login-mobile-brand img{height:30px}
+.login-mobile-brand img{height:30px;width:auto}
+.login-mobile-brand .on-dark,[data-theme="dark"] .login-mobile-brand .on-light{display:none}
+[data-theme="dark"] .login-mobile-brand .on-dark{display:block}
 .login-card h1{font-size:26px;font-weight:var(--fw-semibold);letter-spacing:-.025em;margin:0 0 6px}
 .login-card .lead{color:var(--muted);margin:0 0 26px;font-size:14px}
 .login-err{display:flex;gap:10px;align-items:flex-start;background:var(--late-soft);border:1px solid var(--late-line);color:var(--late);padding:10px 12px;border-radius:var(--r-md);font-size:13px;margin-bottom:18px}

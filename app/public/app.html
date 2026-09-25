@@ -4,10 +4,12 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>DelaiPay</title>
-<meta name="theme-color" content="#0C2A36">
-<link rel="icon" type="image/svg+xml" href="/assets/brand/favicon.svg">
+<meta name="theme-color" content="#0E3544">
+<link rel="icon" href="/favicon.ico" sizes="16x16 32x32">
+<link rel="icon" type="image/png" sizes="16x16" href="/assets/brand/favicon-16.png">
 <link rel="icon" type="image/png" sizes="32x32" href="/assets/brand/favicon-32.png">
 <link rel="apple-touch-icon" href="/assets/brand/apple-touch-icon.png">
+<link rel="manifest" href="/manifest.webmanifest">
 <link rel="preload" href="/assets/fonts/inter-latin-var.woff2" as="font" type="font/woff2" crossorigin>
 <link rel="stylesheet" href="/css/app.css">
 </head>
@@ -15,15 +17,10 @@
 <a class="skip" href="#view">Aller au contenu</a>
 <div class="app" id="app">
   <aside class="side" id="side" aria-label="Navigation principale">
-    <a class="brand" href="#dash" data-view="dash" aria-label="DelaiPay — vue d'ensemble">
-      <span class="mark"><img src="/assets/brand/delaipay-mark.svg" alt="" width="30" height="30"></span>
-      <span class="word">Delai<em>Pay</em></span>
-    </a>
-
-    <div class="ws-card" id="wsCard" title="Espace de travail">
+    <a class="ws-card" id="wsCard" href="#dash" data-view="dash" title="Espace de travail — vue d'ensemble">
       <div class="ws-mono" id="wsMono">··</div>
-      <div class="ws-meta"><b id="wsName">Espace de travail</b><small id="wsSub">Propulsé par DelaiPay</small></div>
-    </div>
+      <div class="ws-meta"><b id="wsName">Espace de travail</b><small id="wsSub">Espace de travail</small></div>
+    </a>
 
     <div class="nav-lbl">Cabinet</div>
     <button class="nav-item" data-view="dash">
@@ -63,6 +60,7 @@
       <div class="av" id="sideAv">··</div>
       <div style="min-width:0"><b style="display:block;font-size:12.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis" id="sideName">—</b><span id="sideTitle">—</span></div>
     </div>
+    <div class="powered-by"><img src="/assets/brand/delaipay-symbol-dark-bg.svg" alt="" width="14" height="14">Propulsé par <b>DelaiPay</b></div>
   </aside>
 
   <div class="main">

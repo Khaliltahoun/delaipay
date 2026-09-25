@@ -62,7 +62,12 @@ app.use('/js', assetCache, express.static(path.join(PUB, 'js'), staticOpts));
 // Icône de l'onglet (les navigateurs la demandent à la racine même avec <link rel="icon">).
 app.get('/favicon.ico', (req, res) => {
   res.setHeader('Cache-Control', 'public, max-age=86400');
-  res.type('png').sendFile(path.join(PUB, 'assets', 'brand', 'favicon-32.png'));
+  res.type('image/x-icon').sendFile(path.join(PUB, 'assets', 'brand', 'favicon.ico'));
+});
+// Manifeste d'application web (icônes d'écran d'accueil ; aucune ressource distante).
+app.get('/manifest.webmanifest', (req, res) => {
+  res.setHeader('Cache-Control', 'public, max-age=86400');
+  res.type('application/manifest+json').sendFile(path.join(PUB, 'manifest.webmanifest'));
 });
 
 // Pages
