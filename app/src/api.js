@@ -9,6 +9,7 @@ const calc = require('./calc');
 const periode = require('./periode');
 const { importWorkbook } = require('./importer');
 const reseau = require('./reseau');
+const periodCheck = require('./period-check');
 const auth = require('./auth');
 const visa = require('./visa');
 const tenant = require('./tenant');
@@ -1348,6 +1349,8 @@ router.post('/clients/:id/import/preview', (req, res) => {
       sheetName: b.sheetName, headerRow: b.headerRow, mapping: b.mapping || {},
       cabinetId: req.cabinetId, entrepriseId: e.id, annee: p.annee, trimestre: p.trimestre, requireNumero: !!b.requireNumero,
     });
+    // Contrôle hors trimestre : critère du moteur (date de paiement), pas la date de facture (ANO-7).
+    Object.assign(out.stats, periodCheck.periodCounts(fs.readFileSync(tmp), b, p.annee, p.trimestre));
     res.json(out);
   } catch (err) { res.status(400).json({ error: err.message }); }
 });
@@ -1364,9 +1367,9 @@ router.post('/clients/:id/import/confirm', (req, res) => {
     try {
       const pv = importer.previewImport(fs.readFileSync(tmp), { sheetName: b.sheetName, headerRow: b.headerRow, mapping: b.mapping || {},
         cabinetId: req.cabinetId, entrepriseId: e.id, annee: p.annee, trimestre: p.trimestre, requireNumero: !!b.requireNumero });
-      const st = pv.stats || {};
+      const st = { ...(pv.stats || {}), ...periodCheck.periodCounts(fs.readFileSync(tmp), b, p.annee, p.trimestre) };
       if (st.autrePeriode > 0) return res.status(409).json({ code: 'hors_periode', autrePeriode: st.autrePeriode, memePeriode: st.memePeriode, valides: st.valides,
-        error: `${st.autrePeriode} ligne(s) sont datées hors de T${p.trimestre} ${p.annee}. Vérifiez le trimestre choisi ou confirmez explicitement leur rattachement. Aucune facture n'a été enregistrée.` });
+        error: `${st.autrePeriode} ligne(s) ne relèvent pas de T${p.trimestre} ${p.annee} (paiement hors du trimestre, ou facture postérieure s'il n'y a pas de paiement). Vérifiez le trimestre choisi ou confirmez explicitement leur rattachement. Aucune facture n'a été enregistrée.` });
     } catch (err) { return res.status(400).json({ error: err.message }); }
   }
   try {

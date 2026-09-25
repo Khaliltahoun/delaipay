@@ -2837,3 +2837,25 @@ test('DATA-1 + P3-10 : levée d’une anomalie « convention absente » seulemen
   const av = (await reqJson('GET', '/api/alerts', { cookie: cookieOf(V.u) })).body;
   assert.equal(av.alerts.filter(a => a.type === 'echeance').length, 0, 'P3-10 : pas d’échéance annoncée sans dossier client');
 });
+
+/* ============ Incrément 2.1 — E : contrôle hors trimestre = critère du moteur (date de paiement) ============ */
+test('INC2.1/E : le fichier de référence T1 2026 ne déclenche aucun avertissement ; des paiements hors T1 le déclenchent', async () => {
+  const periodCheck = require('../src/period-check');
+  const ref = demoFixture.demoWorkbookBuffer();
+  const map = { sheetName: 'Feuil1', headerRow: 0, mapping: { numero: 0, ttc: 4, date_paiement: 10, date_facture: 11 } };
+  assert.deepEqual(periodCheck.periodCounts(ref, map, 2026, 1), { memePeriode: 36, autrePeriode: 0 }, 'référence : 36 lignes en T1 2026, aucune hors période');
+  assert.equal(periodCheck.periodCounts(ref, map, 2026, 2).autrePeriode, 36, 'mauvais trimestre choisi : tout est signalé');
+  // Fichier avec de vraies lignes hors période : paiement en T2, facture non payée émise après T1.
+  const buf = aoaBuf([['N', 'TTC', 'PAIE', 'FAC'], ['A', 100, '2026-02-10', '2025-12-01'], ['B', 200, '2026-05-02', '2026-01-15'], ['C', 300, null, '2026-04-20'], ['D', 400, null, '2026-02-01']], 'S');
+  const r = periodCheck.periodCounts(buf, { sheetName: 'S', headerRow: 0, mapping: { numero: 0, ttc: 1, date_paiement: 2, date_facture: 3 } }, 2026, 1);
+  assert.deepEqual(r, { memePeriode: 2, autrePeriode: 2 }, 'B (payée en T2) et C (émise après T1) hors période ; D (non payée, émise en T1) dans T1');
+  // Confirmation stricte : la case reste obligatoire pour les vraies lignes hors période.
+  const t = newTenant(); const ck = cookieOf(t.u);
+  const up = await postFile(`/api/clients/${t.ent}/import/analyze?annee=2026&trimestre=1`, ck, buf, 'x.xlsx');
+  assert.equal(up.status, 200, 'analyse du fichier'); assert.ok(up.body.token);
+  {
+    const body = { token: up.body.token, sheetName: 'S', headerRow: 0, mapping: { numero: 0, ttc: 1, date_paiement: 2, date_facture: 3, four_nom: 0 }, strictPeriode: true };
+    const c = await reqJson('POST', `/api/clients/${t.ent}/import/confirm?annee=2026&trimestre=1`, { cookie: ck, body });
+    assert.equal(c.status, 409); assert.equal(c.body.code, 'hors_periode'); assert.equal(c.body.autrePeriode, 2);
+  }
+});
