@@ -931,7 +931,7 @@ router.get('/clients/:id/reseau/simulation', (req, res) => {
 
 /* ============================================================ DELAIS (calc table) */
 // Incidence reportée : factures d'un trimestre ANTÉRIEUR, non soldées avant Q, dont des mois de
-// retard tombent dans Q → recalculées POUR Q. Additif : ne modifie pas les lignes stockées (CADOZAT intact).
+// retard tombent dans Q → recalculées POUR Q. Additif : ne modifie pas les lignes stockées (dossier de référence intact).
 function periodRank(a, t) { return (+a) * 4 + (+t); }
 function incidenceFactures(cabinetId, entrepriseId, annee, trimestre) {
   const rank = periodRank(annee, trimestre);

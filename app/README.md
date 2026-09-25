@@ -8,7 +8,7 @@ d'achats, **calcul automatique des retards et amendes** (loi 69-21, modèle trim
 calendaire), **déclaration DGI**, **visa** du commissaire aux comptes / expert-comptable, alertes et
 journal d'audit.
 
-Construite à partir des documents métier réels du cabinet HLZ (client **CADOZAT**). Le moteur de calcul
+Construite à partir des documents métier du cabinet pilote HLZ. Le dépôt ne contient que des données **fictives** (client de démonstration **STE ORYX AUTO SARL**). Le moteur de calcul
 reproduit **au centime** la déclaration officielle T1 2026 (TTC concerné **350 964,42 DH**, amende
 **7 025,33 DH**).
 
@@ -26,8 +26,9 @@ npm install
 npm start           # http://localhost:3000  (ou PORT=3939 npm start)
 ```
 Au **premier démarrage**, la base est créée et pré-alimentée :
-- Cabinet **HLZ Consulting**, utilisateur **zahra@hlz.ma** / **DelaiPay2026!**
-- Client **CADOZAT** + import du fichier réel `../docs/DELAI.xlsx` (si présent) + 4 conventions.
+- Cabinet **HLZ Consulting**, utilisateur **admin@hlz.demo** — mot de passe : `ADMIN_PASSWORD`, sinon un mot de passe
+  aléatoire est **généré et affiché une seule fois** dans la console (jamais de valeur par défaut ; obligatoire en production).
+- Client de démonstration **fictif** STE ORYX AUTO SARL (36 factures T1 2026, `src/fixtures/demo-t1-2026.json`) + 4 conventions.
 
 > Identifiants et compte initial configurables via `ADMIN_EMAIL` / `ADMIN_PASSWORD` (voir `.env.example`).
 
@@ -61,7 +62,7 @@ app/
 │   ├── importer.js    # parsing Excel/CSV (formats TVA & DELAI) + anomalies
 │   ├── db.js          # schéma node:sqlite + provider taux BAM + audit
 │   ├── auth.js        # JWT cookie httpOnly + bcrypt + middlewares
-│   ├── seed.js        # cabinet/utilisateur/CADOZAT + import docs réels
+│   ├── seed.js        # cabinet/utilisateur/client de démonstration fictif
 │   └── util.js        # formatage FR, ICE, ids
 ├── public/            # login.html, app.html, css/app.css, js/app.js
 ├── data/              # base SQLite (généré, gitignored)

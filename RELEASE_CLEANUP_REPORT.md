@@ -20,7 +20,7 @@ Ces fichiers sont **dans le dépôt Git** ; leur suppression modifie le dépôt.
 | `CHANGELOG_RC1.md` | Changelog de la Release Candidate 1, **remplacé** par le `CHANGELOG.md` v1.0.0 (section « Historique antérieur » incluse). Doublon obsolète. | faible | Supprimer (ou archiver) après publication de la 1.0.0. |
 | `RELEASE_NOTES.md` | Notes de version **RC1**, remplacées par `RELEASE_NOTES_v1.0.0.md`. Le nom générique prête à confusion avec les nouvelles notes. | faible | Supprimer, ou renommer en `RELEASE_NOTES_RC1.md` et archiver. |
 | `RECAP_DELAIPAY.md` | Récapitulatif interne (27 Ko) de suivi projet — document de travail, non destiné aux utilisateurs finaux. | moyen | Déplacer hors racine (ex. `collaboration/` ignoré) ou supprimer si l'info est reprise dans le CHANGELOG. |
-| `SCRIPT_DEMO_ZAHRA.md` | Script de démonstration nominatif (RC1) — contenu ponctuel, non pérenne. | faible | Archiver hors dépôt ou supprimer. |
+| `SCRIPT_DEMO.md` | Script de démonstration nominatif (RC1) — contenu ponctuel, non pérenne. | faible | Archiver hors dépôt ou supprimer. |
 | `GUIDE_UTILISATEUR_PERIODES.md` | Guide utilisateur des périodes — **potentiellement encore utile**. À conserver si à jour, sinon à intégrer à une doc utilisateur unifiée. | moyen | Conserver et vérifier l'actualité vs LOT 5/6, ou regrouper dans `docs/`. |
 
 ## B. Fichier local non suivi (untracked, non ignoré)
@@ -42,7 +42,7 @@ répertoire de travail, **sans effet sur Git**.
 | `back.jpg` | ignoré (`back.jpg`) | Image d'arrière-plan locale non versionnée. | faible | Conserver si utilisée en local ; sinon supprimer. |
 | `DelaiPay_Cahier_des_charges.pdf`, `DelaiPay_Maquettes_Ecrans.pdf`, `DelaiPay_Synthese_Validation.pdf` | ignoré (`*.pdf`) | PDF de cahier des charges / maquettes — documents de conception, lourds (jusqu'à ~3,6 Mo). | moyen | Archiver hors du répertoire projet ; ne pas supprimer sans copie de référence. |
 | `CAHIER_DES_CHARGES_DelaiPay.md` | ignoré (nommément) | Cahier des charges (~192 Ko) — référence de conception. | moyen | Conserver comme archive de référence, hors livrable. |
-| `docs/` | ignoré (`docs/`) | Contient des **données clients réelles** (CADOZAT : xlsx, pdf, docx) + `PROMPT_design_*`. **Attention** : le fichier `docs/KNOWN_ISSUES.md` demandé pour cette release y est déposé et sera donc **hors dépôt** — à déplacer hors de `docs/` (ou à désignorer explicitement) s'il doit être versionné. | moyen | Ne pas versionner les données clients ; statuer sur l'emplacement de `KNOWN_ISSUES.md`. |
+| `docs/` | ignoré (`docs/`) | Contient des **données clients réelles** (ORYX AUTO : xlsx, pdf, docx) + `PROMPT_design_*`. **Attention** : le fichier `docs/KNOWN_ISSUES.md` demandé pour cette release y est déposé et sera donc **hors dépôt** — à déplacer hors de `docs/` (ou à désignorer explicitement) s'il doit être versionné. | moyen | Ne pas versionner les données clients ; statuer sur l'emplacement de `KNOWN_ISSUES.md`. |
 | `DELAI DE PAIEMENT/` | ignoré (`DELAI DE PAIEMENT/`) | Dossier de données/documents clients. | moyen | Conserver hors dépôt ; ne pas supprimer sans accord. |
 | `collaboration/` | ignoré (`collaboration/`) | Coordination Claude Code ↔ Cowork (rapports, handoffs, décisions). Références internes. | faible | Conserver (historique de validation utile), hors dépôt. |
 | `.claude/` | ignoré (`.claude/`) | Configuration locale de l'agent. | faible | Conserver en local. |
@@ -70,7 +70,7 @@ Les autres livrables de release (`CHANGELOG.md`, `RELEASE_NOTES_v1.0.0.md`, `ROA
 ## E. Synthèse des recommandations
 
 - **À supprimer / archiver après publication (risque faible)** : `CHANGELOG_RC1.md`,
-  `RELEASE_NOTES.md` (RC1), `SCRIPT_DEMO_ZAHRA.md`, `HANDOFF.md`.
+  `RELEASE_NOTES.md` (RC1), `SCRIPT_DEMO.md`, `HANDOFF.md`.
 - **À déplacer / statuer (risque moyen)** : `RECAP_DELAIPAY.md`, `GUIDE_UTILISATEUR_PERIODES.md`,
   et l'emplacement de `docs/KNOWN_ISSUES.md`.
 - **Purge locale sans effet Git (risque faible)** : `.playwright-mcp/`, `.DS_Store`, logs/temp.

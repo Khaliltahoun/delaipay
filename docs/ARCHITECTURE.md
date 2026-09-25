@@ -1,7 +1,7 @@
 # DelaiPay — Architecture technique
 
 > SaaS de suivi des délais de paiement (loi marocaine **69-21**) pour cabinets d'expertise comptable.
-> Cabinet pilote : **HLZ Consulting** — Validatrice métier : **Mme Zahra Hajrioui** — Client de démonstration : **STE CADOZAT SARL**.
+> Cabinet pilote : **HLZ Consulting** — Validatrice métier : **la commissaire aux comptes du cabinet pilote** — Client de démonstration : **STE ORYX AUTO SARL**.
 >
 > Release **1.0** — version applicative `e25ef50ee4` — commit `17ca7ac`.
 > Ce document décrit **uniquement** ce qui existe dans le code (`app/src/**`, `app/public/**`).

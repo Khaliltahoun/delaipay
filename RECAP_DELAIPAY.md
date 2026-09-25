@@ -50,9 +50,9 @@ Implémenté dans `app/src/calc.js`.
 - **Base** = montant TTC réglé hors délai + montant non réglé.
 - Le **taux BAM est historisé** (table `taux_bam`) et appliqué par date.
 
-**Validation au centime** — client réel CADOZAT, T1 2026 :
+**Validation au centime** — dossier de démonstration ORYX AUTO (fictif, mêmes montants que la référence), T1 2026 :
 - TTC concerné **350 964,45 DH** → amende **7 026 DH** (le moteur reproduit **350 964,42 / 7 025,33** aux arrondis source près).
-- Exemples de lignes : TRACTAFRIC 245 595,80 → 5 525,91 (2,25 %) ; PNEUMATIQUE 6 600 → 112,20 (1,70 %) ; BG EXPRESS 3 050 → 25,93 (0,85 %).
+- Exemples de lignes : KORAL ENGINS 245 595,80 → 5 525,91 (2,25 %) ; HORIZON PNEUMATIQUES 6 600 → 112,20 (1,70 %) ; BETA EXPRESS 3 050 → 25,93 (0,85 %).
 
 Barème de risque par facture (couleur) : `ok` / `app` (approche) / `orange` (attention) / `red` (retard) / `dred` (pénalités lourdes : amende ≥ 1 000 DH ou retard ≥ 90 j).
 
@@ -303,7 +303,7 @@ Au premier démarrage, la base est créée et pré-alimentée (cabinet HLZ + cli
 ## 10. Données actuelles (portefeuille chargé)
 
 - **92 clients**, **~23 400 factures**, **724 conventions**, ~4 950 fournisseurs importés depuis les fichiers réels des clients du cabinet.
-- Client de référence **CADOZAT** validé au centime (T1 2026 : amende **7 025,33 DH**).
+- Client de référence **ORYX AUTO** validé au centime (T1 2026 : amende **7 025,33 DH**).
 - Sauvegardes horodatées conservées dans `app/data/backups/`.
 
 ---
@@ -345,7 +345,7 @@ Voir le détail dans **CHANGELOG.md** et le **GUIDE_UTILISATEUR_PERIODES.md**.
 - **Assistant d'import 6 étapes** : analyse → feuille & **mapping** (auto + confiance, corrigeable) → **prévisualisation** (valides/ignorées/rejetées/doublons, sans écriture) → **confirmation transactionnelle** → **annulation** + rapport de rejets CSV. **Modèles de mapping** réutilisables.
 - **Incidence reportée** : facture impayée → amende calculée pour chaque trimestre concerné, sans déplacer le fichier source (traçabilité vers la période d'origine).
 - **Nouvelles tables** : `periode_declaration`, `import_lot`, `import_ligne`, `modele_mapping`. Migration idempotente : `npm run migrate` (sauvegarde préalable recommandée).
-- **Tests automatisés** : `npm test` — **106/106** (calendrier, non-régression CADOZAT 7 025,33, classification d'import, revue des doublons, export Excel, import conventions mappé, `normalizeSupplierName`, délai strict 1..120, recalcul des périodes ouvertes, vrai n° de ligne Excel).
+- **Tests automatisés** : `npm test` — **106/106** (calendrier, non-régression ORYX AUTO 7 025,33, classification d'import, revue des doublons, export Excel, import conventions mappé, `normalizeSupplierName`, délai strict 1..120, recalcul des périodes ouvertes, vrai n° de ligne Excel).
 - **Revue des doublons potentiels** : les doublons sont conservés et signalés (jamais supprimés), avec un statut de revue (`potentiel`/`confirme`/`faux_positif`) modifiable via `PATCH …/doublon` (audité). *Les doublons supprimés par d'anciennes versions ne peuvent être récupérés qu'en réimportant la source originale.*
 - **Nouvelles routes** : `/clients/:id/periods[...]` (summary/close/reopen), `/clients/:id/import/analyze|preview|confirm`, `/clients/:id/import/:id/impact|cancel`, `/imports/:id/rejections[.csv]`, `/mapping-templates`.
 

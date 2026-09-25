@@ -21,7 +21,7 @@
 - Détection n° facture / colonnes, inversion dates facture-paiement, montants & dates aberrants, import multi-feuilles, support XML SIMPL, performances tableau de bord (index).
 
 ### Préservé (non-régression)
-- Moteur légal inchangé — **CADOZAT T1 2026 = 7 025,33 DH** (test automatisé). Aucune donnée client supprimée ; migrations avec sauvegarde préalable.
+- Moteur légal inchangé — **ORYX AUTO T1 2026 = 7 025,33 DH** (test automatisé). Aucune donnée client supprimée ; migrations avec sauvegarde préalable.
 
 ### Limitations / V2
 Voir **RELEASE_NOTES.md** (incidence au dashboard cabinet, pagination/recherche généralisées, OCR, alertes, portail client, signature électronique).

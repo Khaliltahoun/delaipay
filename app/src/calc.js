@@ -2,7 +2,7 @@
 /**
  * Moteur de calcul des délais de paiement — Loi 69-21.
  *
- * Modèle RÉEL validé sur les déclarations DGI de CADOZAT (T1 2026) :
+ * Modèle RÉEL validé sur les déclarations DGI du dossier de référence (T1 2026) :
  *  - date limite   = date_facture + délai_applicable (60 j sans convention, 120 j avec, ou sectoriel)
  *  - DATE D'ARRÊTÉ (règle métier) : pour un trimestre de déclaration donné, le délai est
  *    constaté à la date d'arrêté = date de paiement si payée au plus tard le dernier jour du
@@ -13,11 +13,11 @@
  *  - amende trimestrielle = TTC × Σ taux(mois de retard tombant DANS le trimestre déclaré)
  *      • le TOUT PREMIER mois de retard (sur la vie de la facture) = taux directeur Bank Al-Maghrib
  *      • chaque mois (ou fraction) suivant = 0,85 %
- *  - DÉCOUPAGE PAR MOIS CALENDAIRE (confirmé par Mme Zahra) : tout mois calendaire touché par
+ *  - DÉCOUPAGE PAR MOIS CALENDAIRE (confirmé par la commissaire aux comptes) : tout mois calendaire touché par
  *    le retard compte pour un mois entier.
  *
- * Reproduit au centime : TRACTAFRIC 245 595,80 → 5 525,91 (2,25 %) ; PNEUMATIQUE 6 600 → 112,20
- * (1,70 %) ; BG EXPRESS 3 050 → 25,93 (0,85 %). Total T1 CADOZAT : 7 026,00 DH.
+ * Reproduit au centime : fournisseur A 245 595,80 → 5 525,91 (2,25 %) ; fournisseur B 6 600 → 112,20
+ * (1,70 %) ; fournisseur C 3 050 → 25,93 (0,85 %). Total T1 du dossier de référence : 7 026,00 DH.
  */
 
 const periode = require('./periode');   // SOURCE UNIQUE des bornes de trimestre (pas de date en dur)

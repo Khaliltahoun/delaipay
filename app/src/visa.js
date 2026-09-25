@@ -1,7 +1,7 @@
 'use strict';
 /**
  * Génération du visa (commissaire aux comptes / expert-comptable) au format officiel
- * reçu de Mme Zahra (docs/visa - CADOZAT.docx) — exportable en Word (.docx) et PDF.
+ * du modèle de visa officiel fourni par le cabinet pilote — exportable en Word (.docx) et PDF.
  * Un modèle de "blocs" partagé garantit que le Word, le PDF et l'aperçu écran sont identiques.
  */
 const { Document, Packer, Paragraph, TextRun, AlignmentType } = require('docx');

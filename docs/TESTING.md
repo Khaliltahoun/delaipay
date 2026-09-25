@@ -53,15 +53,16 @@ processus**, afin de ne jamais toucher la base de production :
 
 ## 3. Jeux de données et fixtures
 
-- **`docs/DELAI.xlsx`** — fichier réel du client **CADOZAT**, utilisé comme **référence de
-  non-régression**. Son import doit reproduire la déclaration officielle **T1 2026** :
+- **`app/src/fixtures/demo-t1-2026.json`** — jeu **fictif** du client de démonstration STE ORYX AUTO SARL, utilisé
+  comme **référence de non-régression** (mêmes montants, dates et relations fournisseur que la déclaration réelle de
+  référence ; noms, IF et ICE fictifs). Son import doit reproduire la déclaration **T1 2026** :
   - **36 factures** importées (dont **2 doublons potentiels** conservés et signalés — paiement
     partiel / facture scindée) ;
   - **amende totale = 7 025,33 DH** (les 2 doublons étant réglés dans les délais, ils n'ajoutent
     aucune amende : la non-régression du moteur légal est préservée).
-- **Tests conditionnels** : les tests qui dépendent d'une fixture sont **ignorés (`skip`)** si le
-  fichier est absent — par exemple le test CADOZAT est `skip` si `docs/DELAI.xlsx` n'existe pas. La
-  suite reste donc verte même sur un environnement sans les documents clients (non versionnés).
+- **Aucun test conditionnel** : toutes les fixtures sont versionnées et **anonymisées** (`app/test/fixtures/*.json` :
+  structure et en-têtes d'origine, libellés et identifiants aléatoires). Aucun test ne lit de document client ;
+  aucun test n'est ignoré.
 - Les autres jeux de données (classeurs Excel de scénarios d'import, fournisseurs, conventions) sont
   **générés en mémoire** par les tests eux-mêmes.
 
@@ -85,7 +86,7 @@ majeur) :
 
 ## 5. Stratégie de non-régression
 
-- **CADOZAT figée** : l'amende **7 025,33 DH** sur `docs/DELAI.xlsx` (T1 2026) est vérifiée à chaque
+- **Référence T1 2026 figée** : l'amende **7 025,33 DH** du jeu de démonstration (T1 2026) et l'empreinte du fichier de déclaration est vérifiée à chaque
   exécution (tolérance < 0,5 DH). Toute dérive du moteur légal fait échouer la suite.
 - **Plafond légal du délai** : `saneDelai` borne systématiquement tout délai à `[1, 120]` j
   (défaut légal 60) ; un délai aberrant (ex. « 60 120 » concaténé → 60120, ou valeur énorme) ne doit

@@ -56,10 +56,12 @@ Au **premier démarrage sur une base vide**, le seed (`src/seed.js`) crée autom
 
 - le cabinet **HLZ Consulting** ;
 - un **compte administrateur** initial — email et mot de passe configurables via
-  `ADMIN_EMAIL` / `ADMIN_PASSWORD` (valeurs par défaut : `zahra@hlz.ma` / `DelaiPay2026!`) ;
+  `ADMIN_EMAIL` / `ADMIN_PASSWORD` (e-mail par défaut : `admin@hlz.demo`). **Aucun mot de passe par défaut** :
+  `ADMIN_PASSWORD` est obligatoire en production ; hors production, s'il est absent, un mot de passe aléatoire est
+  généré et affiché **une seule fois** dans la console ;
 - l'historique des taux directeurs BAM ;
-- le client de démonstration **CADOZAT**, avec import du fichier réel `docs/DELAI.xlsx` (s'il est
-  présent) et 4 conventions fournisseurs.
+- le client de démonstration **fictif** STE ORYX AUTO SARL (jeu `app/src/fixtures/demo-t1-2026.json`, 36 factures
+  T1 2026) et 4 conventions fournisseurs de démonstration.
 
 Le seed **ne s'exécute que si la base est vide** (aucun cabinet existant) — relancer le serveur sur
 une base déjà peuplée ne réamorce rien.
@@ -78,8 +80,8 @@ une base déjà peuplée ne réamorce rien.
 | `PORT` | Port d'écoute HTTP. | `3000` |
 | `NODE_ENV` | Environnement d'exécution. En `production`, le cookie de session passe en `Secure` et `ADMIN_PASSWORD` devient obligatoire. | — |
 | `JWT_SECRET` | Secret de signature des JWT. **À générer** (`openssl rand -hex 48`). Si non fourni, un secret local est créé automatiquement. | (auto-généré) |
-| `ADMIN_EMAIL` | Email du compte administrateur créé au premier démarrage. | `zahra@hlz.ma` |
-| `ADMIN_PASSWORD` | Mot de passe du compte administrateur initial. **Obligatoire en production.** | `DelaiPay2026!` (hors production) |
+| `ADMIN_EMAIL` | Email du compte administrateur créé au premier démarrage. | `admin@hlz.demo` |
+| `ADMIN_PASSWORD` | Mot de passe du compte administrateur initial. **Obligatoire en production.** | — (aucun ; aléatoire affiché une fois hors production) |
 | `DB_PATH` | Chemin du fichier de base SQLite. | `app/data/delaipay.db` |
 
 > **Note sur `DELAI_RESEAU`** : cette variable n'est pas référencée dans le code ni dans
@@ -95,7 +97,7 @@ Exemple minimal de `.env` pour la production :
 ```
 NODE_ENV=production
 JWT_SECRET=<openssl rand -hex 48>
-ADMIN_EMAIL=zahra@hlz.ma
+ADMIN_EMAIL=admin@hlz.demo
 ADMIN_PASSWORD=<mot de passe fort>
 PORT=3000
 ```

@@ -1,7 +1,7 @@
 # DelaiPay — Release Candidate 1 (RC1)
 
 **Application de suivi des délais de paiement (loi 69-21) pour cabinets d'expertise comptable.**
-Version candidate à la validation métier (Mme Zahra) et au déploiement de production.
+Version candidate à la validation métier (commissaire aux comptes du cabinet pilote) et au déploiement de production.
 
 ---
 
@@ -37,7 +37,7 @@ Version candidate à la validation métier (Mme Zahra) et au déploiement de pro
 - **Délai constaté arrêté au dernier jour du trimestre** : une facture **impayée** (ou **payée après la clôture**) est désormais calculée jusqu'au dernier jour du trimestre déclaré, et non plus jusqu'à la date du jour ni jusqu'à un paiement postérieur. Exemple : facture du **15/04** non payée au **30/06** → **76 jours** en T2 ; si payée le **10/07**, le calcul T2 **reste arrêté au 30/06**.
 - Fonction centrale unique côté backend (`getDateArreteFacture`) utilisée partout (feuille de délais, dashboard, déclaration, exports) — le frontend ne recalcule pas.
 - Feuille de délais enrichie : colonnes **Arrêté au** / **Délai constaté**, état (payée / impayée à la clôture / payée après clôture) et infobulle. Indicateurs *délai constaté*, *délai autorisé* et *jours de retard* clairement distincts.
-- **Montants d'amende inchangés** pour les trimestres clôturés (CADOZAT = 7 025,33 DH).
+- **Montants d'amende inchangés** pour les trimestres clôturés (ORYX AUTO = 7 025,33 DH).
 
 ## 🆕 Nouveau (cycle « conventions »)
 
@@ -72,7 +72,7 @@ Version candidate à la validation métier (Mme Zahra) et au déploiement de pro
 ## ⚠️ Limitations connues (RC1)
 1. Le **tableau de bord cabinet-wide** agrège les montants stockés ; le détail de l'**incidence reportée** est disponible dans la feuille de délais par client/période.
 2. Les tableaux offrent tri par colonne serveur et exports (CSV/XML/PDF selon les écrans) ; **pagination avancée / recherche plein-texte** dans tous les tableaux : prévu V2.
-3. Un déploiement neuf nécessite `docs/DELAI.xlsx` pour reproduire le client de démonstration (sinon fallback).
+3. Le client de démonstration est désormais un jeu fictif versionné (`app/src/fixtures/demo-t1-2026.json`) : aucun document client requis.
 
 ## 🗺️ Roadmap V2
 - Agrégation de l'incidence reportée au tableau de bord cabinet.
@@ -83,4 +83,4 @@ Version candidate à la validation métier (Mme Zahra) et au déploiement de pro
 
 ---
 
-*RC1 — code sur `main` (voir CHANGELOG_RC1.md). Non-régression du moteur légal garantie (CADOZAT T1 2026 = 7 025,33 DH, test automatisé).*
+*RC1 — code sur `main` (voir CHANGELOG_RC1.md). Non-régression du moteur légal garantie (ORYX AUTO T1 2026 = 7 025,33 DH, test automatisé).*

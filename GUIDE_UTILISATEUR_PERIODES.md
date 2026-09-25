@@ -1,4 +1,4 @@
-# DelaiPay — Guide rapide : périodes & import (pour Mme Zahra)
+# DelaiPay — Guide rapide : périodes & import (pour l'équipe du cabinet)
 
 ## 1. Choisir la période de travail
 En haut à droite, à côté du client, un bouton **📅 Année — Trimestre**.

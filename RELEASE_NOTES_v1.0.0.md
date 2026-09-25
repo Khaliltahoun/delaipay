@@ -37,7 +37,7 @@ montant, ou un numéro de ligne pris pour un montant, est bloqué avec un messag
 Pour les factures d'opérateurs réseau (télécoms, eau, électricité), un bouton
 **« Réseau ? — confirmer »** applique le délai spécifique de 30 jours, exclut le
 fournisseur des tableaux déclaratifs et recalcule automatiquement les périodes ouvertes.
-Les fournisseurs qui n'en sont pas (par exemple TOTAL MAROC, AFRIQUIA) ne sont jamais
+Les fournisseurs qui n'en sont pas (par exemple un distributeur de carburant) ne sont jamais
 signalés à tort.
 
 **Bénéfice** : un traitement conforme et traçable, sans manipulation fastidieuse.
@@ -98,7 +98,7 @@ piste d'audit (qui, quand, pourquoi, valeurs avant/après).
 - **160 tests automatisés au vert** couvrant les six lots.
 - **Validation indépendante par la revue Claude Cowork** : chaque lot a été testé en
   conditions réelles sur navigateur (aucune anomalie bloquante — aucun P0/P1/P2).
-- **Non-régression de référence** : le dossier CADOZAT (T1 2026) reste à **7 025,33 DH /
+- **Non-régression de référence** : le dossier ORYX AUTO (T1 2026) reste à **7 025,33 DH /
   36 factures** sur l'ensemble des six lots, preuve que le moteur de calcul légal n'a pas dérivé.
 
 ---

@@ -34,7 +34,7 @@ _Audit final de préparation de la Release 1.0 — 2026-07-28. Aucune règle mé
 ## 4. Couverture / stratégie de tests
 - Framework : **`node:test`** (natif), lancement `npm test`. **160 tests**, 0 échec, 0 skip (avec la fixture présente).
 - Pas d'outil de couverture instrumentée (`c8`/`nyc`) configuré → **couverture non chiffrée** ; la couverture fonctionnelle est assurée par lot (LOT 1→6) + non-régression.
-- **Non-régression de référence** : CADOZAT `docs/DELAI.xlsx` → **7 025,33 DH / 36 factures** (tests `skip` si la fixture est absente).
+- **Non-régression de référence** : jeu de démonstration fictif ORYX AUTO → **7 025,33 DH / 36 factures** (fixture versionnée, aucun `skip`).
 - Base de test **isolée par process** (`DB_PATH` dans `os.tmpdir()`).
 - Détail : `docs/TESTING.md`.
 
@@ -92,7 +92,7 @@ Règle : `main` toujours déployable ; tag à chaque release ; pas de commit dir
 ## 11. Recommandations (avant LOT 7)
 1. Trancher les 2 validations juridiques (réseau 30 j ; expiration des conventions).
 2. Traiter les 2 réserves P3 d'affichage dans une **v1.0.1** de maintenance.
-3. Ajouter une **CI** (`npm test`) + couverture (`c8`) et un contrôle de non-régression CADOZAT automatisé.
+3. Ajouter une **CI** (`npm test`) + couverture (`c8`) et un contrôle de non-régression ORYX AUTO automatisé.
 4. Nettoyer la racine selon `RELEASE_CLEANUP_REPORT.md` (rapport uniquement, rien supprimé ici).
 5. Mettre en place `develop` + `feature/*` avant d'ouvrir le LOT 7.
 

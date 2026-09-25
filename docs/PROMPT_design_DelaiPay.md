@@ -3,7 +3,7 @@
 > Prompts prêts à coller dans **Claude** (mode artefact / frontend) pour générer une maquette
 > premium de la plateforme DelaiPay. Contient : ① le prompt **complet**, ② une variante **courte**
 > (itérations rapides), ③ une variante **mono-écran** (tableau de bord exécutif), ④ conseils d'itération
-> et ⑤ le jeu de **données réelles CADOZAT** à réutiliser.
+> et ⑤ le jeu de **données de démonstration ORYX AUTO (fictives)** à réutiliser.
 >
 > Fonctionne aussi avec v0 / Lovable (retirer la mention « artefact »). Pour une sortie React/Tailwind,
 > ajouter en tête : « Utilise React + Tailwind dans un seul fichier ».
@@ -90,24 +90,24 @@ CONTRAINTES TECHNIQUES
    manquante, anomalie de saisie), sévérité, date, action.
 
 DONNÉES RÉELLES À UTILISER (réalisme — ne pas inventer de "lorem")
-- Cabinet : HLZ Consulting. Utilisatrice/CAC : Mme Hajrioui Zahra (avatar "ZH").
-- Client affiché : STE CADOZAT SARL — IF 6590278 — ICE 001538487000034 — RC 559 — 
-  AV AL MAGHRIB AL ARABI N°189, Ouarzazate — CA HT 60 457 607,22 DH — régime trimestriel + 
+- Cabinet : HLZ Consulting. Utilisatrice/CAC : Leïla Amrani, persona fictive (avatar "LA").
+- Client affiché : STE ORYX AUTO SARL — IF 99000017 — ICE 009990000000017 — RC 9901 — 
+  15 BD DES CEDRES, Casablanca — CA HT 60 457 607,22 DH — régime trimestriel + 
   visa commissaire aux comptes. Période : Trimestre 1 2026.
 - Totaux : montant TTC concerné 350 964,45 DH ; amende du trimestre 7 026,00 DH ; 
   montant à verser 7 026,00 DH.
 - Lignes de factures (fournisseur ; TTC ; date facture ; date paiement ; convention ; 
   retard(j) ; amende) :
-  • TRACTAFRIC MOTORS MAROC (IF 40126620) ; 245 595,80 ; 27/11/25 ; 30/03/26 ; 120 j ; +3 ; 5 525,91
-  • BG EXPRESS SARL (IF 31837263) ; 3 050,00 ; 31/05/25 ; 15/01/26 ; 120 j ; +109 ; 25,93
-  • PNEUMATIQUE TIFAOUINE (IF 20725334) ; 6 600,00 ; 30/06/25 ; 17/02/26 ; 120 j ; +112 ; 112,20
-  • TOTALENERGIES MARKETING MAROC (IF 1085284) ; 37 140,00 ; 31/10/25 ; 20/01/26 ; 60 j ; +21 ; 315,69
-  • MARIBAT DISTRIBUTION (IF 52695980) ; 3 440,00 ; 24/10/25 ; 09/01/26 ; 60 j ; +17 ; 29,24
-  • CARROSSERIE PONT DU SOUSS (IF 6949308) ; 6 600,00 ; 02/05/25 ; 13/01/26 ; 120 j ; +136 ; 56,10
-  • BATHA AUTO (IF 4502381) ; 1 500,90 ; 24/11/25 ; 13/03/26 ; 120 j ; −11 ; — (dans les délais)
-  • FAVEMAC (IF 25026628) ; 43 889,20 ; 31/10/25 ; 12/01/26 ; 120 j ; −47 ; — (dans les délais)
+  • KORAL ENGINS SA (IF 99100011) ; 245 595,80 ; 27/11/25 ; 30/03/26 ; 120 j ; +3 ; 5 525,91
+  • BETA EXPRESS SARL (IF 99100002) ; 3 050,00 ; 31/05/25 ; 15/01/26 ; 120 j ; +109 ; 25,93
+  • HORIZON PNEUMATIQUES (IF 99100008) ; 6 600,00 ; 30/06/25 ; 17/02/26 ; 120 j ; +112 ; 112,20
+  • JASMIN LUBRIFIANTS SA (IF 99100010) ; 37 140,00 ; 31/10/25 ; 20/01/26 ; 60 j ; +21 ; 315,69
+  • GRENAT DISTRIBUTION (IF 99100007) ; 3 440,00 ; 24/10/25 ; 09/01/26 ; 60 j ; +17 ; 29,24
+  • ETOILE CARROSSERIE (IF 99100005) ; 6 600,00 ; 02/05/25 ; 13/01/26 ; 120 j ; +136 ; 56,10
+  • ALPHA PIECES AUTO (IF 99100001) ; 1 500,90 ; 24/11/25 ; 13/03/26 ; 120 j ; −11 ; — (dans les délais)
+  • FALAISE MATERIAUX (IF 99100006) ; 43 889,20 ; 31/10/25 ; 12/01/26 ; 120 j ; −47 ; — (dans les délais)
 - Visa : "Sans observation" ; article 2.78 ; Directive OEC du 06/10/2024 ; 
-  Marrakech, le 30/04/2026 ; signataire Mme Hajrioui Zahra.
+  Marrakech, le 30/04/2026 ; signataire Leïla Amrani (persona fictive).
 
 BARRE DE QUALITÉ ("bien fini")
 - Alignement parfait, rythme d'espacement régulier, tout le contenu est réaliste et cohérent.
@@ -140,8 +140,8 @@ segmentation risque Vert→Rouge foncé (#2E9E5B/#E4B62C/#E08A2B/#D2452F/#8E1F13
 Barre latérale sombre + top bar (recherche, sélecteur de cabinet, avatar "ZH"). 
 Mode clair + sombre. Écran affiché : "Feuille de calcul des délais" (tableau : facture, 
 fournisseur+ICE, TTC, dates, DÉLAI, CONVENTION 60/120, RETARD coloré, amende ; KPIs en tête ; 
-ligne de total). Données réelles : STE CADOZAT SARL, T1 2026, TTC concerné 350 964,45 DH, 
-amende 7 026,00 DH ; fournisseurs TRACTAFRIC/BG EXPRESS/PNEUMATIQUE/TOTALENERGIES/MARIBAT. 
+ligne de total). Données de démonstration : STE ORYX AUTO SARL, T1 2026, TTC concerné 350 964,45 DH, 
+amende 7 026,00 DH ; fournisseurs KORAL ENGINS/BETA EXPRESS/HORIZON PNEUMATIQUES/JASMIN LUBRIFIANTS/GRENAT DISTRIBUTION. 
 Zéro lorem ipsum, rendu "prêt client".
 ```
 
@@ -168,7 +168,7 @@ Contenu :
   Montant TTC concerné 4 380 000 DH ; Amende potentielle 96 500 DH ; Conventions manquantes 37.
 - Graphe d'évolution mensuelle (SVG) des montants en retard sur 12 mois.
 - Heatmap risque (entreprises × mois) avec l'échelle de couleurs de segmentation.
-- Liste "Top 5 entreprises à risque" (dont STE CADOZAT SARL — 350 964,45 DH concernés, 
+- Liste "Top 5 entreprises à risque" (dont STE ORYX AUTO SARL — 350 964,45 DH concernés, 
   amende 7 026,00 DH, échéance 30/04/2026) avec pastille de risque.
 - Bloc "Échéances de déclaration à venir" (30/04, 31/07, 31/10, 31/01) avec compte à rebours.
 
@@ -191,8 +191,8 @@ AA, aucun lorem ipsum. Rendu "prêt à présenter au client".
 
 | Élément | Valeur |
 |---|---|
-| Cabinet / signataire | HLZ Consulting — Mme Hajrioui Zahra (CAC) |
-| Client | STE CADOZAT SARL · IF 6590278 · ICE 001538487000034 · RC 559 · Ouarzazate |
+| Cabinet / signataire | HLZ Consulting — Leïla Amrani (persona fictive) (CAC) |
+| Client | STE ORYX AUTO SARL · IF 99000017 · ICE 009990000000017 · RC 9901 · Casablanca |
 | CA HT | 60 457 607,22 DH → régime trimestriel + visa CAC |
 | Période | Trimestre 1 2026 |
 | Montant TTC concerné | 350 964,45 DH |
@@ -201,5 +201,5 @@ AA, aucun lorem ipsum. Rendu "prêt à présenter au client".
 | Références | Déclaration : art. 78-3 & 78-4 (loi 15-95) · Visa : art. 2.78 · Directive OEC 06/10/2024 |
 | Délais | 60 j (sans convention) / 120 j (avec convention) / 180 j (sectoriel) |
 
-> Fournisseurs types : TRACTAFRIC MOTORS MAROC, BG EXPRESS, PNEUMATIQUE TIFAOUINE, 
-> TOTALENERGIES MARKETING MAROC, MARIBAT DISTRIBUTION, CARROSSERIE PONT DU SOUSS, BATHA AUTO, FAVEMAC.
+> Fournisseurs types : KORAL ENGINS SA, BETA EXPRESS, HORIZON PNEUMATIQUES, 
+> JASMIN LUBRIFIANTS SA, GRENAT DISTRIBUTION, ETOILE CARROSSERIE, ALPHA PIECES AUTO, FALAISE MATERIAUX.

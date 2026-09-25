@@ -3,7 +3,7 @@
 > Documentation **précise** des règles métier telles qu'implémentées dans le code (Release **1.0**, version `e25ef50ee4`, commit `17ca7ac`).
 > Chaque règle indique son **fichier / fonction** de référence. Aucune règle n'est inventée : ce document reflète le comportement réel.
 >
-> Contexte : suivi des délais de paiement — loi marocaine **69-21**. Cabinet pilote **HLZ Consulting**, validatrice **Mme Zahra Hajrioui**, client démo **STE CADOZAT SARL**.
+> Contexte : suivi des délais de paiement — loi marocaine **69-21**. Cabinet pilote **HLZ Consulting**, validatrice **la commissaire aux comptes du cabinet pilote**, client démo **STE ORYX AUTO SARL**.
 >
 > Lots livrés et validés : **LOT 1** import sécurisé · **LOT 2** réseau · **LOT 3** conventions/documents (Stratégie B, sans OCR) · **LOT 4** intégrité conventions (règle de délai unique) · **LOT 5** cohérence des périodes · **LOT 6** clôture/réouverture.
 
@@ -126,13 +126,13 @@ Pour un trimestre déclaré, le délai est constaté à la **date d'arrêté** :
 
 - Date limite = `date_facture + délai_autorisé` (délai passé par `saneDelai`).
 - **Retard (jours)** = `max(0, date_arrêté − date_limite)` — **jamais négatif**.
-- **Découpage par mois calendaire** (confirmé par Mme Zahra) : tout mois calendaire touché par le retard compte pour **un mois entier** (`retardMonths` : de `date_limite + 1` jour jusqu'à la date d'arrêté).
+- **Découpage par mois calendaire** (confirmé par la commissaire aux comptes) : tout mois calendaire touché par le retard compte pour **un mois entier** (`retardMonths` : de `date_limite + 1` jour jusqu'à la date d'arrêté).
 - **Amende trimestrielle** = `TTC × Σ taux(mois de retard tombant DANS le trimestre déclaré)` :
   - **tout premier mois de retard** (sur la vie de la facture) = **taux directeur Bank Al-Maghrib** (`tauxAt`, défaut 0,0225) ;
   - chaque mois (ou fraction) suivant = **0,85 %** (`TAUX_MOIS_SUPP`).
   - Seuls les mois de retard **tombant dans le trimestre déclaré** sont facturés (`quarterMonths`).
 
-Résultats de référence reproduits au centime (T1 2026 CADOZAT) : TRACTAFRIC 245 595,80 → 5 525,91 (2,25 %) ; PNEUMATIQUE 6 600 → 112,20 (1,70 %) ; BG EXPRESS 3 050 → 25,93 (0,85 %).
+Résultats de référence reproduits au centime (T1 2026 ORYX AUTO) : KORAL ENGINS 245 595,80 → 5 525,91 (2,25 %) ; HORIZON PNEUMATIQUES 6 600 → 112,20 (1,70 %) ; BETA EXPRESS 3 050 → 25,93 (0,85 %).
 
 ### 5.3 Couleur de risque
 `riskColor()` — `src/calc.js`

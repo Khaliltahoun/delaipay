@@ -8,7 +8,7 @@ les périmètres et priorités restent à arbitrer avec le cabinet.
 
 Principes directeurs conservés : **zéro dépendance native** (`node:sqlite`), **honnêteté
 fonctionnelle** (aucune promesse non tenue), **non-régression du moteur légal** (référence
-CADOZAT), **immuabilité des périodes clôturées**.
+ORYX AUTO), **immuabilité des périodes clôturées**.
 
 ---
 

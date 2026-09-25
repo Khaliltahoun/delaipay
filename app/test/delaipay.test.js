@@ -16,7 +16,21 @@ const { db } = require('../src/db');
 const importer = require('../src/importer');
 const calc = require('../src/calc');
 const { uid } = require('../src/util');
-const DOCS = path.join(__dirname, '..', '..', 'docs');
+const demoFixture = require('../src/demo-fixture');
+const XLSX_ = require('xlsx');
+// Classeur anonymisé (test/fixtures/*.json) → Buffer .xlsx. Aucune donnée réelle dans le dépôt.
+function fixtureBuf(name) {
+  const fx = require(path.join(__dirname, 'fixtures', name + '.json'));
+  const ws = {};
+  for (const [r, c, t, v] of fx.cells) {
+    const ref = XLSX_.utils.encode_cell({ r, c });
+    if (t === 'd') { const [y, m, d] = v.split('-').map(Number); ws[ref] = { t: 'n', v: (Date.UTC(y, m - 1, d) - Date.UTC(1899, 11, 30)) / 86400000, z: 'dd/mm/yyyy' }; }
+    else ws[ref] = { t, v };
+  }
+  ws['!ref'] = XLSX_.utils.encode_range({ s: { r: 0, c: 0 }, e: { r: fx.rows - 1, c: fx.cols - 1 } });
+  const wb = XLSX_.utils.book_new(); XLSX_.utils.book_append_sheet(wb, ws, fx.sheet);
+  return XLSX_.write(wb, { type: 'buffer', bookType: 'xlsx' });
+}
 
 function seedCab() {
   db.prepare('INSERT INTO taux_bam (id,cabinet_id,taux,date_debut,date_fin) VALUES (?,?,?,?,?)').run(uid('tx'), null, 0.03, '2022-09-01', '2024-06-25');
@@ -53,10 +67,10 @@ test('périodes verrouillées', () => {
   assert.equal(periode.isLocked('en_preparation'), false);
 });
 
-/* -------------------- NON-RÉGRESSION CALCUL (CADOZAT) -------------------- */
-test('CADOZAT DELAI.xlsx T1 2026 ≈ 7025,33 DH (non-régression)', { skip: !fs.existsSync(path.join(DOCS, 'DELAI.xlsx')) }, () => {
+/* -------------------- NON-RÉGRESSION CALCUL (jeu de démonstration fictif) -------------------- */
+test('démo T1 2026 ≈ 7025,33 DH (non-régression)', () => {
   const { cab, ent } = seedCab();
-  const r = importer.importWorkbook(fs.readFileSync(path.join(DOCS, 'DELAI.xlsx')), { cabinetId: cab, entrepriseId: ent, sourceName: 'DELAI.xlsx', periode: { annee: 2026, trimestre: 1 } });
+  const r = importer.importWorkbook(demoFixture.demoWorkbookBuffer(), { cabinetId: cab, entrepriseId: ent, sourceName: demoFixture.DEMO_SOURCE_NAME, periode: { annee: 2026, trimestre: 1 } });
   // 36 (et non 34) : 2 lignes « doublon potentiel » (même facture, dates de paiement différentes) sont désormais GARDÉES et signalées (paiement partiel / scindé), au
   // lieu d'être supprimées. Évolution LÉGITIME de la règle. L'AMENDE reste 7 025,33 DH (ces 2 factures
   // sont réglées dans les délais → 0 amende), donc la non-régression du moteur légal est préservée.
@@ -128,26 +142,24 @@ test('repair : plafonne les délais corrompus et révèle le retard masqué', ()
 });
 
 /* -------------------- IMPORT : classification lignes -------------------- */
-test('preview : rejette TTC négatif (avoirs) et détecte les doublons', { skip: !fs.existsSync(path.join(DOCS, '..', 'DELAI DE PAIEMENT', '01-2026', 'FERMA PREFA', 'Tableau des déductions janvier 2026.xlsx')) }, () => {
+test('preview : rejette TTC négatif (avoirs) et détecte les doublons', () => {
   const { cab, ent } = seedCab();
-  const f = path.join(DOCS, '..', 'DELAI DE PAIEMENT', '01-2026', 'FERMA PREFA', 'Tableau des déductions janvier 2026.xlsx');
-  const buf = fs.readFileSync(f);
+  const buf = fixtureBuf('import-avoirs');
   const pv = importer.previewImport(buf, { sheetName: 'A', headerRow: 0, mapping: { numero: 2, date_facture: 1, four_nom: 4, ttc: 6, date_paiement: 13 }, cabinetId: cab, entrepriseId: ent, annee: 2025, trimestre: 4 });
   assert.ok(pv.stats.rejetees > 0, 'doit rejeter des avoirs TTC<0');
   assert.ok(pv.stats.valides > 0);
 });
-test('confirm transactionnel + ré-import = doublons (dédoublonnage)', { skip: !fs.existsSync(path.join(DOCS, '..', 'DELAI DE PAIEMENT', '01-2026', 'FERMA PREFA', 'Tableau des déductions janvier 2026.xlsx')) }, () => {
+test('confirm transactionnel + ré-import = doublons (dédoublonnage)', () => {
   const { cab, ent } = seedCab();
-  const f = path.join(DOCS, '..', 'DELAI DE PAIEMENT', '01-2026', 'FERMA PREFA', 'Tableau des déductions janvier 2026.xlsx');
-  const buf = fs.readFileSync(f);
-  const opts = { sheetName: 'A', headerRow: 0, mapping: { numero: 2, date_facture: 1, four_nom: 4, ttc: 6, date_paiement: 13 }, cabinetId: cab, entrepriseId: ent, annee: 2025, trimestre: 4, sourceName: 'ferma.xlsx', userId: 'u' };
+  const buf = fixtureBuf('import-avoirs');
+  const opts = { sheetName: 'A', headerRow: 0, mapping: { numero: 2, date_facture: 1, four_nom: 4, ttc: 6, date_paiement: 13 }, cabinetId: cab, entrepriseId: ent, annee: 2025, trimestre: 4, sourceName: 'avoirs.xlsx', userId: 'u' };
   const r1 = importer.confirmImport(buf, opts);
   assert.ok(r1.imported > 0);
   const nb = db.prepare('SELECT COUNT(*) n FROM facture WHERE entreprise_id=?').get(ent).n;
   assert.equal(nb, r1.imported, 'factures en base = importées');
   // Nouvelle règle : les doublons sont GARDÉS et SIGNALÉS (paiement partiel / facture scindée),
   // pas supprimés. Un ré-import recrée donc les lignes, toutes marquées « doublon potentiel ».
-  const r2 = importer.confirmImport(buf, { ...opts, sourceName: 'ferma2.xlsx' });
+  const r2 = importer.confirmImport(buf, { ...opts, sourceName: 'avoirs2.xlsx' });
   assert.equal(r2.imported, r1.imported, 'ré-import : lignes gardées (non supprimées)');
   assert.ok(r2.duplicates > 0, 'ré-import : doublons potentiels signalés');
   const flag = db.prepare('SELECT COUNT(*) n FROM facture WHERE entreprise_id=? AND doublon_potentiel=1').get(ent).n;
@@ -785,7 +797,7 @@ test('reseau/HTTP #18-20 : opérateur exclu du tableau déclaratif, visible en i
  *  - harmonisation des 3 imports (fonction centrale markPotentialDuplicate)
  *  - migration idempotente des statuts de revue
  *  - endpoint PATCH de revue (audit, anomalies)
- *  - exposition API + non-régression métier (CADOZAT, réseau, conventions, dates)
+ *  - exposition API + non-régression métier (dossier de démonstration, réseau, conventions, dates)
  * ================================================================================== */
 const { backfillStatutDoublon } = require('../src/db');
 
@@ -1110,10 +1122,10 @@ test('doublon/E32 date d\'arrêté trimestrielle inchangée', () => {
 test('doublon/E33 périodes clôturées inchangées (verrou)', () => {
   assert.equal(periode.isLocked('cloturee'), true); assert.equal(periode.isLocked('declaree'), true);
 });
-test('doublon/E34-E36 CADOZAT : 36 factures, 7025,33 DH, 2 doublons à amende nulle', { skip: !fs.existsSync(path.join(DOCS, 'DELAI.xlsx')) }, () => {
+test('doublon/E34-E36 démo : 36 factures, 7025,33 DH, 2 doublons à amende nulle', () => {
   const { cab, ent } = seedCab();
-  const r = importer.importWorkbook(fs.readFileSync(path.join(DOCS, 'DELAI.xlsx')), { cabinetId: cab, entrepriseId: ent, sourceName: 'DELAI.xlsx', periode: { annee: 2026, trimestre: 1 } });
-  assert.equal(r.imported, 36, 'CADOZAT = 36 factures');
+  const r = importer.importWorkbook(demoFixture.demoWorkbookBuffer(), { cabinetId: cab, entrepriseId: ent, sourceName: demoFixture.DEMO_SOURCE_NAME, periode: { annee: 2026, trimestre: 1 } });
+  assert.equal(r.imported, 36, 'démo = 36 factures');
   assert.equal(r.duplicates, 2, '2 doublons potentiels gardés');
   const amende = db.prepare('SELECT ROUND(SUM(montant_amende),2) s FROM facture WHERE entreprise_id=?').get(ent).s;
   assert.ok(Math.abs(amende - 7025.33) < 0.5, `amende ${amende} ≈ 7025,33 (inchangée)`);
@@ -1350,29 +1362,29 @@ test('conv/OBJ8 legacy auto (sans mapping) : « 60 à 120 » → 120 inchangé',
 });
 
 /* ==================================================================================
- * LOT 1 (P0) — SÉCURISATION DE L'AUTO-MAPPING (corruption silencieuse BANKAI 005)
+ * LOT 1 (P0) — SÉCURISATION DE L'AUTO-MAPPING (corruption silencieuse relevé EDI 005)
  * ================================================================================== */
-const BANKAI_DIR = path.join(DOCS, '..', 'DELAI DE PAIEMENT', '02-2026', 'BANKAI');
-const bankaiFile = n => path.join(BANKAI_DIR, `BANKAI RELEV DED TVA ${n}-2026.xlsm`);
-function autoMap(file) {
-  const a = importer.analyzeWorkbook(fs.readFileSync(file), 'factures');
+// Relevés EDI de déduction TVA anonymisés (structure et en-têtes d'origine, libellés/identifiants aléatoires).
+const ediFixture = n => fixtureBuf(n === '004' ? 'automap-edi-a' : 'automap-edi-b');
+function autoMap(buf) {
+  const a = importer.analyzeWorkbook(buf, 'factures');
   const s = a.feuilles.find(x => x.nom === a.suggestion) || a.feuilles[0];
   const m = {}; for (const [k, v] of Object.entries(s.mapping)) m[k] = { label: (s.colonnes[v.col] || {}).label, conf: v.confidence };
   return { a, sheet: s, m };
 }
-test('automap/L1 BANKAI 004 : Fournisseur→LIB_FRSS, TTC→M_TTC (titre, 92%)', { skip: !fs.existsSync(bankaiFile('004')) }, () => {
-  const { m } = autoMap(bankaiFile('004'));
+test('automap/L1 relevé EDI 004 : Fournisseur→LIB_FRSS, TTC→M_TTC (titre, 92%)', () => {
+  const { m } = autoMap(ediFixture('004'));
   assert.equal(m.four_nom.label, 'LIB_FRSS'); assert.equal(m.ttc.label, 'M_TTC');
   assert.ok(m.four_nom.conf >= 0.9 && m.ttc.conf >= 0.9, 'confiance élevée par titre');
 });
-test('automap/L1 BANKAI 005 : Fournisseur ne mappe JAMAIS M_TTC, TTC jamais ORDRE', { skip: !fs.existsSync(bankaiFile('005')) }, () => {
-  const { m } = autoMap(bankaiFile('005'));
+test('automap/L1 relevé EDI 005 : Fournisseur ne mappe JAMAIS M_TTC, TTC jamais ORDRE', () => {
+  const { m } = autoMap(ediFixture('005'));
   assert.equal(m.four_nom.label, 'LIB_FRSS', 'Fournisseur = LIB_FRSS (pas M_TTC)');
   assert.equal(m.ttc.label, 'M_TTC', 'TTC = M_TTC (pas ORDRE)');
   assert.notEqual(m.four_nom.label, 'M_TTC'); assert.notEqual(m.ttc.label, 'ORDRE');
 });
-test('automap/L1 validation BLOQUE un mapping forcé incohérent (four_nom=M_TTC, ttc=ORDRE)', { skip: !fs.existsSync(bankaiFile('005')) }, () => {
-  const wb = XLSX.read(fs.readFileSync(bankaiFile('005')), { cellDates: true });
+test('automap/L1 validation BLOQUE un mapping forcé incohérent (four_nom=M_TTC, ttc=ORDRE)', () => {
+  const wb = XLSX.read(ediFixture('005'), { cellDates: true });
   const grid = XLSX.utils.sheet_to_json(wb.Sheets['EDI'], { header: 1, blankrows: true, raw: true });
   const v = importer.validateImportMapping({ grid, headerRow: 7, startRow: 8, mapping: { four_nom: 5, ttc: 0, date_facture: 12 } });
   assert.equal(v.ok, false, 'mapping incohérent refusé');
@@ -1424,14 +1436,14 @@ async function delaisRows(t) {
   const url = baseUrl() + `/api/clients/${t.ent}/delais?annee=2026&trimestre=1`, opt = { headers: { Cookie: cookieOf(t.u), Connection: 'close' } };
   for (let i = 0; i < 3; i++) { try { const res = await fetch(url, opt); return (await res.json()).rows; } catch (e) { if (i === 2) throw e; } }
 }
-test('reseau/L2 /delais expose une PROPOSITION réseau (SRM, Maroc Telecom) et PAS de faux positif (TOTAL MAROC)', async () => {
+test('reseau/L2 /delais expose une PROPOSITION réseau (SRM, Maroc Telecom) et PAS de faux positif (LUBRIFIANTS MAROC)', async () => {
   const t = newTenant();
-  seedFacFour(t, 'SRM MARRAKECH SAFI'); seedFacFour(t, 'MAROC TELECOM'); seedFacFour(t, 'TOTAL MAROC');
+  seedFacFour(t, 'SRM MARRAKECH SAFI'); seedFacFour(t, 'MAROC TELECOM'); seedFacFour(t, 'LUBRIFIANTS MAROC');
   const rows = await delaisRows(t);
-  const srm = rows.find(r => r.four === 'SRM MARRAKECH SAFI'), iam = rows.find(r => r.four === 'MAROC TELECOM'), total = rows.find(r => r.four === 'TOTAL MAROC');
+  const srm = rows.find(r => r.four === 'SRM MARRAKECH SAFI'), iam = rows.find(r => r.four === 'MAROC TELECOM'), total = rows.find(r => r.four === 'LUBRIFIANTS MAROC');
   assert.equal(srm.reseau_statut, 'propose', 'SRM proposé'); assert.equal(srm.operateur_reseau, false, 'pas encore confirmé');
   assert.equal(iam.reseau_statut, 'propose', 'Maroc Telecom proposé');
-  assert.equal(total.reseau_statut, 'aucun', 'TOTAL MAROC : aucun faux positif');
+  assert.equal(total.reseau_statut, 'aucun', 'LUBRIFIANTS MAROC : aucun faux positif');
 });
 test('reseau/L2 confirmation → délai 30 j + exclusion déclarative + reste en vue interne', async () => {
   const t = newTenant();

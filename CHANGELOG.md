@@ -20,11 +20,11 @@ indépendamment par la revue Claude Cowork (tests réels sur navigateur).
 - **Commit** : `17ca7ac`
 - **Tag** : `v1.0.0`
 - **Suite de tests** : 160/160 au vert
-- **Non-régression de référence** : CADOZAT T1 2026 = **7 025,33 DH / 36 factures** (inchangé sur les 6 lots)
+- **Non-régression de référence** : ORYX AUTO T1 2026 = **7 025,33 DH / 36 factures** (inchangé sur les 6 lots)
 
 ### LOT 1 — Sécurisation de l'auto-mapping des imports (P0)
 
-*Commit `75c22ee`. Corrige une corruption silencieuse des données à l'import (reproduite sur `BANKAI RELEV DED TVA 005`).*
+*Commit `75c22ee`. Corrige une corruption silencieuse des données à l'import (reproduite sur un relevé EDI de déduction TVA réel).*
 
 #### Objectif
 Empêcher qu'un mauvais mapping automatique des colonnes Excel/EDI n'écrive des
@@ -76,7 +76,7 @@ Rendre exploitable dans l'interface le traitement particulier des opérateurs r�
   (`PATCH …/classification`, `GET …/reseau/simulation`), `resolveDelaiAutorise`,
   `estHorsTableauDeclaratif` et l'exclusion dans `buildDeclaration` existaient déjà mais les
   classifications réseau n'étaient jamais surfacées ni confirmables. Aucun second moteur créé.
-- **Aucun faux positif** : TOTAL MAROC et AFRIQUIA restent `reseau_statut='aucun'` (non réseau).
+- **Aucun faux positif** : les distributeurs de carburant restent `reseau_statut='aucun'` (non réseau).
   Priorité d'identification inchangée : ICE > IF > RC > alias confirmés > nom > mots-clés.
 
 #### Impacts métier
@@ -176,7 +176,7 @@ la réouverture est explicite, réservée à l'administrateur, motivée et trac�
 #### Impacts métier
 - Les montants déclarés à la DGI sont figés à la clôture et ne peuvent plus dériver. Toute
   régularisation passe par une réouverture admin motivée et traçable (piste d'audit complète).
-- Validation de bout en bout : clôture de BANKAI T2 (amende figée 52 102,32 DH malgré une
+- Validation de bout en bout : clôture d'un dossier pilote T2 (amende figée 52 102,32 DH malgré une
   convention 120 j créée après clôture) → réouverture motivée → dégel (52 102,32 → 37 188,15 DH).
 
 ### Sécurité (rappel, socle stable depuis RC1)

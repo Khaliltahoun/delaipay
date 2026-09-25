@@ -106,7 +106,8 @@ ensureSeed().then((info) => {
     console.log(`  ▸ Version  : ${VERSION}`);
     if (info && info.seeded) {
       console.log(`  ▸ Compte initial créé : ${info.email}`);
-      // Le mot de passe n'est jamais journalisé (défini via ADMIN_PASSWORD).
+      // Mot de passe défini via ADMIN_PASSWORD : jamais journalisé. Généré (démo locale) : affiché cette seule fois.
+      if (info.password) console.log(`  ▸ Mot de passe généré (affiché une seule fois) : ${info.password}`);
     }
     console.log('');
   });

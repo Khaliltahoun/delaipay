@@ -1,7 +1,7 @@
-# Script de démonstration DelaiPay (≈ 15 min) — pour Mme Zahra
+# Script de démonstration DelaiPay (≈ 15 min) — pour l'équipe du cabinet
 
 > Objectif : présenter le parcours complet, de la connexion à la clôture d'un trimestre.
-> Pré-requis : application démarrée, compte `zahra@hlz.ma`, un fichier Excel de test (journal d'achats / tableau de déduction TVA).
+> Pré-requis : application démarrée, compte `admin@hlz.demo`, un fichier Excel de test (journal d'achats / tableau de déduction TVA).
 
 | # | Étape | Ce qu'on montre | Durée |
 |---|---|---|---|
