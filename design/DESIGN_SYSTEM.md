@@ -43,7 +43,7 @@ Graisses : 430 texte · 520 moyen · 600 titres et montants · 680 exceptionnel.
 ## 3. Couleur
 ### Neutres (clair / sombre)
 `--bg #F4F6F7 / #0A1519` · `--surface #FFF / #0F1E24` · `--surface-2` · `--surface-3` · `--ink #0F2530 / #E5EDF0` ·
-`--ink-2` · `--muted #5E6F77 / #8FA3AB` · `--faint #657680 / #7F949C` (**relevé** : l'ancien `--faint` n'atteignait que 2,9:1) ·
+`--ink-2` · `--muted #5E6F77 / #8FA3AB` · `--faint #60707A / #7F949C` (**relevé** : l'ancien `--faint` n'atteignait que 2,9:1) ·
 `--line` · `--line-strong` · `--focus`.
 ### Marque
 Pétrole `--brand #0E3544` · laiton `--accent #B08A4E` (**jamais du texte** : 3,2:1 ; texte laiton = `--accent-ink #8A6733`, 5,2:1) ·
@@ -55,16 +55,16 @@ ivoire `#F6F2EA`. Laiton ≤ 5 % de la surface (carré du symbole, indicateur de
 | Statut | Jeton | Clair | Sombre | Icône | Exemples |
 |---|---|---|---|---|---|
 | **Dans les délais** | `--st-ontime` (= `--ok`) | `#2A7A55` | `#5CC08F` | coche | facture réglée à temps, convention appliquée |
-| **Approche** | `--watch` | `#946A0C` | `#E2BE5A` | sablier | échéance < 15 j |
-| **À vérifier** | `--warn` | `#AF5A17` | `#E39A5B` | triangle | anomalie, doublon ?, conflit |
-| **En retard / à déclarer** | `--st-late` (= `--late`) | `#BD3626` | `#EF7B6B` | horloge barrée | retard, facture à déclarer |
-| **Pénalité** | `--st-penalty` (= `--severe`) | `#861E13` | `#E0907F` | pièce | amende, pénalités importantes |
-| **Période clôturée** | `--st-closed` (= `--locked`) | `#56656C` | `#9AABB2` | cadenas | clôturée, lecture seule |
-| **Période rouverte** | `--st-reopened` (= `--warn`) | `#AF5A17` | `#E39A5B` | cadenas ouvert | réouverture motivée (jamais sans l'icône) |
-| **Règle spéciale** | `--info` | `#2D5B86` | `#8DB3E0` | antenne | opérateur de réseau (30 j) |
+| **Approche** | `--watch` | `#90670C` | `#E2BE5A` | sablier | échéance < 15 j |
+| **À vérifier** | `--warn` | `#A65616` | `#E89A5B` | triangle | anomalie, doublon ?, conflit |
+| **En retard / à déclarer** | `--st-late` (= `--late`) | `#BD3626` | `#EE7A69` | horloge barrée | retard, facture à déclarer |
+| **Pénalité** | `--st-penalty` (= `--severe`) | `#861E13` | `#F09A8C` | pièce | amende, pénalités importantes |
+| **Période clôturée** | `--st-closed` (= `--locked`) | `#56656C` | `#A2B1B7` | cadenas | clôturée, lecture seule |
+| **Période rouverte** | `--st-reopened` (= `--warn`) | `#A65616` | `#E89A5B` | cadenas ouvert | réouverture motivée (jamais sans l'icône) |
+| **Règle spéciale** | `--info` | `#2D5B86` | `#83AEDB` | antenne | opérateur de réseau (30 j) |
 | **Destruction** | `--danger` (= `--late`) | — | — | corbeille | **seulement** dans les dialogues et menus, jamais au repos en ligne |
 
-Chaque jeton a sa variante `-soft` (fond) et `-line` (bordure). Texte de statut sur fond `-soft` ≥ 4,5:1 (vérifié par test).
+Chaque jeton a sa variante `-soft` (fond) et `-line` (bordure). Texte de statut sur fond `-soft` et tout texte sur `--bg` / `--surface` / `--surface-3` ≥ 4,5:1 dans les deux thèmes (vérifié par `test/design.test.js`).
 
 ## 4. Espacement, rayons, ombres
 Grille 4 px (`--sp-1` 4 → `--sp-12` 48). Marges de page : 32 px (≥ 1100), 24 px (≥ 720), 16 px (mobile). Gouttière de grille : 16 px partout.

@@ -20,7 +20,7 @@ fetch('/api/tenant', { credentials: 'same-origin' }).then(r => r.ok ? r.json() :
     document.getElementById('wsName').textContent = t.displayName;
     const m = document.getElementById('wsMono');
     if (t.logoUrl) { const img = new Image(); img.alt = ''; img.className = 'ws-logo-img'; img.src = t.logoUrl; m.textContent = ''; m.appendChild(img); m.classList.add('has-logo'); }
-    else { m.textContent = t.initials; if (t.primaryColor) m.style.background = t.primaryColor; }
+    else { m.textContent = t.initials; if (t.palette) { m.style.background = t.palette.tenant; m.style.color = t.palette.tenantInk; } }
     if (t.active === false) {
       showNotice('warn', 'Espace de travail désactivé', `L’accès à l’espace ${t.displayName} est suspendu. Contactez DelaiPay pour le réactiver.`);
       btn.disabled = true;

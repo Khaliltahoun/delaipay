@@ -20,7 +20,7 @@ else post('/api/invitations/lookup', { token }).then(r => {
   $('#wsName').textContent = w.displayName || 'Espace';
   const m = $('#wsMono');
   if (w.logoUrl) { m.innerHTML = ''; const img = new Image(); img.src = w.logoUrl; img.alt = ''; img.className = 'ws-logo-img'; m.appendChild(img); m.classList.add('has-logo'); }
-  else { m.textContent = w.initials || 'DP'; if (w.primaryColor) m.style.background = w.primaryColor; }
+  else { m.textContent = w.initials || 'DP'; if (w.palette) { m.style.background = w.palette.tenant; m.style.color = w.palette.tenantInk; } }
   $('#invMail').textContent = d.email; $('#invRole').textContent = d.roleLabel || d.role;
   $('#expires').textContent = `Invitation valable jusqu’au ${String(d.expiresAt || '').slice(0, 10).split('-').reverse().join('/')}.`;
   document.title = `Invitation — ${w.displayName || ''} · DelaiPay`;

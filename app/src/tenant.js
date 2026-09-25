@@ -1,4 +1,5 @@
 'use strict';
+const { tenantPalette } = require('./brand-color');
 /**
  * Espace de travail (tenant) — identité et résolution par nom d'hôte.
  *
@@ -81,6 +82,8 @@ function publicBranding(cab) {
     initials: initialsOf(displayName),
     primaryColor: COLOR_RE.test(cab.couleur_primaire || '') ? cab.couleur_primaire : null,
     accentColor: COLOR_RE.test(cab.couleur_accent || '') ? cab.couleur_accent : null,
+    // Variantes accessibles de la couleur d'espace (texte du monogramme ≥ 4,5:1, repère actif ≥ 3:1).
+    palette: tenantPalette(COLOR_RE.test(cab.couleur_primaire || '') ? cab.couleur_primaire : null),
     locale: cab.locale || 'fr-MA',
     active: cab.actif !== 0,
     // Logo servi par /api/tenant/logo (public, hôte) ; le suffixe ?v= change à chaque remplacement.

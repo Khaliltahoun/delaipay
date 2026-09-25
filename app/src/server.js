@@ -29,7 +29,7 @@ app.use(express.urlencoded({ extended: true, limit: '2mb' }));
  */
 function buildVersion() {
   const h = crypto.createHash('sha1');
-  for (const rel of ['js/app.js', 'js/login.js', 'js/invite.js', 'css/app.css']) {
+  for (const rel of ['js/app.js', 'js/login.js', 'js/invite.js', 'css/app.css', '../src/brand-color.js']) {
     try { h.update(fs.readFileSync(path.join(PUB, rel))); } catch (_) {}
   }
   return h.digest('hex').slice(0, 10);
@@ -57,6 +57,7 @@ function assetCache(req, res, next) {
 const staticOpts = { cacheControl: false, etag: true, lastModified: true, index: false };
 app.use('/assets', assetCache, express.static(path.join(PUB, 'assets'), staticOpts));
 app.use('/css', assetCache, express.static(path.join(PUB, 'css'), staticOpts));
+app.get('/js/brand-color.js', assetCache, (req, res) => res.type('application/javascript').sendFile(path.join(__dirname, 'brand-color.js')));
 app.use('/js', assetCache, express.static(path.join(PUB, 'js'), staticOpts));
 
 // Icône de l'onglet (les navigateurs la demandent à la racine même avec <link rel="icon">).

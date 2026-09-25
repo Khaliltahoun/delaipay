@@ -94,7 +94,7 @@ function mountPaged(rows, rowFn, opts = {}) {
     if (bar) {
       bar.innerHTML = shown < rows.length
         ? `<button class="btn btn-ghost" id="pgBtn">Afficher plus — ${shown} / ${rows.length}</button>`
-        : (rows.length > pageSize ? `<span style="color:var(--muted);font-size:12px">${rows.length} ligne(s) affichée(s)</span>` : '');
+        : (rows.length > pageSize ? `<span style="color:var(--muted);font-size:var(--fs-sm)">${rows.length} ligne(s) affichée(s)</span>` : '');
       const b = $('#pgBtn'); if (b) b.onclick = more;
     }
   }
@@ -339,8 +339,10 @@ function applyWorkspace() {
   $('#wsSub').textContent = w.raisonLegale || 'Espace de travail';
   setMono($('#wsMono'), w); setMono($('#umMono'), w);
   $('#umWs').textContent = name;
-  if (w.primaryColor) document.documentElement.style.setProperty('--tenant', w.primaryColor);
-  else document.documentElement.style.removeProperty('--tenant');
+  // Variantes accessibles calculées par le serveur (src/brand-color.js) : la couleur du cabinet ne casse jamais le contraste.
+  const p = w.palette, rs = document.documentElement.style;
+  if (p) { rs.setProperty('--tenant', p.tenant); rs.setProperty('--tenant-ink', p.tenantInk); rs.setProperty('--tenant-line', p.tenantLine); }
+  else ['--tenant', '--tenant-ink', '--tenant-line'].forEach(k => rs.removeProperty(k));
 }
 // Monogramme ou logo de l'espace (logo servi par l'API, image uniquement — jamais de SVG téléversé).
 function setMono(el, w) {
@@ -683,7 +685,7 @@ async function renderDash() {
     </div>
     <div class="card"><div class="card-h"><div><h3>Dossier actif</h3><div class="sub">client sélectionné dans la barre supérieure</div></div></div>
       <div class="card-b">${c ? `
-        <div style="display:flex;align-items:center;gap:12px;margin-bottom:14px"><div class="hub-id" style="width:40px;height:40px;font-size:14px">${esc(initialsOf(c.name))}</div>
+        <div style="display:flex;align-items:center;gap:12px;margin-bottom:14px"><div class="hub-id" style="width:40px;height:40px;font-size:var(--fs-md)">${esc(initialsOf(c.name))}</div>
           <div style="min-width:0"><b style="display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(c.name)}</b><small class="dh mono">${esc(c.ice || c.if || '')}</small></div></div>
         <div class="det-row"><span class="k">Période</span><span class="v">${per}</span></div>
         <div class="det-row"><span class="k">Statut</span><span class="v">${cMeta ? `<span class="period-badge ${cMeta[1]}">${cLocked ? svgI('lock', '') : ''}${esc(cMeta[0])}</span>` : '<span class="dh">aucune donnée sur la période</span>'}</span></div>
@@ -698,12 +700,12 @@ async function renderDash() {
     <div class="card"><div class="card-b">
       <div class="meter" style="height:10px">${segBar || '<i style="width:100%;background:var(--surface-3)"></i>'}</div>
       <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:10px;margin-top:16px">
-        ${segDefs.map(([kk, lbl, col]) => `<div style="display:flex;align-items:center;gap:9px"><span style="width:10px;height:10px;border-radius:3px;background:var(--${col})"></span><div><b class="mono">${seg[kk] || 0}</b> <span class="dh" style="font-size:12px">${lbl}</span></div></div>`).join('')}
+        ${segDefs.map(([kk, lbl, col]) => `<div style="display:flex;align-items:center;gap:9px"><span style="width:10px;height:10px;border-radius:3px;background:var(--${col})"></span><div><b class="mono">${seg[kk] || 0}</b> <span class="dh" style="font-size:var(--fs-sm)">${lbl}</span></div></div>`).join('')}
       </div>
       <div class="hint" style="margin:16px 0 0">${svgI('info')}<span>Taux de conformité = factures payées du trimestre réglées dans le délai applicable (légal, conventionnel ou réseau).</span></div>
     </div></div>
     <div class="card"><div class="card-h"><div><h3>Échéances déclaratives</h3><div class="sub">dépôts SIMPL à venir</div></div></div>
-      <div class="card-b" style="padding-top:4px;padding-bottom:4px">${(d.deadlines || []).map(x => `<div class="dl"><div class="cal"><b>${x.day}</b><small>${esc(x.mon)}</small></div><div><b>${esc(x.label)}</b><div class="dh" style="font-size:12px">${esc(x.sub)}</div></div><div class="cd" style="color:${x.days <= 15 ? 'var(--late)' : 'var(--muted)'}">${esc(x.cd)}</div></div>`).join('')}</div>
+      <div class="card-b" style="padding-top:4px;padding-bottom:4px">${(d.deadlines || []).map(x => `<div class="dl"><div class="cal"><b>${x.day}</b><small>${esc(x.mon)}</small></div><div><b>${esc(x.label)}</b><div class="dh" style="font-size:var(--fs-sm)">${esc(x.sub)}</div></div><div class="cd" style="color:${x.days <= 15 ? 'var(--late)' : 'var(--muted)'}">${esc(x.cd)}</div></div>`).join('')}</div>
     </div>
   </div>
 
@@ -732,7 +734,7 @@ async function renderDash() {
     </div>
     <div class="card"><div class="card-h"><div><h3>Activité récente</h3><div class="sub">journal d'audit du cabinet</div></div><button class="btn btn-quiet btn-sm" data-goto="audit">Tout voir</button></div>
       <div class="card-b" style="padding-top:4px;padding-bottom:4px">${acts.length ? acts.map(a => `<div class="act"><span class="a-dot" style="background:${/cloture|delete|annulation/.test(a.action) ? 'var(--locked)' : /reouverture/.test(a.action) ? 'var(--warn)' : 'var(--brand-500)'}"></span>
-        <div class="a-body"><b>${esc(ACT[a.action] || a.action)}</b>${a.entite ? ` <span class="dh">· ${esc(a.entite)}</span>` : ''}<div class="dh" style="font-size:11.5px">${esc(a.user_nom || '—')}</div></div><span class="a-time">${esc(dateTimeFr(a.created_at))}</span></div>`).join('')
+        <div class="a-body"><b>${esc(ACT[a.action] || a.action)}</b>${a.entite ? ` <span class="dh">· ${esc(a.entite)}</span>` : ''}<div class="dh" style="font-size:var(--fs-xs)">${esc(a.user_nom || '—')}</div></div><span class="a-time">${esc(dateTimeFr(a.created_at))}</span></div>`).join('')
         : '<div class="empty" style="padding:24px"><p>Aucune activité enregistrée.</p></div>'}</div>
     </div>
   </div>`;
@@ -744,8 +746,8 @@ function onboardingBanner(ob) {
   const ws = (state.workspace && state.workspace.displayName) || '';
   return `<div class="card ob-banner" style="margin-bottom:14px"><div class="card-b" style="display:flex;gap:18px;align-items:center;flex-wrap:wrap">
     <div class="dlg-ic tone-brand" style="margin:0">${svgI('bolt', '')}</div>
-    <div style="flex:1;min-width:240px"><h3 style="font-size:15px;margin-bottom:2px">${ob.facts.clients ? 'Terminez la configuration de ' : 'Bienvenue dans l’espace '}${esc(ws)}</h3>
-      <div class="dh" style="font-size:12.5px">Prochaine étape : <b style="color:var(--ink)">${esc(next.label)}</b> · ${ob.progress} % terminé</div>
+    <div style="flex:1;min-width:240px"><h3 style="font-size:var(--fs-lg);margin-bottom:2px">${ob.facts.clients ? 'Terminez la configuration de ' : 'Bienvenue dans l’espace '}${esc(ws)}</h3>
+      <div class="dh" style="font-size:var(--fs-sm)">Prochaine étape : <b style="color:var(--ink)">${esc(next.label)}</b> · ${ob.progress} % terminé</div>
       <div class="meter" style="margin-top:8px;max-width:360px"><i style="width:${ob.progress}%;background:var(--brand-500)"></i></div></div>
     <div class="actions"><button class="btn btn-primary" data-goto="onboarding">${ob.progress ? 'Reprendre' : 'Commencer'} la configuration</button></div>
   </div></div>`;
@@ -1026,11 +1028,11 @@ async function renderPeriodCard(p) {
   const hist = (pr.historique || []);
   body.innerHTML = `
     <div style="display:flex;align-items:center;gap:10px;margin-bottom:12px">
-      <span class="period-badge ${m[1]}" style="font-size:12px;padding:3px 10px">${locked ? svgI('lock', '') : ''}${esc(m[0])}</span>
-      <span class="dh" style="font-size:12px">${locked ? 'Montants, déclaration et exports figés' : 'Saisie et import autorisés'}</span></div>
+      <span class="period-badge ${m[1]}" style="font-size:var(--fs-sm);padding:3px 10px">${locked ? svgI('lock', '') : ''}${esc(m[0])}</span>
+      <span class="dh" style="font-size:var(--fs-sm)">${locked ? 'Montants, déclaration et exports figés' : 'Saisie et import autorisés'}</span></div>
     ${hist.length ? `<div class="hist">${hist.slice(0, 3).map(h => `<div class="hist-i"><span class="h-ic ${h.action === 'cloture' ? 'tone-locked' : 'tone-warn'}">${svgI(h.action === 'cloture' ? 'lock' : 'unlock', '')}</span>
       <div class="h-b"><b>${h.action === 'cloture' ? 'Clôturée' : 'Rouverte'}</b> par ${esc(h.par || '—')}<small>${esc(dateTimeFr(h.date))}</small>${h.motif ? `<q>${esc(h.motif)}</q>` : ''}</div></div>`).join('')}</div>`
-      : `<div class="dh" style="font-size:12.5px">Aucune clôture enregistrée pour cette période.</div>`}
+      : `<div class="dh" style="font-size:var(--fs-sm)">Aucune clôture enregistrée pour cette période.</div>`}
     <div class="actions" style="margin-top:12px">${isAdmin
       ? (locked ? `<button class="btn btn-ghost btn-sm" id="pcReopen">${svgI('unlock')}Rouvrir…</button>` : `<button class="btn btn-ghost btn-sm" id="pcClose">${svgI('lock')}Clôturer la période…</button>`)
       : `<span class="pp-note">Clôture et réouverture réservées à un administrateur.</span>`}</div>`;
@@ -1187,7 +1189,7 @@ async function renderDelais() {
   </div>
   <div class="toolbar">
     <div class="filters">${[['all', 'Toutes', data.rows.length], ['retard', 'Retard &gt; 0', t.aDeclarer], ['conv', 'Convention absente', t.sansConvention]].map(([k, label, count]) => `<button class="fpill" data-f="${k}" aria-pressed="${filt === k}">${label}<span class="c">${count}</span></button>`).join('')}</div>
-    <div class="actions"><span class="dh" style="font-size:12px">Exporter en Excel :</span>${['all', 'retard', 'conv'].map(k => `<button class="btn btn-ghost btn-sm xls-export" data-x="${k}" title="Exporter « ${FL[k]} » en Excel">${svgI('dl')}${FL[k]}</button>`).join('')}</div>
+    <div class="actions"><span class="dh" style="font-size:var(--fs-sm)">Exporter en Excel :</span>${['all', 'retard', 'conv'].map(k => `<button class="btn btn-ghost btn-sm xls-export" data-x="${k}" title="Exporter « ${FL[k]} » en Excel">${svgI('dl')}${FL[k]}</button>`).join('')}</div>
   </div>
   ${rows.length ? `<div class="hint">${svgI('info')}<span>Facture non payée à la clôture : le délai est calculé jusqu'au dernier jour du trimestre. Cliquez une ligne pour le détail du calcul.</span></div>
   <div class="table-wrap"><table class="dense" style="min-width:1240px"><thead><tr>
@@ -1234,7 +1236,7 @@ function factureDrawer(f) {
       <div class="det-row"><span class="k">Date d'arrêté retenue</span><span class="v">${f.arrete_au ? dateFr(f.arrete_au) : '—'}</span></div>
       <div class="det-row"><span class="k">État</span><span class="v" style="font-variant-numeric:normal">${esc(ETAT_PAIEMENT_LABEL[f.etat_paiement] || '—')}</span></div>
     </div>
-    ${etatTip(f) ? `<div class="dh" style="font-size:12px;margin:6px 0 2px">${esc(etatTip(f))}</div>` : ''}
+    ${etatTip(f) ? `<div class="dh" style="font-size:var(--fs-sm);margin:6px 0 2px">${esc(etatTip(f))}</div>` : ''}
     <div class="calc">
       <div class="row"><span>Délai constaté (arrêté − date de facture)</span><b>${f.delai_ecoule != null ? f.delai_ecoule + ' j' : '—'}</b></div>
       <div class="row"><span>Délai autorisé (convention / légal)</span><b>${f.delai_applicable} j</b></div>
@@ -1244,7 +1246,7 @@ function factureDrawer(f) {
       <div class="row"><span>Taux total appliqué</span><b>${f.taux_total ? pct(f.taux_total) : '—'}</b></div>
       <div class="row tot"><span>Amende (trimestre)</span><span>${money(f.amende)} DH</span></div>
     </div>
-    <div class="dh" style="font-size:12px">Modèle trimestriel apporté (mois calendaire) : 1ᵉʳ mois de retard au taux directeur BAM, mois suivants à 0,85 %, seuls les mois du trimestre déclaré sont facturés.</div>
+    <div class="dh" style="font-size:var(--fs-sm)">Modèle trimestriel apporté (mois calendaire) : 1ᵉʳ mois de retard au taux directeur BAM, mois suivants à 0,85 %, seuls les mois du trimestre déclaré sont facturés.</div>
     ${doublonDrawer(f)}
   </div>`);
 }
@@ -1253,7 +1255,7 @@ function factureDrawer(f) {
 function doublonDrawer(f) {
   const st = f.statut_doublon || (f.doublon_potentiel ? 'potentiel' : 'aucun');
   if (!f.doublon_potentiel && st === 'aucun') return ''; // facture non concernée
-  const meta = f.date_revue_doublon ? `<div class="dh" style="font-size:11.5px;margin-top:6px">Revue enregistrée le ${dateFr(f.date_revue_doublon)}.</div>` : '';
+  const meta = f.date_revue_doublon ? `<div class="dh" style="font-size:var(--fs-xs);margin-top:6px">Revue enregistrée le ${dateFr(f.date_revue_doublon)}.</div>` : '';
   const A = (act, label, primary) => `<button class="btn ${primary ? 'btn-primary' : 'btn-ghost'} btn-sm" data-perm="review_duplicates" onclick="reviewDoublon(this)" data-fid="${f.id}" data-act="${act}">${esc(label)}</button>`;
   let title, note, actions;
   if (st === 'confirme') {
@@ -1271,7 +1273,7 @@ function doublonDrawer(f) {
   }
   return `<div class="calc" id="dupReview" style="margin-top:14px">
     <div class="row" style="align-items:center"><span>Revue du doublon</span><b>${title}</b></div>
-    <div class="dh" style="font-size:12px;margin:6px 0">${note}</div>${meta}
+    <div class="dh" style="font-size:var(--fs-sm);margin:6px 0">${note}</div>${meta}
     <div id="dupActions" style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px">${actions}</div>
   </div>`;
 }
@@ -1308,7 +1310,7 @@ window.convExpress = function (btn) {
     Le document PDF pourra être ajouté ensuite dans la rubrique <b>Conventions</b> (statut « Document manquant »).</p>
     <div class="form-grid"><div><label class="fld-lbl">Délai convenu (jours)</label>
       <input class="input-fld" id="ce_delai" type="number" min="1" max="120" value="120">
-      <div class="dh" style="font-size:11.5px;margin-top:4px">Délai réellement écoulé sur cette facture : <b>${esc(ecoule)} j</b>. Indiquez le délai figurant dans la convention (120 j maximum — plafond légal).</div>
+      <div class="dh" style="font-size:var(--fs-xs);margin-top:4px">Délai réellement écoulé sur cette facture : <b>${esc(ecoule)} j</b>. Indiquez le délai figurant dans la convention (120 j maximum — plafond légal).</div>
     </div></div>
   </div>
   <div class="modal-f"><button class="btn btn-ghost" onclick="closeOverlay()">Annuler</button><button class="btn btn-primary" id="ce_save">Créer la convention</button></div>`);
@@ -1398,7 +1400,7 @@ function drawWizard() {
   if (!conv) renderDocs();
 }
 async function wizAnalyze(file) {
-  $('#wizBody').innerHTML = `<div class="card"><div class="card-b" style="display:flex;gap:12px;align-items:center"><span class="spin"></span><div><b>Analyse de « ${esc(file.name)} »</b><div class="dh" style="font-size:12px">Détection des feuilles, de la ligne d'en-tête et des colonnes — aucune donnée n'est encore enregistrée.</div></div></div></div>`;
+  $('#wizBody').innerHTML = `<div class="card"><div class="card-b" style="display:flex;gap:12px;align-items:center"><span class="spin"></span><div><b>Analyse de « ${esc(file.name)} »</b><div class="dh" style="font-size:var(--fs-sm)">Détection des feuilles, de la ligne d'en-tête et des colonnes — aucune donnée n'est encore enregistrée.</div></div></div></div>`;
   try {
     const fd = new FormData(); fd.append('file', file);
     if (wizIsConv()) fd.append('kind', 'conventions');
@@ -1424,7 +1426,7 @@ function wizMapHtml() {
   const lowN = champs.filter(ch => autoM[ch.key] && autoM[ch.key].confidence < 0.5).length;
   const missN = champs.filter(ch => ch.requis && state.wiz.mapping[ch.key] == null).length;
   return `<div class="card"><div class="card-h"><div><h3>Correspondance des colonnes — ${esc(state.wiz.sourceName || '')}</h3><div class="sub">Vérifiez chaque correspondance proposée · champs requis marqués <span style="color:var(--late)">*</span></div></div>
-      <div class="selctb"><label class="dh" for="wizSheet" style="font-size:12px;white-space:nowrap">Feuille</label><select id="wizSheet">${a.feuilles.map(f => `<option value="${esc(f.nom)}" ${f.nom === state.wiz.sheet ? 'selected' : ''}>${esc(f.nom)}${f.ignoree ? ' (grand-livre — ignorée)' : ''} · ${f.nbLignes} lignes</option>`).join('')}</select></div></div>
+      <div class="selctb"><label class="dh" for="wizSheet" style="font-size:var(--fs-sm);white-space:nowrap">Feuille</label><select id="wizSheet">${a.feuilles.map(f => `<option value="${esc(f.nom)}" ${f.nom === state.wiz.sheet ? 'selected' : ''}>${esc(f.nom)}${f.ignoree ? ' (grand-livre — ignorée)' : ''} · ${f.nbLignes} lignes</option>`).join('')}</select></div></div>
     <div class="card-b">
       ${missN ? `<div class="note note-danger">${svgI('stop')}<div><div class="note-t">${missN} champ(s) requis sans colonne</div>Associez une colonne à chaque champ marqué * avant de passer à l'aperçu.</div></div>` : ''}
       ${lowN ? `<div class="note note-warn">${svgI('warn')}<div><div class="note-t">${lowN} correspondance(s) à faible confiance</div>La colonne proposée ressemble peu au champ attendu. Vérifiez l'aperçu des valeurs à droite avant de continuer.</div></div>` : ''}
@@ -1437,7 +1439,7 @@ function wizMapHtml() {
         return `<div class="map-row ${rowCls}">
           <div class="map-field">${esc(ch.label)}${ch.requis ? '<span class="req" title="Champ requis">*</span>' : ''}</div>
           <div class="map-pick"><select data-field="${ch.key}" class="mapsel">${colOpts(sel)}</select></div>
-          <div class="map-conf">${auto ? `<span class="cf ${confCls}" title="${conf >= 85 ? 'Confiance élevée' : conf >= 50 ? 'Confiance moyenne : vérifiez' : 'Confiance faible : à vérifier impérativement'}">${conf} %</span>` : (sel != null && sel !== '' ? '<span class="cf cf-med">manuel</span>' : '<span class="dh" style="font-size:11.5px">non associé</span>')}
+          <div class="map-conf">${auto ? `<span class="cf ${confCls}" title="${conf >= 85 ? 'Confiance élevée' : conf >= 50 ? 'Confiance moyenne : vérifiez' : 'Confiance faible : à vérifier impérativement'}">${conf} %</span>` : (sel != null && sel !== '' ? '<span class="cf cf-med">manuel</span>' : '<span class="dh" style="font-size:var(--fs-xs)">non associé</span>')}
             ${auto && auto.apercu && auto.apercu.length ? `<span class="map-sample" title="${esc(auto.apercu.join(' · '))}">${esc(auto.apercu.slice(0, 3).join(' · '))}</span>` : ''}</div>
         </div>`;
       }).join('')}</div>
@@ -1459,7 +1461,7 @@ async function wizPreview() {
   const missing = req.filter(k => state.wiz.mapping[k] == null);
   if (missing.length && !state.wiz.xml) { toast('Champs requis non mappés : ' + missing.map(k => (champs.find(c => c.key === k) || {}).label || k).join(', '), 'err'); return; }
   state.wiz.step = 'preview';
-  $('#view').innerHTML = wizScaffold(`<div class="card"><div class="card-b" style="display:flex;gap:12px;align-items:center"><span class="spin"></span><div><b>Contrôle de cohérence et aperçu</b><div class="dh" style="font-size:12px">Chaque ligne est vérifiée (montants, dates, fournisseur, doublons) — rien n'est encore enregistré.</div></div></div></div>`);
+  $('#view').innerHTML = wizScaffold(`<div class="card"><div class="card-b" style="display:flex;gap:12px;align-items:center"><span class="spin"></span><div><b>Contrôle de cohérence et aperçu</b><div class="dh" style="font-size:var(--fs-sm)">Chaque ligne est vérifiée (montants, dates, fournisseur, doublons) — rien n'est encore enregistré.</div></div></div></div>`);
   try {
     const body = { token: state.wiz.token, sheetName: state.wiz.sheet, headerRow: state.wiz.headerRow, mapping: state.wiz.mapping, sourceName: state.wiz.sourceName };
     const pv = wizIsConv()
@@ -1500,7 +1502,7 @@ function wizPreviewHtml() {
         ${s.memePeriode ? 'Elles seraient rattachées à cette période (la période d’origine est conservée).' : 'Ce fichier semble concerner un autre trimestre : choisissez le bon trimestre dans la barre de période, puis relancez l’import.'}
         <label class="check" style="margin-top:8px"><input type="checkbox" id="wizAckPer" ${state.wiz.accepteHorsPeriode ? 'checked' : ''}> Je confirme le rattachement de ces ${s.autrePeriode} ligne(s) à <b>${TRI_LABEL(state.period.trimestre)} ${state.period.annee}</b></label></div></div>` : ''}
       ${s.doublons ? `<div class="note note-warn">${svgI('warn')}<div>${s.doublons} doublon(s) potentiel(s) : ces factures sont <b>conservées</b> et signalées « Doublon ? » dans la feuille de délais pour revue (paiement partiel ou facture scindée possible). Rien n'est supprimé.</div></div>` : ''}
-      ${s.rejetees ? `<h4 style="margin:16px 0 8px;font-size:13px">Lignes rejetées — numéro de ligne réel du fichier</h4><div class="table-wrap flat"><table><thead><tr><th>Ligne</th><th>Statut</th><th>Motif</th><th>Données</th></tr></thead><tbody>${rowsHtml(pv.apercu.rejetees, 'rej')}</tbody></table></div>` : ''}
+      ${s.rejetees ? `<h4 style="margin:16px 0 8px;font-size:var(--fs-md)">Lignes rejetées — numéro de ligne réel du fichier</h4><div class="table-wrap flat"><table><thead><tr><th>Ligne</th><th>Statut</th><th>Motif</th><th>Données</th></tr></thead><tbody>${rowsHtml(pv.apercu.rejetees, 'rej')}</tbody></table></div>` : ''}
       ${s.ignorees ? `<details style="margin-top:12px"><summary class="dh" style="cursor:pointer">${s.ignorees} ligne(s) ignorée(s) (total, sous-total, ligne vide…)</summary><div class="table-wrap flat" style="margin-top:8px"><table><thead><tr><th>Ligne</th><th>Statut</th><th>Motif</th><th>Données</th></tr></thead><tbody>${rowsHtml(pv.apercu.ignorees, 'ign')}</tbody></table></div></details>` : ''}
       <div class="wiz-actions"><button class="btn btn-ghost" id="wizBack2">Revenir à la correspondance</button><span class="grow"></span>
         <button class="btn btn-primary" id="wizConfirm" ${(!s.valides || blocked || (mism && !state.wiz.accepteHorsPeriode)) ? 'disabled' : ''} title="${blocked ? 'Corrigez la correspondance incohérente pour continuer' : (mism && !state.wiz.accepteHorsPeriode ? 'Confirmez d’abord le rattachement des lignes hors période' : '')}">${svgI('check')}Confirmer l'import dans ${TRI_LABEL(state.period.trimestre)} ${state.period.annee} (${s.valides || 0} facture${(s.valides || 0) > 1 ? 's' : ''})</button></div>
@@ -1525,7 +1527,7 @@ function wizConvPreviewHtml() {
         <div class="stat"><div class="l">Ignorées</div><div class="v">${r.ignored || 0}</div></div>
       </div>
       ${r.conflicts ? `<div class="note note-warn">${svgI('warn')}<div><div class="note-t">${r.conflicts} conflit(s)</div>Une convention différente existe déjà pour ces fournisseurs : elle n'est <b>jamais écrasée</b>. Vérifiez les lignes ci-dessous.</div></div>` : ''}
-      ${probl.length ? `<h4 style="margin:16px 0 8px;font-size:13px">Lignes à corriger — numéro de ligne réel du fichier Excel</h4><div class="table-wrap flat"><table><thead><tr><th>Ligne</th><th>Statut</th><th>Fournisseur</th><th>Motif</th></tr></thead><tbody>${rowsHtml(probl)}</tbody></table></div>` : `<div class="note note-ok">${svgI('checkc')}<div>Aucune anomalie détectée sur ce fichier.</div></div>`}
+      ${probl.length ? `<h4 style="margin:16px 0 8px;font-size:var(--fs-md)">Lignes à corriger — numéro de ligne réel du fichier Excel</h4><div class="table-wrap flat"><table><thead><tr><th>Ligne</th><th>Statut</th><th>Fournisseur</th><th>Motif</th></tr></thead><tbody>${rowsHtml(probl)}</tbody></table></div>` : `<div class="note note-ok">${svgI('checkc')}<div>Aucune anomalie détectée sur ce fichier.</div></div>`}
       <div class="wiz-actions"><button class="btn btn-ghost" id="wizBack2">Revenir à la correspondance</button><span class="grow"></span>
         <button class="btn btn-primary" id="wizConfirm" ${!(r.conventionsCreated || r.withoutConvention) ? 'disabled' : ''}>${svgI('check')}Confirmer l'import (${r.conventionsCreated || 0} convention${(r.conventionsCreated || 0) > 1 ? 's' : ''})</button></div>
     </div></div>`;
@@ -1557,7 +1559,7 @@ function wizDoneHtml() {
   const r = state.wiz.result || {};
   if (wizIsConv()) {
     return `<div class="card"><div class="card-b">
-      <div class="result-hero"><div class="dlg-ic tone-ok">${svgI('checkc', '')}</div><div><h3 style="font-size:17px">Import des conventions terminé</h3><div class="dh">${r.conventionsCreated || 0} convention(s) créée(s) · délais appliqués aux périodes non clôturées.</div></div></div>
+      <div class="result-hero"><div class="dlg-ic tone-ok">${svgI('checkc', '')}</div><div><h3 style="font-size:var(--fs-xl)">Import des conventions terminé</h3><div class="dh">${r.conventionsCreated || 0} convention(s) créée(s) · délais appliqués aux périodes non clôturées.</div></div></div>
       <div class="stat-strip">
         <div class="stat ok"><div class="l">Conventions créées</div><div class="v">${r.conventionsCreated || 0}</div></div>
         <div class="stat"><div class="l">Sans convention</div><div class="v">${r.withoutConvention || 0}</div></div>
@@ -1574,7 +1576,7 @@ function wizDoneHtml() {
       </div></div></div>`;
   }
   return `<div class="card"><div class="card-b">
-      <div class="result-hero"><div class="dlg-ic tone-ok">${svgI('checkc', '')}</div><div><h3 style="font-size:17px">Import terminé</h3><div class="dh">${r.imported || 0} facture(s) enregistrée(s) sur ${TRI_LABEL(state.period.trimestre)} ${state.period.annee} · retards et amendes calculés.</div></div></div>
+      <div class="result-hero"><div class="dlg-ic tone-ok">${svgI('checkc', '')}</div><div><h3 style="font-size:var(--fs-xl)">Import terminé</h3><div class="dh">${r.imported || 0} facture(s) enregistrée(s) sur ${TRI_LABEL(state.period.trimestre)} ${state.period.annee} · retards et amendes calculés.</div></div></div>
       <div class="stat-strip">
         <div class="stat ok"><div class="l">Factures créées</div><div class="v">${r.imported || 0}</div></div>
         <div class="stat"><div class="l">Ignorées</div><div class="v">${r.ignored || 0}</div></div>
@@ -1631,7 +1633,7 @@ async function renderConv() {
   const rule = c => { const r = c.regle_fournisseur; if (!r) return '<span class="dh">—</span>';
     const [cls, lbl] = SRC[r.source] || ['b60', r.source];
     if (c.appliquee) return `<span class="pill pill-sm pill-ok">${svgI('check', '')}Appliquée</span>`;
-    return `<span class="dh" style="font-size:12px">Non appliquée — règle en vigueur : </span><span class="badge ${cls}">${r.delai} j <small>${lbl}</small></span>`; };
+    return `<span class="dh" style="font-size:var(--fs-sm)">Non appliquée — règle en vigueur : </span><span class="badge ${cls}">${r.delai} j <small>${lbl}</small></span>`; };
   $('#view').innerHTML = `
   ${clientPeriodBar(null, false)}
   <div class="page-head headrow"><div><div class="eyebrow">${esc(currentClient().name)}</div><h1>Conventions fournisseurs</h1><p>Conventions de délai de paiement et justificatifs signés. <b>Les documents sont archivés : aucune extraction automatique n'est effectuée</b> — le délai est toujours celui que vous saisissez.</p></div>
@@ -1689,7 +1691,7 @@ function attachConvPdf(btn, convId, replace) {
 // Rapport d'import lisible : synthèse chiffrée + lignes à corriger + export CSV.
 function showConvImportReport(r) {
   const col = { ok: 'var(--r-green)', warn: 'var(--r-orange)', bad: 'var(--r-red)' };
-  const tile = (n, lbl, cls) => `<div class="kpi" style="padding:12px 14px;min-width:130px"><div class="val" style="font-size:22px${cls && n ? ';color:' + col[cls] : ''}">${n}</div><div class="lbl" style="font-weight:600">${lbl}</div></div>`;
+  const tile = (n, lbl, cls) => `<div class="kpi" style="padding:12px 14px;min-width:130px"><div class="val" style="font-size:var(--fs-2xl)${cls && n ? ';color:' + col[cls] : ''}">${n}</div><div class="lbl" style="font-weight:600">${lbl}</div></div>`;
   const problems = (r.lignes || []).filter(l => l.statut !== 'ignoree');
   const rowsHtml = problems.length ? problems.map(l => `<tr>
       <td class="mono">${l.ligne}</td><td>${esc(l.fournisseur || '—')}</td>
@@ -1793,13 +1795,13 @@ async function renderDecl() {
       <tbody>${L.length ? L.map(l => `<tr><td class="mono dh">${esc(l.if || '—')}</td><td><b>${esc(l.nom || '—')}</b></td><td class="num">${money(l.ttc)}</td><td class="num">${money(l.non_paye)}</td><td class="num">${money(l.hors_delai)}</td><td class="num amount-late">+${l.retard} j</td><td class="num" style="font-weight:600">${money(l.amende)}</td></tr>`).join('') : '<tr><td colspan="7" class="dh" style="text-align:center;padding:24px">Aucune facture hors délai sur la période — déclaration « néant ».</td></tr>'}</tbody>
       <tfoot><tr><td colspan="2">Total</td><td class="num">${money(dec.montant_total_ttc)}</td><td class="num">${money(dec.montant_non_paye)}</td><td class="num">${money(dec.montant_paye_hors_delai)}</td><td></td><td class="num amount-late">${money(dec.montant_total_amende)}</td></tr></tfoot></table></div></div>
     ${d.exclusions && d.exclusions.nbFactures ? `<div class="doc-sec"><h4>Factures d'opérateurs de réseau exclues du tableau (non comptées dans les totaux)</h4>
-      <div class="dh" style="font-size:12.5px">${d.exclusions.nbFactures} facture(s) · ${d.exclusions.nbFournisseurs} fournisseur(s) · TTC ${money(d.exclusions.ttc)} DH — <b>${esc(d.exclusions.motif)}</b>. Ces factures restent visibles dans le suivi interne (feuille de délais) mais sont volontairement exclues des tableaux déclaratifs.</div></div>` : ''}
+      <div class="dh" style="font-size:var(--fs-sm)">${d.exclusions.nbFactures} facture(s) · ${d.exclusions.nbFournisseurs} fournisseur(s) · TTC ${money(d.exclusions.ttc)} DH — <b>${esc(d.exclusions.motif)}</b>. Ces factures restent visibles dans le suivi interne (feuille de délais) mais sont volontairement exclues des tableaux déclaratifs.</div></div>` : ''}
     <div class="pay-band">
-      <div><div class="eyebrow" style="margin:0">Montant à verser</div><div class="amt">${money(dec.montant_a_verser)} DH</div><div class="dh" style="font-size:11.5px">amende ${money(dec.montant_total_amende)} + sanctions ${money(dec.sanctions_retard)}</div></div>
+      <div><div class="eyebrow" style="margin:0">Montant à verser</div><div class="amt">${money(dec.montant_a_verser)} DH</div><div class="dh" style="font-size:var(--fs-xs)">amende ${money(dec.montant_total_amende)} + sanctions ${money(dec.sanctions_retard)}</div></div>
       <div class="visa-box"><div class="st"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M9 12l2 2 4-4"/></svg></div>
-        <div><b style="font-size:13px">Visa ${dec.type_visa === 'CAC' ? 'du commissaire aux comptes' : "de l'expert-comptable"}</b><div class="dh" style="font-size:12px">${esc(state.me.nom)} · en attente de signature</div></div></div>
+        <div><b style="font-size:var(--fs-md)">Visa ${dec.type_visa === 'CAC' ? 'du commissaire aux comptes' : "de l'expert-comptable"}</b><div class="dh" style="font-size:var(--fs-sm)">${esc(state.me.nom)} · en attente de signature</div></div></div>
     </div>
-    <div class="doc-sec" style="border-bottom:0;display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap;color:var(--muted);font-size:12px"><span>Édité le ${dateFr(dec.date_edition)} · DelaiPay</span><span>Référence : art. 78-3 &amp; 78-4 (loi 15-95)</span></div>
+    <div class="doc-sec" style="border-bottom:0;display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap;color:var(--muted);font-size:var(--fs-sm)"><span>Édité le ${dateFr(dec.date_edition)} · DelaiPay</span><span>Référence : art. 78-3 &amp; 78-4 (loi 15-95)</span></div>
   </div>`;
   wireClientBar(renderDecl);
 }
@@ -1950,7 +1952,7 @@ async function renderWorkspace(box) {
   const LOC = { 'fr-MA': 'Français (Maroc)', 'fr-FR': 'Français (France)', 'ar-MA': 'العربية (المغرب)', 'en-US': 'English (US)' };
   const TZ = { 'Africa/Casablanca': 'Casablanca (GMT+1)', 'Europe/Paris': 'Paris', UTC: 'UTC' };
   const monoHtml = (bg) => w.logoUrl ? `<div class="ws-mono has-logo" style="width:56px;height:56px;border-radius:12px;background:${bg}"><img class="ws-logo-img" src="${esc(w.logoUrl)}" alt="Logo actuel"></div>`
-    : `<div class="ws-mono" style="width:56px;height:56px;border-radius:12px;font-size:18px;background:${esc(w.primaryColor || 'var(--brand-600)')}">${esc(w.initials || 'DP')}</div>`;
+    : `<div class="ws-mono" style="width:56px;height:56px;border-radius:12px;font-size:var(--fs-xl);background:var(--tenant);color:var(--tenant-ink)">${esc(w.initials || 'DP')}</div>`;
   box.innerHTML = `<div class="settings-grid">
     <div class="stack">
       <div class="card"><div class="card-h"><div><h3>Identité</h3><div class="sub">Affichée dans la navigation, sur la page de connexion et l'accueil</div></div>${isAdmin ? '' : '<span class="pill pill-sm pill-locked">Lecture seule</span>'}</div>
@@ -1967,7 +1969,7 @@ async function renderWorkspace(box) {
             </div><span class="fld-help">PNG, JPEG ou WebP · 1 Mo maximum · de préférence carré, fond transparent. Le SVG n'est pas accepté (sécurité). Aperçu sur fond clair et sombre.</span></div>
           <div><label class="fld-lbl" for="w_color">Couleur de l'espace</label><div class="color-row"><input type="color" id="w_colorPick" value="${esc(w.primaryColor || '#15475A')}" ${ro} aria-label="Choisir la couleur">
             <input class="input-fld mono" id="w_color" value="${esc(w.primaryColor || '')}" placeholder="#15475A" maxlength="7" ${ro}></div>
-            <span class="fld-help">Réservée à l'identité de l'espace (monogramme) — jamais aux statuts métier.</span></div>
+            <span class="fld-help">Réservée à l'identité de l'espace (monogramme) — jamais aux statuts métier. Ajustée automatiquement si elle nuit à la lisibilité.</span><span class="fld-help" id="w_colorHint" role="status"></span></div>
         </div></div></div>
       <div class="card"><div class="card-h"><div><h3>Localisation</h3><div class="sub">Préférences enregistrées pour l'espace</div></div></div><div class="card-b"><div class="form-grid">
         <div><label class="fld-lbl" for="w_locale">Langue et format</label><select class="input-fld" id="w_locale" ${ro}>${opt(d.options.locales, w.locale, x => LOC[x] || x)}</select></div>
@@ -1982,7 +1984,7 @@ async function renderWorkspace(box) {
     </div>
     <div class="stack">
       <div class="card"><div class="card-h"><h3>Aperçu</h3></div><div class="card-b"><div class="preview-ws"><div class="pv-side">
-                    <div class="ws-card" style="margin:0"><div class="ws-mono ${w.logoUrl ? 'has-logo' : ''}" id="pvMono" style="${w.logoUrl ? '' : `background:${esc(w.primaryColor || 'var(--brand-600)')}`}">${w.logoUrl ? `<img class="ws-logo-img" src="${esc(w.logoUrl)}" alt="">` : esc(w.initials || 'DP')}</div><div class="ws-meta"><b id="pvName">${esc(w.displayName || '')}</b><small>${esc(w.raisonLegale || 'Espace de travail')}</small></div></div></div>
+                    <div class="ws-card" style="margin:0"><div class="ws-mono ${w.logoUrl ? 'has-logo' : ''}" id="pvMono" style="${w.logoUrl ? '' : 'background:var(--tenant);color:var(--tenant-ink)'}">${w.logoUrl ? `<img class="ws-logo-img" src="${esc(w.logoUrl)}" alt="">` : esc(w.initials || 'DP')}</div><div class="ws-meta"><b id="pvName">${esc(w.displayName || '')}</b><small>${esc(w.raisonLegale || 'Espace de travail')}</small></div></div></div>
           <div class="powered-by" style="margin:10px 2px 0"><img src="/assets/brand/delaipay-symbol-dark-bg.svg" alt="" width="14" height="14">Propulsé par <b>DelaiPay</b></div>
         <div class="pv-body">Chaque cabinet dispose de son espace, de ses données cloisonnées et de ses utilisateurs, dans une interface DelaiPay commune.</div></div></div></div>
       <div class="card"><div class="card-h"><div><h3>Espace</h3><div class="sub">informations d'abonnement</div></div></div><div class="card-b">
@@ -1992,8 +1994,11 @@ async function renderWorkspace(box) {
     </div></div>`;
   if (!isAdmin) return;
   const pick = $('#w_colorPick'), col = $('#w_color');
-  pick.oninput = () => { col.value = pick.value.toUpperCase(); if (!w.logoUrl) $('#pvMono').style.background = pick.value; };
-  col.oninput = () => { if (/^#[0-9a-f]{6}$/i.test(col.value)) { pick.value = col.value; if (!w.logoUrl) $('#pvMono').style.background = col.value; } };
+  // Aperçu en direct avec les MÊMES variantes accessibles que le serveur (texte ≥ 4,5:1).
+  const preview = v => { if (w.logoUrl || !window.brandColor) return; const p = window.brandColor.tenantPalette(v); const el = $('#pvMono'); el.style.background = p.tenant; el.style.color = p.tenantInk;
+    const hint = $('#w_colorHint'); if (hint) hint.textContent = p.corrected ? `Couleur ajustée à ${p.tenant} pour rester lisible.` : ''; };
+  pick.oninput = () => { col.value = pick.value.toUpperCase(); preview(pick.value); };
+  col.oninput = () => { if (/^#[0-9a-f]{6}$/i.test(col.value)) { pick.value = col.value; preview(col.value); } };
   $('#w_name').oninput = e => { $('#pvName').textContent = e.target.value || w.nom || ''; };
   const lf = $('#w_logo'); if (lf) lf.onchange = async () => {
     const f = lf.files[0]; if (!f) return;
@@ -2028,7 +2033,7 @@ async function renderUsers(box) {
   const INV = { en_attente: ['pill-brand', 'En attente'], acceptee: ['pill-ok', 'Acceptée'], revoquee: ['pill-locked', 'Révoquée'], expiree: ['pill-warn', 'Expirée'] };
   const pending = d.invitations.filter(i => i.statut === 'en_attente');
   box.innerHTML = `
-  <div class="toolbar"><div class="dh" style="font-size:13px">${d.users.filter(u => u.actif).length} utilisateur(s) actif(s) · ${pending.length} invitation(s) en attente</div>
+  <div class="toolbar"><div class="dh" style="font-size:var(--fs-md)">${d.users.filter(u => u.actif).length} utilisateur(s) actif(s) · ${pending.length} invitation(s) en attente</div>
     <button class="btn btn-primary" id="invBtn">${svgI('plus')}Inviter un utilisateur</button></div>
   <div class="table-wrap" style="margin-bottom:18px"><table style="min-width:760px"><thead><tr><th>Utilisateur</th><th>Rôle</th><th>Statut</th><th>Dernière connexion</th><th></th></tr></thead>
     <tbody>${d.users.map(u => `<tr><td><div class="fournisseur"><b>${esc(u.nom || '—')}${u.id === state.me.id ? ' <span class="dh">(vous)</span>' : ''}</b><small>${esc(u.email)}</small></div></td>
@@ -2043,7 +2048,7 @@ async function renderUsers(box) {
           <td style="text-align:right">${i.statut === 'en_attente' ? `<button class="btn btn-quiet btn-sm" data-revoke="${i.id}" data-mail="${esc(i.email)}">Révoquer</button>` : ''}</td></tr>`; }).join('')}</tbody></table></div>`
         : `<div class="empty" style="padding:28px"><p>Aucune invitation envoyée. Invitez une collaboratrice ou un collaborateur pour partager l'espace.</p></div>`}</div>
     <div class="card"><div class="card-h"><h3>Rôles</h3></div><div class="card-b">
-      ${Object.entries(ROLE_INFO).map(([k, [l, t]]) => `<div class="list-row" style="align-items:flex-start"><span class="pill pill-sm ${k === 'admin' ? 'pill-brand' : k === 'lecture' ? 'pill-locked' : 'pill-ok'}" style="min-width:108px;justify-content:center">${l}</span><span class="dh" style="font-size:12.5px">${t}</span></div>`).join('')}
+      ${Object.entries(ROLE_INFO).map(([k, [l, t]]) => `<div class="list-row" style="align-items:flex-start"><span class="pill pill-sm ${k === 'admin' ? 'pill-brand' : k === 'lecture' ? 'pill-locked' : 'pill-ok'}" style="min-width:108px;justify-content:center">${l}</span><span class="dh" style="font-size:var(--fs-sm)">${t}</span></div>`).join('')}
       <div class="hint" style="margin:10px 0 0">${svgI('lock')}<span>Chaque droit est vérifié par le serveur : masquer un bouton ne donne ni ne retire aucun accès.</span></div></div></div>
   </div>`;
   $('#invBtn').onclick = inviteModal;
@@ -2068,7 +2073,7 @@ function inviteModal() {
   modal(`<div class="modal-h"><h3>Inviter un utilisateur</h3><button class="x" onclick="closeOverlay()" aria-label="Fermer">${XICO}</button></div>
   <div class="modal-b" id="invBody"><div class="form-grid">
     <div class="full"><label class="fld-lbl" for="i_mail">Adresse e-mail professionnelle</label><input class="input-fld" id="i_mail" type="email" placeholder="prenom.nom@cabinet.ma"></div>
-    <div class="full"><label class="fld-lbl">Rôle</label>${Object.entries(ROLE_INFO).map(([k, [l, t]]) => `<label class="check" style="align-items:flex-start;padding:8px 0"><input type="radio" name="i_role" value="${k}" ${k === 'collaborateur' ? 'checked' : ''}><span><b>${l}</b><br><span class="dh" style="font-size:12px">${t}</span></span></label>`).join('')}</div>
+    <div class="full"><label class="fld-lbl">Rôle</label>${Object.entries(ROLE_INFO).map(([k, [l, t]]) => `<label class="check" style="align-items:flex-start;padding:8px 0"><input type="radio" name="i_role" value="${k}" ${k === 'collaborateur' ? 'checked' : ''}><span><b>${l}</b><br><span class="dh" style="font-size:var(--fs-sm)">${t}</span></span></label>`).join('')}</div>
   </div></div>
   <div class="modal-f" id="invFoot"><button class="btn btn-ghost" onclick="closeOverlay()">Annuler</button><button class="btn btn-primary" id="i_send">Créer l'invitation</button></div>`);
   $('#i_send').onclick = async () => {
@@ -2095,7 +2100,7 @@ function renderSecurity(box) {
         <dt>Tentatives</dt><dd>Connexion limitée en cas d'essais répétés</dd>
         <dt>Mots de passe</dt><dd>10 caractères minimum, stockés hachés (jamais en clair)</dd></dl></div></div>
     <div class="card"><div class="card-h"><h3>Traçabilité</h3></div><div class="card-b">
-      <p class="dh" style="margin:0 0 12px;font-size:13px">Connexions, imports, conventions, clôtures et réouvertures, exports, invitations et changements de rôle sont inscrits au journal d'audit de l'espace.</p>
+      <p class="dh" style="margin:0 0 12px;font-size:var(--fs-md)">Connexions, imports, conventions, clôtures et réouvertures, exports, invitations et changements de rôle sont inscrits au journal d'audit de l'espace.</p>
       <button class="btn btn-ghost" data-goto="audit">${svgI('history')}Ouvrir le journal d'audit</button>
       <div class="hint" style="margin:14px 0 0">${svgI('info')}<span>Double authentification et connexion d'entreprise (SSO) : prévues dans une version ultérieure.</span></div></div></div></div>`;
   $$('#setBody [data-goto]').forEach(el => el.onclick = () => setView(el.dataset.goto));
@@ -2123,7 +2128,7 @@ async function renderTaux(box = $('#view')) {
   const rows = await api('/taux');
   const isAdmin = can('manage_rates');
   box.innerHTML = `
-  <div class="toolbar"><div class="dh" style="font-size:13px;max-width:70ch">Historique du taux directeur appliqué au 1ᵉʳ mois de retard. Le taux en vigueur au mois de retard concerné est utilisé.</div>
+  <div class="toolbar"><div class="dh" style="font-size:var(--fs-md);max-width:70ch">Historique du taux directeur appliqué au 1ᵉʳ mois de retard. Le taux en vigueur au mois de retard concerné est utilisé.</div>
     ${isAdmin ? `<button class="btn btn-primary" id="addTaux">${svgI('plus')}Ajouter un taux</button>` : ''}</div>
   <div class="table-wrap"><table style="min-width:560px"><thead><tr><th class="num">Taux</th><th>Début</th><th>Fin</th><th>Référence</th></tr></thead>
   <tbody>${rows.map(t => `<tr><td class="num" style="font-weight:600">${pct(t.taux)}</td><td class="mono dh">${dateFr(t.date_debut)}</td><td class="mono dh">${t.date_fin ? dateFr(t.date_fin) : '<span class="pill pill-sm pill-ok">En vigueur</span>'}</td><td class="dh">${esc(t.reference || '—')}</td></tr>`).join('')}</tbody></table></div>
