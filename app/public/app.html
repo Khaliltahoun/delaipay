@@ -22,39 +22,46 @@
       <div class="ws-meta"><b id="wsName">Espace de travail</b><small id="wsSub">Espace de travail</small></div>
     </a>
 
-    <div class="nav-lbl">Cabinet</div>
+    <div class="nav-lbl">Pilotage</div>
     <button class="nav-item" data-view="dash">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><rect x="3" y="3" width="7" height="9" rx="1.5"/><rect x="14" y="3" width="7" height="5" rx="1.5"/><rect x="14" y="12" width="7" height="9" rx="1.5"/><rect x="3" y="16" width="7" height="5" rx="1.5"/></svg>Vue d'ensemble</button>
-    <button class="nav-item" data-view="clients">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M3 21h18M5 21V7l7-4 7 4v14M9 9h.01M15 9h.01M9 13h.01M15 13h.01M10 21v-4h4v4"/></svg>Clients</button>
-    <button class="nav-item" data-view="retards">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M6 2h9l5 5v13a2 2 0 01-2 2H6a2 2 0 01-2-2V4a2 2 0 012-2z"/><path d="M14 2v6h6M12 12v3l2 1.5"/></svg>Factures en retard</button>
     <button class="nav-item" data-view="alerts">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M6 9a6 6 0 1112 0c0 5 2 6 2 6H4s2-1 2-6z"/><path d="M10 20a2 2 0 004 0"/></svg>Alertes<span class="badge hidden" id="alertBadge">0</span></button>
+    <button class="nav-item" data-view="retards">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M6 2h9l5 5v13a2 2 0 01-2 2H6a2 2 0 01-2-2V4a2 2 0 012-2z"/><path d="M14 2v6h6M12 12v3l2 1.5"/></svg>Factures en retard</button>
+    <button class="nav-item" data-view="anomalies">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M12 9v4m0 4h.01M10.3 3.9L2 18a2 2 0 001.7 3h16.6a2 2 0 001.7-3L13.7 3.9a2 2 0 00-3.4 0z"/></svg>Anomalies</button>
 
-    <div class="nav-lbl">Dossier <span class="scope" id="navScope">—</span></div>
+    <div class="nav-lbl">Clients &amp; factures</div>
+    <button class="nav-item" data-view="clients">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M3 21h18M5 21V7l7-4 7 4v14M9 9h.01M15 9h.01M9 13h.01M15 13h.01M10 21v-4h4v4"/></svg>Clients</button>
+    <div class="nav-scope" title="Dossier client actif"><span>Dossier</span> <b id="navScope">—</b></div>
     <button class="nav-item" data-view="client">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><circle cx="12" cy="12" r="9"/><path d="M12 3v9l6.4 6.4"/></svg>Synthèse du dossier</button>
     <button class="nav-item" data-view="delais">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><rect x="4" y="3" width="16" height="18" rx="2"/><path d="M4 9h16M4 15h16M10 9v12"/></svg>Délais de paiement</button>
+    <button class="nav-item" data-view="import">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M12 3v12m0 0l-4-4m4 4l4-4M4 19h16"/></svg>Imports</button>
     <button class="nav-item" data-view="conv">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M6 2h9l5 5v13a2 2 0 01-2 2H6a2 2 0 01-2-2V4a2 2 0 012-2z"/><path d="M14 2v6h6M9 14l2 2 4-4"/></svg>Conventions</button>
+    <button class="nav-item" data-view="fournisseurs">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M3 7h11v9H3zM14 10h4l3 3v3h-7"/><circle cx="7" cy="18" r="1.8"/><circle cx="17" cy="18" r="1.8"/></svg>Fournisseurs</button>
+    <button class="nav-item" data-view="reseau">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M12 20v-8M8.5 8.5a5 5 0 017 0M5.6 5.6a9 9 0 0112.8 0"/><circle cx="12" cy="12" r="1.4"/></svg>Réseau</button>
+
+    <div class="nav-lbl">Déclarations</div>
     <button class="nav-item" data-view="decl">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M6 2h9l5 5v13a2 2 0 01-2 2H6a2 2 0 01-2-2V4a2 2 0 012-2z"/><path d="M14 2v6h6M8 13h8M8 17h5"/></svg>Déclaration DGI</button>
     <button class="nav-item" data-view="visa">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M9 12l2 2 4-4"/><circle cx="12" cy="12" r="9"/></svg>Visa</button>
-    <button class="nav-item" data-view="import">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M12 3v12m0 0l-4-4m4 4l4-4M4 19h16"/></svg>Imports</button>
     <button class="nav-item" data-view="exports">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M12 15V3m0 0L8 7m4-4l4 4M4 15v4a2 2 0 002 2h12a2 2 0 002-2v-4"/></svg>Exports</button>
 
-    <div class="nav-lbl">Contrôle</div>
-    <button class="nav-item" data-view="anomalies">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M12 9v4m0 4h.01M10.3 3.9L2 18a2 2 0 001.7 3h16.6a2 2 0 001.7-3L13.7 3.9a2 2 0 00-3.4 0z"/></svg>Anomalies</button>
-    <button class="nav-item" data-view="audit">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M4 5h16M4 12h16M4 19h10"/></svg>Journal d'audit</button>
+    <div class="nav-lbl">Paramètres</div>
     <button class="nav-item" data-view="settings">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 00.3 1.8l.1.1a2 2 0 11-2.8 2.8l-.1-.1a1.7 1.7 0 00-1.8-.3 1.7 1.7 0 00-1 1.5V21a2 2 0 11-4 0v-.1a1.7 1.7 0 00-1.1-1.5 1.7 1.7 0 00-1.8.3l-.1.1a2 2 0 11-2.8-2.8l.1-.1a1.7 1.7 0 00.3-1.8 1.7 1.7 0 00-1.5-1H3a2 2 0 110-4h.1a1.7 1.7 0 001.5-1.1 1.7 1.7 0 00-.3-1.8l-.1-.1a2 2 0 112.8-2.8l.1.1a1.7 1.7 0 001.8.3H9a1.7 1.7 0 001-1.5V3a2 2 0 114 0v.1a1.7 1.7 0 001 1.5 1.7 1.7 0 001.8-.3l.1-.1a2 2 0 112.8 2.8l-.1.1a1.7 1.7 0 00-.3 1.8V9a1.7 1.7 0 001.5 1H21a2 2 0 110 4h-.1a1.7 1.7 0 00-1.5 1z"/></svg>Paramètres</button>
+    <button class="nav-item" data-view="audit">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M4 5h16M4 12h16M4 19h10"/></svg>Journal d'audit</button>
 
     <div class="side-foot">
       <div class="av" id="sideAv">··</div>

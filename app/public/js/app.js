@@ -265,6 +265,8 @@ const VIEWS = {
   import: { crumb: 'Imports', fn: renderImport },
   delais: { crumb: 'Délais de paiement', fn: renderDelais },
   conv: { crumb: 'Conventions', fn: renderConv },
+  fournisseurs: { crumb: 'Fournisseurs', fn: renderFournisseurs },
+  reseau: { crumb: 'Opérateurs de réseau', fn: renderReseau },
   decl: { crumb: 'Déclaration DGI', fn: renderDecl },
   visa: { crumb: 'Visa', fn: renderVisa },
   exports: { crumb: 'Exports', fn: renderExports },
@@ -387,7 +389,7 @@ window.addEventListener('popstate', (e) => {
 
 /* ============================== barre client + période ============================== */
 function currentClient() { return state.clients.find(c => c.id === state.clientId) || null; }
-const SCOPED = ['delais', 'conv', 'decl', 'visa', 'import', 'client', 'exports'];
+const SCOPED = ['delais', 'conv', 'decl', 'visa', 'import', 'client', 'exports', 'fournisseurs', 'reseau'];
 
 // La période est désormais GLOBALE (bandeau) — ces fonctions sont conservées pour compat mais neutres.
 function clientPeriodBar() { return ''; }
@@ -1143,8 +1145,8 @@ window.confirmReseau = async function (btn) {
   try {
     await api(`/clients/${state.clientId}/fournisseurs/${fourId}/classification`, { method: 'PATCH', body: { operateur_reseau: true, statut: 'confirme', categorie_fournisseur: 'autre_operateur_reseau' } });
     toast('Opérateur de réseau confirmé (30 j + exclusion).', 'ok', 'Classification réseau');
-    renderDelais(); refreshAlertsBadge();
-  } catch (e) { toast(e.message, 'err'); btn.disabled = false; btn.textContent = 'Réseau ? — confirmer'; }
+    renderView(state.view); refreshAlertsBadge();
+  } catch (e) { toast(e.message, 'err'); btn.disabled = false; btn.textContent = btn.dataset.label || 'Réseau ? — confirmer'; }
 };
 // Export Excel de la feuille de délais pour un filtre donné (toutes / retard / convention absente).
 async function exportDelais(filter, btn) {
@@ -1326,6 +1328,76 @@ window.convExpress = function (btn) {
     } catch (e) { toast(e.message, 'err'); b.disabled = false; b.textContent = 'Créer la convention'; }
   };
 };
+
+/* ============================== FOURNISSEURS & RÉSEAU (lecture — aucune nouvelle règle) ==============================
+ * Les montants viennent des lignes de la feuille des délais (même calcul, même période) ; rien n'est recalculé ici. */
+const RESEAU_CAT = { telecom: 'Télécommunications', societe_regionale_multiservices: 'Société régionale multiservices',
+  regie_distribution: 'Eau & électricité', autre_operateur_reseau: 'Opérateur de réseau' };
+function delaiBadge(d, reseau, conv) {
+  return `<span class="badge ${reseau ? 'b30' : (conv || d >= 120 ? 'b120' : 'b60')}">${d} j${reseau ? ' <small>réseau</small>' : (conv ? ' <small>conv.</small>' : (d === 60 ? ' <small>légal</small>' : ''))}</span>`;
+}
+async function renderFournisseurs() {
+  if (!state.clientId) return noClient();
+  await ensurePeriod();
+  const [fours, data] = await Promise.all([api(`/clients/${state.clientId}/fournisseurs`), api(`/clients/${state.clientId}/delais${perQuery()}`)]);
+  const agg = new Map();
+  for (const r of data.rows) {
+    const a = agg.get(r.four_id) || { n: 0, ttc: 0, late: 0, amende: 0, delai: r.delai_applicable, reseau: !!r.operateur_reseau, conv: !!r.has_conv };
+    a.n++; a.ttc += r.ttc || 0; if (r.a_declarer) a.late++; a.amende += r.amende || 0; agg.set(r.four_id, a);
+  }
+  const rows = fours.map(f => { const a = agg.get(f.id); return { ...f, per: a || null,
+    delai: a ? a.delai : f.delai_applicable, reseau: a ? a.reseau : !!(f.operateur_reseau && f.statut_classification === 'confirme'), conv: a ? a.conv : !!f.has_conv }; })
+    .sort((x, y) => ((y.per && y.per.amende) || 0) - ((x.per && x.per.amende) || 0) || ((y.per && y.per.ttc) || 0) - ((x.per && x.per.ttc) || 0) || String(x.raison_sociale || '').localeCompare(String(y.raison_sociale || ''), 'fr'));
+  const withInv = rows.filter(r => r.per), late = rows.filter(r => r.per && r.per.late), sansConv = rows.filter(r => !r.conv && r.per && r.per.late); // même définition que la vue d'ensemble (conventionsManquantes)
+  const P = `T${data.periode.trimestre} ${data.periode.annee}`;
+  $('#view').innerHTML = `
+  <div class="page-head headrow"><div><div class="eyebrow">${esc(currentClient().name)} · ${P}</div><h1>Fournisseurs</h1>
+    <p>Délai appliqué à chaque fournisseur et son exposition sur la période, issus du même calcul que la feuille des délais.</p></div>
+    <div class="actions"><button class="btn btn-ghost" onclick="setView('conv')">${svgI('doc')}Conventions</button><button class="btn btn-ghost" onclick="setView('reseau')">${svgI('bolt')}Opérateurs de réseau</button></div></div>
+  <div class="stat-strip">
+    <div class="stat"><div class="l">Fournisseurs du dossier</div><div class="v">${rows.length}</div></div>
+    <div class="stat"><div class="l">Avec factures en ${P}</div><div class="v">${withInv.length}</div></div>
+    <div class="stat late"><div class="l">Avec factures à déclarer</div><div class="v">${late.length}</div></div>
+    <div class="stat ${sansConv.length ? 'severe' : ''}"><div class="l">Sans convention justificative</div><div class="v">${sansConv.length}</div></div></div>
+  ${rows.length ? `<div class="table-wrap"><table class="dense rc"><thead><tr><th>Fournisseur</th><th data-prio="2">ICE / IF</th><th>Délai appliqué</th><th class="num">Factures</th><th class="num">TTC ${P}</th><th class="num">À déclarer</th><th class="num">Amende</th><th class="col-act"><span class="sr-only">Actions</span></th></tr></thead>
+    <tbody id="pgBody"></tbody>
+    <tfoot><tr><td>Total — ${rows.length} fournisseur(s)</td><td data-prio="2"></td><td></td><td class="num" data-label="Factures">${data.rows.length}</td><td class="num" data-label="TTC">${money(withInv.reduce((t, r) => t + r.per.ttc, 0))}</td><td class="num" data-label="À déclarer">${late.reduce((t, r) => t + r.per.late, 0)}</td><td class="num amount-late" data-label="Amende">${money(withInv.reduce((t, r) => t + r.per.amende, 0))}</td><td class="col-act"></td></tr></tfoot></table></div><div id="pgMore" class="table-foot"></div>`
+    : emptyBox('Aucun fournisseur', 'Les fournisseurs apparaissent automatiquement à l’import des factures du client.', 'import', 'Importer des factures', 'table')}`;
+  if (rows.length) mountPaged(rows, r => `<tr>
+      <td data-rc="t"><div class="fournisseur"><b>${esc(r.raison_sociale || '—')}</b>${!r.conv && r.per && r.per.late ? '<small class="amount-late">Sans convention justificative</small>' : ''}</div></td>
+      <td class="mono dh" data-prio="2">${esc(r.ice || '—')}<br><small>IF ${esc(r.if_fiscal || '—')}</small></td>
+      <td data-rc="s">${delaiBadge(r.delai, r.reseau, r.conv)}</td>
+      <td class="num" data-rc="m" data-label="Factures">${r.per ? r.per.n : '—'}</td>
+      <td class="num" data-rc="a">${r.per ? money(r.per.ttc) : '—'}</td>
+      <td class="num ${r.per && r.per.late ? 'amount-late' : 'dim'}" data-rc="s" data-label="À déclarer">${r.per ? r.per.late : '—'}</td>
+      <td class="num amount" data-rc="s" data-label="Amende">${r.per && r.per.amende ? money(r.per.amende) : '—'}</td>
+      <td class="col-act" data-rc="s">${r.per ? `<button class="btn btn-quiet btn-sm" onclick="setView('delais')">Factures</button>` : ''}</td></tr>`);
+}
+async function renderReseau() {
+  if (!state.clientId) return noClient();
+  const [fours, sim] = await Promise.all([api(`/clients/${state.clientId}/fournisseurs`), api(`/clients/${state.clientId}/reseau/simulation`)]);
+  const confirmed = fours.filter(f => f.operateur_reseau && f.statut_classification === 'confirme');
+  const props = sim.candidats || [];
+  $('#view').innerHTML = `
+  <div class="page-head"><div class="eyebrow">${esc(currentClient().name)} · toutes périodes</div><h1>Opérateurs de réseau</h1>
+    <p>Télécommunications, eau et électricité : délai spécifique de <b>30 jours</b> et exclusion des tableaux déclaratifs, une fois la classification <b>confirmée</b>. Un nom seul ne suffit jamais : chaque proposition doit être vérifiée.</p></div>
+  <div class="stat-strip"><div class="stat ${props.length ? 'warn' : ''}"><div class="l">Propositions à vérifier</div><div class="v">${props.length}</div></div>
+    <div class="stat"><div class="l">Opérateurs confirmés</div><div class="v">${confirmed.length}</div></div></div>
+  <div class="section-title"><h2>À vérifier</h2><span class="sub">détectés sur le nom du fournisseur — aucun effet tant que ce n’est pas confirmé</span></div>
+  ${props.length ? `<div class="table-wrap"><table class="dense rc"><thead><tr><th>Fournisseur</th><th>Catégorie proposée</th><th class="num">Factures</th><th class="num">TTC</th><th>Délai actuel → proposé</th><th class="col-act"><span class="sr-only">Action</span></th></tr></thead><tbody>
+    ${props.map(p => `<tr><td data-rc="t"><div class="fournisseur"><b>${esc(p.fournisseur || '—')}</b><small>${esc(p.ice || p.if_fiscal || '')}${p.ambigu ? ' · nom générique — à vérifier' : ''}</small></div></td>
+      <td data-rc="m">${esc(RESEAU_CAT[p.categorie] || p.categorie || '—')}</td>
+      <td class="num" data-rc="m" data-label="Factures">${p.nbFactures || 0}</td><td class="num" data-rc="a">${money(p.ttc || 0)}</td>
+      <td data-rc="s">${p.delaiActuel} j → <b>${p.delaiPropose} j</b></td>
+      <td class="col-act" data-rc="s"><button class="btn btn-ghost btn-sm" data-perm="classify_network" data-four="${p.fournisseur_id}" data-fournom="${esc(p.fournisseur || '')}" data-label="Vérifier et confirmer" onclick="confirmReseau(this)">Vérifier et confirmer</button></td></tr>`).join('')}
+    </tbody></table></div>` : `<div class="card"><div class="empty"><div class="ic">${svgI('checkc', '')}</div><h4>Aucune proposition en attente</h4><p>Aucun fournisseur de ce dossier ne ressemble à un opérateur de réseau non confirmé.</p></div></div>`}
+  <div class="section-title"><h2>Confirmés</h2><span class="sub">délai de 30 jours appliqué</span></div>
+  ${confirmed.length ? `<div class="table-wrap"><table class="dense rc"><thead><tr><th>Fournisseur</th><th>Catégorie</th><th>Délai</th><th>Tableaux déclaratifs</th></tr></thead><tbody>
+    ${confirmed.map(f => `<tr><td data-rc="t"><div class="fournisseur"><b>${esc(f.raison_sociale || '—')}</b><small>${esc(f.ice || f.if_fiscal || '')}</small></div></td>
+      <td data-rc="m">${esc(RESEAU_CAT[f.categorie_fournisseur] || 'Opérateur de réseau')}</td><td data-rc="a">${delaiBadge(30, true, false)}</td>
+      <td data-rc="s">${f.hors_tableau_declaratif ? '<span class="pill pill-sm pill-info">Exclu (suivi interne conservé)</span>' : '<span class="pill pill-sm pill-locked">Inclus</span>'}</td></tr>`).join('')}
+    </tbody></table></div>` : `<div class="card"><div class="empty"><div class="ic">${svgI('info', '')}</div><h4>Aucun opérateur confirmé</h4><p>Les délais standards (convention ou 60 jours) s’appliquent à tous les fournisseurs de ce dossier.</p></div></div>`}`;
+}
 
 /* ============================== IMPORT ============================== */
 /* ============================== ASSISTANT D'IMPORT (6 étapes) ============================== */

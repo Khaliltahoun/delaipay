@@ -91,3 +91,14 @@ test('journal d’audit : détails lisibles — ni JSON brut, ni rôle technique
   assert.equal(auditDetails(null), '');
   assert.ok(!/[{}"]/.test(auditDetails('{"role":"admin","x":{"nb":3}}')), 'aucun caractère JSON');
 });
+
+test('navigation : groupes métier dans l’ordre, chaque entrée mène à une vue existante', () => {
+  const html = fs.readFileSync(path.join(__dirname, '..', 'public', 'app.html'), 'utf8');
+  const js = fs.readFileSync(path.join(__dirname, '..', 'public', 'js', 'app.js'), 'utf8');
+  const groups = [...html.matchAll(/<div class="nav-lbl">([^<]+)<\/div>/g)].map(m => m[1].replace('&amp;', '&'));
+  assert.deepEqual(groups, ['Pilotage', 'Clients & factures', 'Déclarations', 'Paramètres']);
+  const views = new Set([...js.slice(js.indexOf('const VIEWS = {'), js.indexOf('};', js.indexOf('const VIEWS = {'))).matchAll(/^\s+([a-z]+): \{/gm)].map(m => m[1]));
+  const navTargets = [...html.matchAll(/class="nav-item" data-view="([a-z]+)"/g)].map(m => m[1]);
+  for (const v of navTargets) assert.ok(views.has(v), `entrée « ${v} » sans vue`);
+  for (const v of ['fournisseurs', 'reseau']) assert.ok(navTargets.includes(v), `page ${v} dans la navigation`);
+});
