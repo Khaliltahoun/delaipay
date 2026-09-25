@@ -170,6 +170,7 @@ a.ws-card:hover{background:rgba(255,255,255,.07);text-decoration:none}
 .powered-by{display:flex;align-items:center;gap:6px;padding:10px 8px 2px;font-size:var(--fs-2xs);color:var(--side-muted);letter-spacing:.01em}
 .powered-by img{width:14px;height:14px;flex:0 0 auto;display:block}
 .powered-by b{color:var(--side-ink);font-weight:var(--fw-semibold)}
+.pv-powered{margin:10px 2px 0;padding-bottom:0}
 .side-foot .ver{margin-left:auto;font-size:var(--fs-2xs);opacity:.7}
 
 /* Colonne principale + barre supérieure */

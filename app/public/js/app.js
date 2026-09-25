@@ -2097,8 +2097,8 @@ async function renderWorkspace(box) {
     </div>
     <div class="stack">
       <div class="card"><div class="card-h"><h3>Aperçu</h3></div><div class="card-b"><div class="preview-ws"><div class="pv-side">
-                    <div class="ws-card m-0"><div class="ws-mono ${w.logoUrl ? 'has-logo' : ''}" id="pvMono" style="${w.logoUrl ? '' : 'background:var(--tenant);color:var(--tenant-ink)'}">${w.logoUrl ? `<img class="ws-logo-img" src="${esc(w.logoUrl)}" alt="">` : esc(w.initials || 'DP')}</div><div class="ws-meta"><b id="pvName">${esc(w.displayName || '')}</b><small>${esc(w.raisonLegale || 'Espace de travail')}</small></div></div></div>
-          <div class="powered-by" style="margin:10px 2px 0"><img src="/assets/brand/delaipay-symbol-dark-bg.svg" alt="" width="14" height="14">Propulsé par <b>DelaiPay</b></div>
+                    <div class="ws-card m-0"><div class="ws-mono ${w.logoUrl ? 'has-logo' : ''}" id="pvMono" style="${w.logoUrl ? '' : 'background:var(--tenant);color:var(--tenant-ink)'}">${w.logoUrl ? `<img class="ws-logo-img" src="${esc(w.logoUrl)}" alt="">` : esc(w.initials || 'DP')}</div><div class="ws-meta"><b id="pvName">${esc(w.displayName || '')}</b><small>${esc(w.raisonLegale || 'Espace de travail')}</small></div></div>
+          <div class="powered-by pv-powered"><img src="/assets/brand/delaipay-symbol-dark-bg.svg" alt="" width="14" height="14">Propulsé par <b>DelaiPay</b></div></div>
         <div class="pv-body">Chaque cabinet dispose de son espace, de ses données cloisonnées et de ses utilisateurs, dans une interface DelaiPay commune.</div></div></div></div>
       <div class="card"><div class="card-h"><div><h3>Espace</h3><div class="sub">informations d'abonnement</div></div></div><div class="card-b">
         <dl class="kv"><dt>Adresse</dt><dd><span class="code">${esc(w.slug || '—')}.delaipay.com</span></dd><dt>Statut</dt><dd>${w.active === false ? '<span class="pill pill-sm pill-late">Désactivé</span>' : '<span class="pill pill-sm pill-ok">Actif</span>'}</dd>
