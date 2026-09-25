@@ -1234,6 +1234,7 @@ async function renderDelais() {
     <div class="filters">${[['all', 'Toutes', data.rows.length], ['retard', 'Retard &gt; 0', t.aDeclarer], ['conv', 'Convention absente', t.sansConvention]].map(([k, label, count]) => `<button class="fpill" data-f="${k}" aria-pressed="${filt === k}">${label}<span class="c">${count}</span></button>`).join('')}</div>
     <div class="actions"><span class="dh t-sm">Exporter en Excel :</span>${['all', 'retard', 'conv'].map(k => `<button class="btn btn-ghost btn-sm xls-export" data-x="${k}" title="Exporter « ${FL[k]} » en Excel">${svgI('dl')}${FL[k]}</button>`).join('')}</div>
   </div>
+  ${(() => { const hv = data.rows.filter(r => r.conv_hors_validite).length; return hv ? `<div class="note note-warn">${svgI('warn')}<div><div class="note-t">Convention appliquée hors de sa période de validité — à confirmer</div>${hv} facture(s) : le calcul applique la convention en vigueur (règle actuelle, selon son statut) alors que ses dates ne couvrent pas ce trimestre. Question ouverte pour l’expert-comptable ; montants inchangés.</div></div>` : ''; })()}
   ${rows.length ? `<div class="hint">${svgI('info')}<span>Facture non payée à la clôture : le délai est calculé jusqu'au dernier jour du trimestre. Cliquez une ligne pour le détail du calcul.</span></div>
   <div class="table-wrap"><table class="dense rc"><thead><tr>
     <th>N° facture</th><th>Fournisseur (IF)</th><th data-prio="3">Nature</th><th class="num">TTC</th><th data-prio="1">Date facture</th><th>Date paiement</th>
@@ -1255,7 +1256,7 @@ async function renderDelais() {
       <td class="mono dh" data-prio="3" title="${esc(etatTip(f))}">${f.arrete_au ? dateFr(f.arrete_au) : '—'}</td>
       <td class="num" data-prio="2" title="${esc(etatTip(f))}">${f.delai_ecoule != null ? f.delai_ecoule + ' j' : '—'}${etatMini(f)}</td>
       <td data-rc="s"><div class="cell-stack"><span class="badge ${f.operateur_reseau ? 'b30' : (f.has_conv || f.delai_applicable >= 120 ? 'b120' : 'b60')}">${f.delai_applicable} j ${f.operateur_reseau ? '<small>réseau</small>' : (!f.has_conv && f.delai_applicable === 60 ? '<small>légal</small>' : '')}</span>${f.delai_ecoule > 60 && !f.operateur_reseau ? (f.has_conv
-        ? (f.conv_hors_validite ? ' <span class="pill pill-sm pill-warn" title="Convention appliquée au calcul (règle LOT 4) alors que ses dates ne couvrent pas ce trimestre — question ouverte pour l’expert-comptable.">conv. hors période de validité — à confirmer</span>' : ' <span class="pill pill-sm pill-ok" title="Convention disponible">conv.</span>')
+        ? (f.conv_hors_validite ? ' <span class="pill pill-sm pill-warn" title="Convention appliquée au calcul (règle LOT 4) alors que ses dates ne couvrent pas ce trimestre — question ouverte pour l’expert-comptable.">conv. hors validité</span>' : ' <span class="pill pill-sm pill-ok" title="Convention disponible">conv.</span>')
         : (f.four_id && !locked
           ? ` <button class="btn btn-ghost btn-xs link-ink" data-perm="manage_conventions" title="Ce fournisseur a une convention signée : l'enregistrer en un clic" aria-label="Enregistrer la convention signée de ${esc(f.four || 'ce fournisseur')}" data-four="${f.four_id}" data-fournom="${esc(f.four || '')}" data-delai="${f.delai_ecoule}" onclick="event.stopPropagation();convExpress(this)">+ Conv.</button>`
           : ' <span class="pill pill-sm pill-late" title="Aucune convention pour ce fournisseur">sans conv.</span>')) : ''}</div>${(reseauBadge(f) + doublonBadge(f)).trim() ? `<div class="cell-stack">${reseauBadge(f)}${doublonBadge(f)}</div>` : ''}</td>
@@ -1290,6 +1291,7 @@ function factureDrawer(f) {
       <div class="row tot"><span>Amende (trimestre)</span><span>${money(f.amende)} DH</span></div>
     </div>
     <div class="dh t-sm">Modèle trimestriel apporté (mois calendaire) : 1ᵉʳ mois de retard au taux directeur BAM, mois suivants à 0,85 %, seuls les mois du trimestre déclaré sont facturés.</div>
+    ${f.conv_hors_validite ? `<div class="note note-warn mt-12">${svgI('warn')}<div><div class="note-t">Convention appliquée hors de sa période de validité — à confirmer</div>Convention du ${dateFr(f.conv_hors_validite.debut)}${f.conv_hors_validite.fin ? ' au ' + dateFr(f.conv_hors_validite.fin) : ''} : ses dates ne couvrent pas ce trimestre, mais le calcul l’applique (règle actuelle, selon son statut). Question ouverte pour l’expert-comptable.</div></div>` : ''}
     ${doublonDrawer(f)}
   </div>`);
 }

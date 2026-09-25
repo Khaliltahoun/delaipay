@@ -398,7 +398,7 @@ tfoot td{position:sticky;bottom:0;padding:11px 14px;font-weight:var(--fw-semibol
 .table-foot{display:flex;justify-content:center;margin:14px 0}
 
 table.dense tbody td{white-space:nowrap;padding-top:8px;padding-bottom:8px}
-table.dense .fournisseur b{display:block;max-width:200px;overflow:hidden;text-overflow:ellipsis}
+table.dense .fournisseur b{display:block;max-width:172px;overflow:hidden;text-overflow:ellipsis}
 .clip{display:inline-block;max-width:170px;overflow:hidden;text-overflow:ellipsis;vertical-align:bottom}
 table.dense .cell-stack{flex-wrap:nowrap}
 
