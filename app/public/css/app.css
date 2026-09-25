@@ -181,7 +181,7 @@ a.ws-card:hover{background:rgba(255,255,255,.07);text-decoration:none}
 .topbar{position:sticky;top:0;z-index:30;display:flex;align-items:center;gap:10px;min-height:60px;padding:10px 28px;
   background:var(--topbar);backdrop-filter:saturate(1.4) blur(10px);-webkit-backdrop-filter:saturate(1.4) blur(10px);border-bottom:1px solid var(--line)}
 .iconbtn.menu-btn{display:none}
-.crumb{display:flex;align-items:center;gap:6px;color:var(--muted);font-size:var(--fs-md);font-weight:var(--fw-medium);min-width:120px;flex:0 1 auto;max-width:420px}
+.crumb{display:flex;align-items:center;gap:6px;color:var(--muted);font-size:var(--fs-md);font-weight:var(--fw-medium);min-width:0;flex:0 1 auto;max-width:420px}
 .crumb b{color:var(--ink-2);font-weight:var(--fw-medium);white-space:nowrap}
 .crumb span{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:var(--ink);font-weight:var(--fw-semibold)}
 .crumb svg{width:14px;height:14px;opacity:.45;flex:0 0 auto}
@@ -368,7 +368,7 @@ button.metric:hover{border-color:var(--line-strong);box-shadow:var(--shadow-md)}
 
 /* Tableaux — denses, lisibles, en-tête collant */
 .table-wrap{overflow:auto;border:1px solid var(--line);border-radius:var(--r-lg);background:var(--surface);box-shadow:var(--shadow-xs);
-  max-height:calc(100vh - 220px);scrollbar-width:thin}
+  max-height:calc(100vh - 160px);scrollbar-width:thin}
 .table-wrap.flat{box-shadow:none;border-radius:var(--r-md);max-height:none}
 table{border-collapse:separate;border-spacing:0;width:100%;font-size:var(--fs-md);min-width:760px}
 thead th{position:sticky;top:0;background:var(--surface-2);text-align:left;font-size:var(--fs-xs);font-weight:var(--fw-semibold);text-transform:uppercase;
@@ -394,9 +394,57 @@ tfoot td{position:sticky;bottom:0;padding:11px 14px;font-weight:var(--fw-semibol
 .table-foot{display:flex;justify-content:center;margin:14px 0}
 
 table.dense tbody td{white-space:nowrap;padding-top:8px;padding-bottom:8px}
-table.dense .fournisseur b{display:block;max-width:230px;overflow:hidden;text-overflow:ellipsis}
+table.dense .fournisseur b{display:block;max-width:200px;overflow:hidden;text-overflow:ellipsis}
 .clip{display:inline-block;max-width:170px;overflow:hidden;text-overflow:ellipsis;vertical-align:bottom}
 table.dense .cell-stack{flex-wrap:nowrap}
+
+/* Tableaux v3 — 1re colonne et colonne d'état/actions collantes, colonnes à priorité, lignes-cartes en mobile.
+ * Balisage : td/th[data-prio="2|3"] (masquées quand la largeur manque, restituées dans le tiroir de détail),
+ * .col-act (collante à droite), td[data-rc="t|a|m|s"] + data-label (disposition mobile). */
+table.dense{min-width:0}
+table.dense thead th,table.dense tbody td,table.dense tfoot td{padding-left:12px;padding-right:12px}
+table.dense thead th{letter-spacing:.04em}
+.link-ink{color:var(--brand-600)}
+:root[data-theme="dark"] .link-ink{color:var(--brand)}
+@media (max-width:720px){ table.rc td[data-rc="t"]{order:1} table.rc td[data-rc="a"]{order:2} table.rc td[data-rc="m"]{order:3} table.rc td[data-rc="s"]{order:4} }
+td.amount{font-weight:var(--fw-semibold)}
+td.dim{color:var(--faint)}
+.mb-18{margin-bottom:18px}
+td.audit-det{max-width:420px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.nowrap{white-space:nowrap}
+.row-del{color:var(--muted)}
+.row-del:hover{color:var(--danger);background:var(--danger-soft)}
+@media (min-width:721px){ .row-del span{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0)} }
+table.dense thead th:first-child,table.dense tbody td:first-child,table.dense tfoot td:first-child{position:sticky;left:0;z-index:1;background:var(--surface)}
+table.dense thead th:first-child{z-index:3;background:var(--surface-2)}
+table.dense tfoot td:first-child{z-index:2;background:var(--surface-2)}
+table.dense tbody tr:hover td:first-child,table.dense tbody tr:hover td.col-act{background:var(--surface-2)}
+table .col-act{position:sticky;right:0;z-index:1;background:var(--surface);box-shadow:inset 1px 0 0 var(--line-soft)}
+table thead th.col-act{z-index:3;background:var(--surface-2)}
+table tfoot td.col-act{z-index:2;background:var(--surface-2)}
+@media (max-width:1680px){ table [data-prio="3"]{display:none} }
+@media (max-width:1440px){ table [data-prio="2"]{display:none} }
+@media (max-width:1280px) and (min-width:721px){ table [data-prio="1"]{display:none} }
+@media (max-width:720px){
+  .table-wrap:has(table.rc){border:0;background:transparent;box-shadow:none;overflow:visible;max-height:none;border-radius:0}
+  table.rc,table.rc tbody,table.rc tfoot{display:block;min-width:0!important}
+  table.rc thead{display:none}
+  table.rc tbody tr{display:flex;flex-wrap:wrap;align-items:baseline;gap:4px 12px;padding:12px 14px;margin-bottom:8px;
+    background:var(--surface);border:1px solid var(--line);border-radius:var(--r-lg);box-shadow:var(--shadow-xs)}
+  table.rc tbody tr:hover{background:var(--surface)}
+  table.rc tbody td{display:none;padding:0;border:0;white-space:normal;position:static;background:none!important;box-shadow:none}
+  table.rc tbody td[data-rc]{display:block}
+  table.rc td[data-rc="t"]{flex:1 1 calc(100% - 140px);min-width:0;font-weight:var(--fw-semibold)}
+  table.rc td[data-rc="t"] .fournisseur b{max-width:none;white-space:normal}
+  table.rc td[data-rc="a"]{flex:0 0 auto;margin-left:auto;text-align:right;font-weight:var(--fw-semibold);font-variant-numeric:tabular-nums lining-nums}
+  table.rc td[data-rc="m"]{font-size:var(--fs-sm);color:var(--muted)}
+  table.rc td[data-rc="s"]{font-size:var(--fs-sm)}
+  table.rc td[data-label]::before{content:attr(data-label) " ";color:var(--faint);font-weight:var(--fw-regular)}
+  table.rc tfoot tr{display:flex;flex-wrap:wrap;justify-content:space-between;gap:4px 12px;padding:12px 14px;border:1px solid var(--line-strong);
+    border-radius:var(--r-lg);background:var(--surface-2);position:sticky;bottom:8px;z-index:3}
+  table.rc tfoot td{position:static;padding:0;border:0;background:none}
+  table.rc tfoot td:empty{display:none}
+}
 
 /* Pastilles de statut */
 .pill{display:inline-flex;align-items:center;gap:6px;padding:2px 9px;border-radius:var(--r-pill);font-size:var(--fs-xs);font-weight:var(--fw-semibold);
@@ -932,5 +980,19 @@ tr.ign td{background:var(--surface-2)}
   .kv{grid-template-columns:1fr}
   .cal-decl .cd-box{min-width:50%;border-bottom:1px solid var(--line-soft)}
 }
+/* Coquille mobile v3 — aucune barre de défilement horizontal de page : chaque élément de la barre supérieure peut rétrécir. */
+.clientsw-wrap{min-width:0;flex:0 1 auto}
+.clientsw{min-width:0}
+.clientsw #cswName{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.period-wrap,.top-right{flex:0 0 auto}
+@media (max-width:720px){
+  .content{padding:16px 16px 56px}
+  .clientsw-wrap{flex:1 1 auto}
+  .clientsw{max-width:none;width:100%}
+  .btn{min-height:40px}
+  .btn-sm,.btn-xs{min-height:34px}
+  .toolbar .actions{width:100%}
+}
+@media (max-width:420px){ .periodsw .period-badge{display:none} }
 @media (max-width:420px){ .metrics{grid-template-columns:1fr} .kpi-grid{grid-template-columns:1fr} }
 @media print{ .side,.topbar,.ctx-banner,.toasts{display:none!important} .app{display:block} .content{padding:0} }

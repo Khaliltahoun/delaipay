@@ -919,8 +919,8 @@ async function renderClients() {
   <div class="toolbar">
     <div class="filters">${pill('all', 'Tous')}${pill('retard', 'Avec retard')}${pill('ok', 'Conformes')}${pill('assuj', 'Assujetties')}</div>
     <div class="search" style="display:block;flex:0 1 320px;margin:0">${svgI('search')}<input id="clSearch" placeholder="Rechercher (nom, ICE, ville)…" value="${esc(state._cq)}" aria-label="Filtrer les clients"></div></div>
-  <div class="table-wrap"><table style="min-width:940px"><thead><tr>
-    ${th('name', 'Raison sociale')}<th>ICE</th>${th('ville', 'Ville')}${th('ca', 'CA HT', 'num')}<th>Assujettie</th><th>Régime</th><th>Expert</th>${th('retards', 'En retard', 'num')}${th('amende', 'Amende', 'num')}<th>Risque</th></tr></thead>
+  <div class="table-wrap"><table class="dense rc"><thead><tr>
+    ${th('name', 'Raison sociale')}<th>ICE</th>${th('ville', 'Ville')}${th('ca', 'CA HT', 'num')}<th data-prio="2">Assujettie</th><th data-prio="3">Régime</th><th data-prio="3">Expert</th>${th('retards', 'En retard', 'num')}${th('amende', 'Amende', 'num')}<th>Risque</th></tr></thead>
     <tbody id="clRows"></tbody></table></div>`;
   const draw = () => {
     const f = (state._cq || '').trim().toLowerCase();
@@ -932,11 +932,11 @@ async function renderClients() {
     rows = rows.slice().sort((a, b) => { const x = a[sk], y = b[sk]; return (typeof x === 'number' || typeof y === 'number') ? ((+x || 0) - (+y || 0)) * dir : String(x || '').localeCompare(String(y || ''), 'fr') * dir; });
     $('#clCount').textContent = `${rows.length} société(s) sur ${state.clients.length} · « En retard » et « Amende » pour la période ${state.period ? state.period.annee + ' ' + TRI_LABEL(state.period.trimestre) : 'active'} · cliquez une ligne pour ouvrir la fiche client.`;
     $('#clRows').innerHTML = rows.length ? rows.map(c => `<tr class="clickable" data-id="${c.id}">
-      <td><b>${esc(c.name)}</b></td><td class="mono dh">${esc(c.ice || '—')}</td><td>${esc(c.ville || '—')}</td>
-      <td class="num">${money(c.ca, 0)}</td><td><span class="${c.assujettie ? 'tag-yes' : 'tag-no'}">${c.assujettie ? 'Oui' : 'Non'}</span></td>
-      <td class="dh">${esc(c.regime)}</td><td class="dh">${esc(c.expert)}</td>
-      <td class="num" style="font-weight:600;color:${c.retards ? 'var(--late)' : 'var(--faint)'}">${c.retards}</td>
-      <td class="num">${c.amende ? money(c.amende) : '—'}</td><td>${riskPill(c.risk)}</td></tr>`).join('')
+      <td data-rc="t"><b>${esc(c.name)}</b></td><td class="mono dh" data-rc="m" data-label="ICE">${esc(c.ice || '—')}</td><td data-rc="m">${esc(c.ville || '—')}</td>
+      <td class="num" data-rc="m" data-label="CA HT">${money(c.ca, 0)}</td><td data-prio="2"><span class="${c.assujettie ? 'tag-yes' : 'tag-no'}">${c.assujettie ? 'Oui' : 'Non'}</span></td>
+      <td class="dh" data-prio="3">${esc(c.regime)}</td><td class="dh" data-prio="3">${esc(c.expert)}</td>
+      <td class="num amount ${c.retards ? 'amount-late' : 'dim'}" data-rc="s" data-label="En retard">${c.retards}</td>
+      <td class="num" data-rc="a">${c.amende ? money(c.amende) : '—'}</td><td class="col-act" data-rc="s">${riskPill(c.risk)}</td></tr>`).join('')
       : `<tr><td colspan="10"><div class="empty" style="padding:32px"><div class="ic">${svgI('search', '')}</div><h4>${state.clients.length ? 'Aucun client ne correspond' : 'Aucun client pour le moment'}</h4><p>${state.clients.length ? 'Modifiez la recherche ou le filtre.' : 'Créez un premier dossier client pour commencer le suivi des délais.'}</p></div></td></tr>`;
     $$('#clRows tr[data-id]').forEach(tr => tr.onclick = () => setClient(tr.dataset.id));
   };
@@ -1192,34 +1192,34 @@ async function renderDelais() {
     <div class="actions"><span class="dh" style="font-size:var(--fs-sm)">Exporter en Excel :</span>${['all', 'retard', 'conv'].map(k => `<button class="btn btn-ghost btn-sm xls-export" data-x="${k}" title="Exporter « ${FL[k]} » en Excel">${svgI('dl')}${FL[k]}</button>`).join('')}</div>
   </div>
   ${rows.length ? `<div class="hint">${svgI('info')}<span>Facture non payée à la clôture : le délai est calculé jusqu'au dernier jour du trimestre. Cliquez une ligne pour le détail du calcul.</span></div>
-  <div class="table-wrap"><table class="dense" style="min-width:1240px"><thead><tr>
-    <th>N° facture</th><th>Fournisseur (IF)</th><th>Nature</th><th class="num">TTC</th><th>Date facture</th><th>Date paiement</th>
-    <th>Arrêté au</th><th class="num">Délai constaté</th><th>Délai autorisé</th><th class="num">Retard</th><th>À déclarer</th><th class="num">Amende</th><th>Statut</th></tr></thead>
+  <div class="table-wrap"><table class="dense rc"><thead><tr>
+    <th>N° facture</th><th>Fournisseur (IF)</th><th data-prio="3">Nature</th><th class="num">TTC</th><th data-prio="1">Date facture</th><th>Date paiement</th>
+    <th data-prio="3">Arrêté au</th><th class="num" data-prio="2">Délai constaté</th><th>Délai autorisé</th><th class="num">Retard</th><th data-prio="2">À déclarer</th><th class="num">Amende</th><th class="col-act">Statut</th></tr></thead>
     <tbody id="pgBody"></tbody>
-    <tfoot><tr><td colspan="3">Total — ${rows.length} facture(s)</td><td class="num">${money(rows.reduce((s, x) => s + (x.ttc || 0), 0))}</td><td colspan="5"></td><td></td><td></td><td class="num amount-late">${money(rows.reduce((s, x) => s + (x.amende || 0), 0))}</td><td></td></tr></tfoot>
+    <tfoot><tr><td>Total — ${rows.length} facture(s)</td><td></td><td data-prio="3"></td><td class="num" data-label="TTC">${money(rows.reduce((s, x) => s + (x.ttc || 0), 0))}</td><td data-prio="1"></td><td></td><td data-prio="3"></td><td data-prio="2"></td><td></td><td></td><td data-prio="2"></td><td class="num amount-late" data-label="Amende">${money(rows.reduce((s, x) => s + (x.amende || 0), 0))}</td><td class="col-act"></td></tr></tfoot>
   </table></div><div id="pgMore" class="table-foot"></div>` : emptyBox('Aucune facture sur cette période', `Aucune facture n'est rattachée à T${data.periode.trimestre} ${data.periode.annee} pour ce client. Importez un journal d'achats ou choisissez une autre période.`, locked ? null : 'import', 'Importer un journal', 'table')}`;
   $$('.fpill').forEach(b => b.onclick = () => { state._filter = b.dataset.f; renderDelais(); });
   $$('.xls-export').forEach(b => b.onclick = () => exportDelais(b.dataset.x, b));
   wireClientBar(renderDelais);
   if ($('#recompute')) $('#recompute').onclick = async () => { if (locked) return; await api(`/clients/${state.clientId}/recompute${perQuery()}`, { method: 'POST' }); toast('Recalcul effectué.', 'ok'); renderDelais(); };
   if (rows.length) mountPaged(rows, f => `<tr class="clickable" data-id="${f.id}">
-      <td class="mono"><b>${esc(f.numero || '—')}</b></td>
-      <td><div class="fournisseur" title="${esc(f.four || '')}"><b>${esc(f.four || '—')}</b><small>IF ${esc(f.four_if || '—')}</small></div></td>
-      <td class="dh"><span class="clip" title="${esc(f.nature || '')}">${esc(f.nature || '—')}</span></td>
-      <td class="num">${money(f.ttc)}</td>
-      <td class="mono dh">${dateFr(f.date_facture)}</td>
-      <td class="mono dh">${dateFr(f.date_paiement)}</td>
-      <td class="mono dh" title="${esc(etatTip(f))}">${f.arrete_au ? dateFr(f.arrete_au) : '—'}</td>
-      <td class="num" title="${esc(etatTip(f))}">${f.delai_ecoule != null ? f.delai_ecoule + ' j' : '—'}${etatMini(f)}</td>
-      <td><div class="cell-stack"><span class="badge ${f.operateur_reseau ? 'b30' : (f.has_conv || f.delai_applicable >= 120 ? 'b120' : 'b60')}">${f.delai_applicable} j ${f.operateur_reseau ? '<small>réseau</small>' : (!f.has_conv && f.delai_applicable === 60 ? '<small>légal</small>' : '')}</span>${f.delai_ecoule > 60 && !f.operateur_reseau ? (f.has_conv
+      <td class="mono" data-rc="m" data-label="N°"><b>${esc(f.numero || '—')}</b></td>
+      <td data-rc="t"><div class="fournisseur" title="${esc(f.four || '')}"><b>${esc(f.four || '—')}</b><small>IF ${esc(f.four_if || '—')}</small></div></td>
+      <td class="dh" data-prio="3"><span class="clip" title="${esc(f.nature || '')}">${esc(f.nature || '—')}</span></td>
+      <td class="num" data-rc="a">${money(f.ttc)}</td>
+      <td class="mono dh" data-prio="1" data-rc="m" data-label="Facture">${dateFr(f.date_facture)}</td>
+      <td class="mono dh" data-rc="m" data-label="Paiement">${dateFr(f.date_paiement)}</td>
+      <td class="mono dh" data-prio="3" title="${esc(etatTip(f))}">${f.arrete_au ? dateFr(f.arrete_au) : '—'}</td>
+      <td class="num" data-prio="2" title="${esc(etatTip(f))}">${f.delai_ecoule != null ? f.delai_ecoule + ' j' : '—'}${etatMini(f)}</td>
+      <td data-rc="s"><div class="cell-stack"><span class="badge ${f.operateur_reseau ? 'b30' : (f.has_conv || f.delai_applicable >= 120 ? 'b120' : 'b60')}">${f.delai_applicable} j ${f.operateur_reseau ? '<small>réseau</small>' : (!f.has_conv && f.delai_applicable === 60 ? '<small>légal</small>' : '')}</span>${f.delai_ecoule > 60 && !f.operateur_reseau ? (f.has_conv
         ? ' <span class="pill pill-sm pill-ok" title="Convention disponible">conv.</span>'
         : (f.four_id && !locked
-          ? ` <button class="btn btn-ghost btn-xs" data-perm="manage_conventions" style="color:var(--brand-600)" title="Ce fournisseur a une convention signée : l'enregistrer en un clic" data-four="${f.four_id}" data-fournom="${esc(f.four || '')}" data-delai="${f.delai_ecoule}" onclick="event.stopPropagation();convExpress(this)">+ Convention présente</button>`
+          ? ` <button class="btn btn-ghost btn-xs link-ink" data-perm="manage_conventions" title="Ce fournisseur a une convention signée : l'enregistrer en un clic" aria-label="Enregistrer la convention signée de ${esc(f.four || 'ce fournisseur')}" data-four="${f.four_id}" data-fournom="${esc(f.four || '')}" data-delai="${f.delai_ecoule}" onclick="event.stopPropagation();convExpress(this)">+ Conv.</button>`
           : ' <span class="pill pill-sm pill-late" title="Aucune convention pour ce fournisseur">sans conv.</span>')) : ''}</div>${(reseauBadge(f) + doublonBadge(f)).trim() ? `<div class="cell-stack">${reseauBadge(f)}${doublonBadge(f)}</div>` : ''}</td>
-      <td class="retard ${f.retard > 0 ? 'pos' : 'neg'}">${f.retard == null ? '—' : (f.retard > 0 ? '+' + f.retard : f.retard)}</td>
-      <td>${f.a_declarer ? '<span class="pill pill-sm pill-late"><span class="dot"></span>Oui</span>' : '<span class="tag-no">—</span>'}</td>
-      <td class="num" style="font-weight:600">${f.amende ? money(f.amende) : '—'}</td>
-      <td>${riskPill(f.risk)}</td></tr>`,
+      <td class="retard ${f.retard > 0 ? 'pos' : 'neg'}" data-rc="s" data-label="Retard">${f.retard == null ? '—' : (f.retard > 0 ? '+' + f.retard : f.retard)}</td>
+      <td data-prio="2">${f.a_declarer ? '<span class="pill pill-sm pill-late"><span class="dot"></span>Oui</span>' : '<span class="tag-no">—</span>'}</td>
+      <td class="num amount" data-rc="s" data-label="Amende">${f.amende ? money(f.amende) : '—'}</td>
+      <td class="col-act" data-rc="s">${riskPill(f.risk)}</td></tr>`,
     { onRow: tr => factureDrawer(data.rows.find(x => x.id === tr.dataset.id)) });
 }
 function factureDrawer(f) {
@@ -1646,16 +1646,16 @@ async function renderConv() {
       <div class="stat ok"><div class="l">Appliquées au calcul</div><div class="v">${applied}</div></div>
       <div class="stat ${missingDoc ? 'warn' : ''}"><div class="l">Justificatif manquant</div><div class="v">${missingDoc}</div></div></div>
     <div class="hint">${svgI('info')}<span>Règle appliquée à un fournisseur : <b>opérateur de réseau confirmé (30 j)</b> › <b>convention en vigueur la plus récente</b> › <b>délai légal (60 j)</b>. La colonne « Règle » indique si la convention est celle réellement utilisée.</span></div>
-    <div class="table-wrap"><table style="min-width:1000px"><thead><tr><th>Fournisseur (ICE)</th><th class="num">Délai convenu</th><th>Règle</th><th>Validité</th><th>Statut</th><th>Justificatif</th><th></th></tr></thead>
-    <tbody>${rows.map(c => { const st = S[c.statut] || ['pill-ok', c.statut]; return `<tr><td><div class="fournisseur"><b>${esc(c.fournisseur || '—')}</b><small>${esc(c.four_ice || c.four_if || '')}</small></div></td>
-      <td class="num"><span class="badge conv">${c.delai} j</span></td>
-      <td>${rule(c)}</td>
-      <td class="dh" style="white-space:nowrap">${c.date_debut ? `<span class="mono">${dateFr(c.date_debut)}</span> → ` : ''}${c.date_fin ? `<span class="mono">${dateFr(c.date_fin)}</span>` : 'Durée indéterminée'}</td>
-      <td><span class="pill pill-sm ${st[0]}"><span class="dot"></span>${esc(st[1])}</span></td>
-      <td>${c.fichier
+    <div class="table-wrap"><table class="dense rc"><thead><tr><th>Fournisseur (ICE)</th><th class="num">Délai convenu</th><th>Règle</th><th data-prio="2">Validité</th><th>Statut</th><th>Justificatif</th><th class="col-act"><span class="sr-only">Actions</span></th></tr></thead>
+    <tbody>${rows.map(c => { const st = S[c.statut] || ['pill-ok', c.statut]; return `<tr><td data-rc="t"><div class="fournisseur"><b>${esc(c.fournisseur || '—')}</b><small>${esc(c.four_ice || c.four_if || '')}</small></div></td>
+      <td class="num" data-rc="a"><span class="badge conv">${c.delai} j</span></td>
+      <td data-rc="s">${rule(c)}</td>
+      <td class="dh nowrap" data-prio="2">${c.date_debut ? `<span class="mono">${dateFr(c.date_debut)}</span> → ` : ''}${c.date_fin ? `<span class="mono">${dateFr(c.date_fin)}</span>` : 'Durée indéterminée'}</td>
+      <td data-rc="s"><span class="pill pill-sm ${st[0]}"><span class="dot"></span>${esc(st[1])}</span></td>
+      <td data-rc="s">${c.fichier
         ? `<a href="/api/conventions/${c.fichier}/file" target="_blank" rel="noopener">${svgI('doc')} Voir</a> <button class="btn btn-quiet btn-xs" data-perm="manage_conventions" data-replacepdf="${c.id}">Remplacer</button>`
         : `<span class="pill pill-sm pill-warn">Manquant</span> <button class="btn btn-ghost btn-xs" data-perm="manage_conventions" data-addpdf="${c.id}">Ajouter</button>`}</td>
-      <td style="text-align:right"><button class="btn btn-danger-ghost btn-sm" data-perm="manage_conventions" data-delc="${c.id}" data-four="${esc(c.fournisseur || '')}">Supprimer</button></td></tr>`; }).join('')}</tbody></table></div>`
+      <td class="col-act" data-rc="s"><button class="btn btn-quiet btn-sm row-del" data-perm="manage_conventions" data-delc="${c.id}" data-four="${esc(c.fournisseur || '')}" title="Supprimer la convention de ${esc(c.fournisseur || 'ce fournisseur')}">${svgI('trash')}<span>Supprimer</span></button></td></tr>`; }).join('')}</tbody></table></div>`
     : emptyBox('Aucune convention', 'Importez la liste des conventions depuis Excel ou ajoutez-les une à une. Sans convention, le délai légal de 60 jours s\'applique.', null, null, 'doc')}`;
   wireClientBar(renderConv);
   if ($('#newConv')) $('#newConv').onclick = convModal;
@@ -1791,9 +1791,9 @@ async function renderDecl() {
       <div class="field"><label>Registre de commerce</label><div class="v mono">${esc(e.rc || '—')}</div></div>
       <div class="field" style="grid-column:span 2"><label>Adresse</label><div class="v">${esc(e.adresse || '—')}</div></div></div></div>
     <div class="doc-sec"><h4>État des factures payées hors délai (${L.length})</h4>
-      <div class="table-wrap flat"><table style="min-width:640px"><thead><tr><th>IF fournisseur</th><th>Raison sociale</th><th class="num">TTC</th><th class="num">Non payé</th><th class="num">Payé hors délai</th><th class="num">Retard</th><th class="num">Amende</th></tr></thead>
-      <tbody>${L.length ? L.map(l => `<tr><td class="mono dh">${esc(l.if || '—')}</td><td><b>${esc(l.nom || '—')}</b></td><td class="num">${money(l.ttc)}</td><td class="num">${money(l.non_paye)}</td><td class="num">${money(l.hors_delai)}</td><td class="num amount-late">+${l.retard} j</td><td class="num" style="font-weight:600">${money(l.amende)}</td></tr>`).join('') : '<tr><td colspan="7" class="dh" style="text-align:center;padding:24px">Aucune facture hors délai sur la période — déclaration « néant ».</td></tr>'}</tbody>
-      <tfoot><tr><td colspan="2">Total</td><td class="num">${money(dec.montant_total_ttc)}</td><td class="num">${money(dec.montant_non_paye)}</td><td class="num">${money(dec.montant_paye_hors_delai)}</td><td></td><td class="num amount-late">${money(dec.montant_total_amende)}</td></tr></tfoot></table></div></div>
+      <div class="table-wrap flat"><table class="dense rc"><thead><tr><th>IF fournisseur</th><th>Raison sociale</th><th class="num">TTC</th><th class="num">Non payé</th><th class="num">Payé hors délai</th><th class="num">Retard</th><th class="num">Amende</th></tr></thead>
+      <tbody>${L.length ? L.map(l => `<tr><td class="mono dh" data-rc="m" data-label="IF">${esc(l.if || '—')}</td><td data-rc="t"><b>${esc(l.nom || '—')}</b></td><td class="num" data-rc="a">${money(l.ttc)}</td><td class="num" data-rc="m" data-label="Non payé">${money(l.non_paye)}</td><td class="num" data-rc="m" data-label="Hors délai">${money(l.hors_delai)}</td><td class="num amount-late" data-rc="s" data-label="Retard">+${l.retard} j</td><td class="num amount" data-rc="s" data-label="Amende">${money(l.amende)}</td></tr>`).join('') : '<tr><td colspan="7" class="dh" style="text-align:center;padding:24px">Aucune facture hors délai sur la période — déclaration « néant ».</td></tr>'}</tbody>
+      <tfoot><tr><td colspan="2">Total</td><td class="num" data-label="TTC">${money(dec.montant_total_ttc)}</td><td class="num" data-label="Non payé">${money(dec.montant_non_paye)}</td><td class="num" data-label="Hors délai">${money(dec.montant_paye_hors_delai)}</td><td></td><td class="num amount-late" data-label="Amende">${money(dec.montant_total_amende)}</td></tr></tfoot></table></div></div>
     ${d.exclusions && d.exclusions.nbFactures ? `<div class="doc-sec"><h4>Factures d'opérateurs de réseau exclues du tableau (non comptées dans les totaux)</h4>
       <div class="dh" style="font-size:var(--fs-sm)">${d.exclusions.nbFactures} facture(s) · ${d.exclusions.nbFournisseurs} fournisseur(s) · TTC ${money(d.exclusions.ttc)} DH — <b>${esc(d.exclusions.motif)}</b>. Ces factures restent visibles dans le suivi interne (feuille de délais) mais sont volontairement exclues des tableaux déclaratifs.</div></div>` : ''}
     <div class="pay-band">
@@ -1868,18 +1868,18 @@ async function renderRetards() {
   const ttc = rows.reduce((s, r) => s + (r.ttc || 0), 0);
   $('#view').innerHTML = `
   <div class="page-head"><div class="eyebrow">Cabinet · toutes périodes</div><h1>Factures en retard</h1><p>${rows.length} facture(s) à déclarer sur l'ensemble des clients · TTC concerné <b>${money(ttc)} DH</b> · amende <b>${money(tot)} DH</b>.</p></div>
-  ${rows.length ? `<div class="table-wrap"><table class="dense" style="min-width:1100px"><thead><tr>
-    <th>Client</th><th>Fournisseur (IF)</th><th>N° facture</th><th class="num">TTC</th><th>Date facture</th><th>Date paiement</th><th>Conv.</th><th class="num">Retard</th><th class="num">Amende</th><th>Risque</th></tr></thead>
+  ${rows.length ? `<div class="table-wrap"><table class="dense rc"><thead><tr>
+    <th>Client</th><th>Fournisseur (IF)</th><th>N° facture</th><th class="num">TTC</th><th data-prio="2">Date facture</th><th>Date paiement</th><th data-prio="3">Conv.</th><th class="num">Retard</th><th class="num">Amende</th><th class="col-act">Risque</th></tr></thead>
     <tbody id="pgBody"></tbody>
-    <tfoot><tr><td colspan="3">Total</td><td class="num">${money(ttc)}</td><td colspan="4"></td><td class="num" style="color:var(--r-red)">${money(tot)}</td><td></td></tr></tfoot></table></div>
+    <tfoot><tr><td>Total</td><td></td><td></td><td class="num" data-label="TTC">${money(ttc)}</td><td data-prio="2"></td><td></td><td data-prio="3"></td><td></td><td class="num amount-late" data-label="Amende">${money(tot)}</td><td class="col-act"></td></tr></tfoot></table></div>
     <div id="pgMore" class="table-foot"></div>`
     : emptyBox('Aucune facture en retard', 'Toutes les factures du portefeuille sont dans les délais.', 'dash', "Vue d'ensemble", 'checkc')}`;
   if (rows.length) mountPaged(rows, f => `<tr class="clickable" data-ent="${f.ent_id}">
-      <td><b>${esc(f.ent)}</b></td><td><div class="fournisseur"><b>${esc(f.four || '—')}</b><small>IF ${esc(f.four_if || '—')}</small></div></td>
-      <td class="mono">${esc(f.numero || '—')}</td><td class="num">${money(f.ttc)}</td>
-      <td class="mono dh">${dateFr(f.date_facture)}</td><td class="mono dh">${dateFr(f.date_paiement)}</td>
-      <td><span class="badge ${f.delai_applicable >= 120 ? 'b120' : 'b60'}">${f.delai_applicable} j</span></td>
-      <td class="retard pos">+${f.retard_jours}</td><td class="num" style="font-weight:600">${money(f.montant_amende)}</td><td>${riskPill(f.couleur_risque)}</td></tr>`,
+      <td data-rc="m"><b>${esc(f.ent)}</b></td><td data-rc="t"><div class="fournisseur"><b>${esc(f.four || '—')}</b><small>IF ${esc(f.four_if || '—')}</small></div></td>
+      <td class="mono" data-rc="m" data-label="N°">${esc(f.numero || '—')}</td><td class="num" data-rc="a">${money(f.ttc)}</td>
+      <td class="mono dh" data-prio="2">${dateFr(f.date_facture)}</td><td class="mono dh" data-rc="m" data-label="Paiement">${dateFr(f.date_paiement)}</td>
+      <td data-prio="3"><span class="badge ${f.delai_applicable >= 120 ? 'b120' : 'b60'}">${f.delai_applicable} j</span></td>
+      <td class="retard pos" data-rc="s" data-label="Retard">+${f.retard_jours}</td><td class="num amount" data-rc="s" data-label="Amende">${money(f.montant_amende)}</td><td class="col-act" data-rc="s">${riskPill(f.couleur_risque)}</td></tr>`,
     { onRow: tr => goClient(tr.dataset.ent, 'delais') });
 }
 
@@ -2035,12 +2035,12 @@ async function renderUsers(box) {
   box.innerHTML = `
   <div class="toolbar"><div class="dh" style="font-size:var(--fs-md)">${d.users.filter(u => u.actif).length} utilisateur(s) actif(s) · ${pending.length} invitation(s) en attente</div>
     <button class="btn btn-primary" id="invBtn">${svgI('plus')}Inviter un utilisateur</button></div>
-  <div class="table-wrap" style="margin-bottom:18px"><table style="min-width:760px"><thead><tr><th>Utilisateur</th><th>Rôle</th><th>Statut</th><th>Dernière connexion</th><th></th></tr></thead>
-    <tbody>${d.users.map(u => `<tr><td><div class="fournisseur"><b>${esc(u.nom || '—')}${u.id === state.me.id ? ' <span class="dh">(vous)</span>' : ''}</b><small>${esc(u.email)}</small></div></td>
-      <td>${roleSel(u)}</td>
-      <td>${u.actif ? '<span class="pill pill-sm pill-ok">Actif</span>' : '<span class="pill pill-sm pill-locked">Désactivé</span>'}</td>
-      <td class="dh">${u.derniere_connexion ? esc(dateTimeFr(u.derniere_connexion)) : 'Jamais'}</td>
-      <td style="text-align:right">${u.id === state.me.id ? '' : `<button class="btn ${u.actif ? 'btn-danger-ghost' : 'btn-ghost'} btn-sm" data-toggle="${u.id}" data-actif="${u.actif ? 1 : 0}" data-nom="${esc(u.nom || u.email)}">${u.actif ? 'Désactiver' : 'Réactiver'}</button>`}</td></tr>`).join('')}</tbody></table></div>
+  <div class="table-wrap mb-18"><table class="dense rc"><thead><tr><th>Utilisateur</th><th>Rôle</th><th>Statut</th><th>Dernière connexion</th><th class="col-act"><span class="sr-only">Actions</span></th></tr></thead>
+    <tbody>${d.users.map(u => `<tr><td data-rc="t"><div class="fournisseur"><b>${esc(u.nom || '—')}${u.id === state.me.id ? ' <span class="dh">(vous)</span>' : ''}</b><small>${esc(u.email)}</small></div></td>
+      <td data-rc="s">${roleSel(u)}</td>
+      <td data-rc="s">${u.actif ? '<span class="pill pill-sm pill-ok">Actif</span>' : '<span class="pill pill-sm pill-locked">Désactivé</span>'}</td>
+      <td class="dh" data-rc="m" data-label="Dernière connexion">${u.derniere_connexion ? esc(dateTimeFr(u.derniere_connexion)) : 'Jamais'}</td>
+      <td class="col-act" data-rc="s">${u.id === state.me.id ? '' : `<button class="btn ${u.actif ? 'btn-quiet row-del' : 'btn-ghost'} btn-sm" data-toggle="${u.id}" data-actif="${u.actif ? 1 : 0}" data-nom="${esc(u.nom || u.email)}">${u.actif ? 'Désactiver' : 'Réactiver'}</button>`}</td></tr>`).join('')}</tbody></table></div>
   <div class="grid-2">
     <div class="card"><div class="card-h"><div><h3>Invitations</h3><div class="sub">valables 7 jours, à usage unique</div></div></div>
       ${d.invitations.length ? `<div class="table-wrap flat" style="border:0"><table style="min-width:520px"><thead><tr><th>E-mail</th><th>Rôle</th><th>Statut</th><th>Expire</th><th></th></tr></thead><tbody>
@@ -2183,6 +2183,27 @@ async function renderExports() {
 }
 
 /* ============================== AUDIT ============================== */
+const ROLE_FR = { admin: 'Administrateur', collaborateur: 'Comptable', lecture: 'Lecture seule' };
+const ENTITE_LBL = { utilisateur: 'Utilisateur', entreprise: 'Client', facture: 'Facture', convention: 'Convention', fournisseur: 'Fournisseur', declaration: 'Déclaration',
+  periode: 'Période', import_lot: 'Import', document: 'Fichier', espace_travail: 'Espace de travail', invitation: 'Invitation', taux_bam: 'Taux BAM', visa: 'Visa', export: 'Export', anomalie: 'Anomalie' };
+const DET_KEY = { email: 'E-mail', role: 'Rôle', avant: 'Avant', apres: 'Après', nom: 'Nom', actif: 'Actif', annee: 'Année', trimestre: 'Trimestre', statut: 'Statut',
+  factures: 'Factures', imported: 'Factures importées', file: 'Fichier', taille: 'Taille', taux: 'Taux', motif: 'Motif', nb: 'Lignes', exclues: 'Exclues', figee: 'Période figée',
+  format: 'Format', slug: 'Adresse', admin: 'Administrateur', raison: 'Motif', operateur_reseau: 'Opérateur de réseau', date_debut: 'Début', delai: 'Délai (j)', entreprise: 'Client' };
+const HIDDEN_DET = new Set(['id', 'importId', 'utilisateur', 'facture', 'token', 'hash']);
+function detVal(k, v) {
+  if (v == null || v === '') return '—';
+  if (typeof v === 'boolean') return v ? 'Oui' : 'Non';
+  if ((k === 'role' || k === 'avant' || k === 'apres') && ROLE_FR[v]) return ROLE_FR[v];
+  if (k === 'trimestre') return 'T' + v;
+  if (typeof v === 'object') return Object.entries(v).filter(([kk]) => !HIDDEN_DET.has(kk)).map(([kk, vv]) => `${DET_KEY[kk] || kk.replace(/_/g, ' ')} : ${detVal(kk, vv)}`).join(', ');
+  return String(v);
+}
+function auditDetails(raw) {
+  if (!raw) return '';
+  let o; try { o = JSON.parse(raw); } catch (_) { return String(raw); }
+  if (o == null || typeof o !== 'object') return String(o);
+  return Object.entries(o).filter(([k]) => !HIDDEN_DET.has(k)).map(([k, v]) => `${DET_KEY[k] || k.replace(/_/g, ' ')} : ${detVal(k, v)}`).join(' · ');
+}
 const AUDIT_LBL = { login: 'Connexion', import: 'Import de factures', import_confirme: 'Import confirmé', import_analyse: 'Fichier analysé', annulation_import: 'Import annulé',
   create: 'Création', update: 'Modification', delete: 'Suppression', cloture_periode: 'Clôture de période', reouverture_periode: 'Réouverture de période', recalcul: 'Recalcul',
   revue_doublon: 'Revue de doublon', classification_fournisseur: 'Classification réseau', import_conventions: 'Import de conventions', export: 'Export' };
@@ -2191,8 +2212,8 @@ async function renderAudit() {
   const tone = a => /cloture/.test(a) ? 'pill-locked' : /reouverture/.test(a) ? 'pill-warn' : /delete|annulation/.test(a) ? 'pill-late' : a === 'login' ? '' : 'pill-brand';
   $('#view').innerHTML = `
   <div class="page-head"><div class="eyebrow">Contrôle</div><h1>Journal d'audit</h1><p>Traçabilité des actions sensibles : connexions, imports, conventions, clôtures et réouvertures, exports. Les 100 dernières entrées.</p></div>
-  <div class="table-wrap"><table style="min-width:720px"><thead><tr><th>Date</th><th>Utilisateur</th><th>Action</th><th>Objet</th><th>Détails</th></tr></thead>
-  <tbody>${rows.length ? rows.map(a => `<tr><td class="mono dh" style="white-space:nowrap">${esc(dateTimeFr(a.created_at))}</td><td>${esc(a.user_nom || '—')}</td><td><span class="pill pill-sm ${tone(a.action)}">${esc(AUDIT_LBL[a.action] || a.action)}</span></td><td class="dh">${esc(a.entite || '—')}</td><td class="dh" style="max-width:380px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${esc(a.details || '')}">${esc(a.details || '')}</td></tr>`).join('') : '<tr><td colspan="5" class="dh" style="text-align:center;padding:24px">Aucune entrée.</td></tr>'}</tbody></table></div>`;
+  <div class="table-wrap"><table class="dense rc"><thead><tr><th>Date</th><th>Utilisateur</th><th>Action</th><th data-prio="2">Objet</th><th>Détails</th></tr></thead>
+  <tbody>${rows.length ? rows.map(a => { const det = auditDetails(a.details); return `<tr><td class="mono dh nowrap" data-rc="m">${esc(dateTimeFr(a.created_at))}</td><td data-rc="m">${esc(a.user_nom || '—')}</td><td data-rc="t"><span class="pill pill-sm ${tone(a.action)}">${esc(AUDIT_LBL[a.action] || a.action)}</span></td><td class="dh" data-prio="2">${esc(ENTITE_LBL[a.entite] || a.entite || '—')}</td><td class="dh audit-det" data-rc="s" title="${esc(det)}">${esc(det)}</td></tr>`; }).join('') : '<tr><td colspan="5" class="dh" style="text-align:center;padding:24px">Aucune entrée.</td></tr>'}</tbody></table></div>`;
 }
 
 /* ============================== divers ============================== */

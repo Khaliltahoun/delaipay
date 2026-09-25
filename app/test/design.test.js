@@ -72,3 +72,22 @@ test('jetons : aucune taille de police littérale hors de l’échelle (CSS et J
     assert.deepEqual(s.match(/font-size:\s*[0-9.]+px/g) || [], [], `${f} : utiliser var(--fs-*)`);
   }
 });
+
+// Extrait une déclaration (const / function) de app.js pour la tester isolément (pas de DOM).
+function fromApp(names) {
+  const src = fs.readFileSync(path.join(__dirname, '..', 'public', 'js', 'app.js'), 'utf8');
+  const parts = names.map(n => {
+    const re = new RegExp(`^(?:const ${n} = [\\s\\S]*?;\\n(?=const |function |\\/\\/|$)|function ${n}\\([\\s\\S]*?\\n}\\n)`, 'm');
+    const m = src.match(re); assert.ok(m, `${n} introuvable dans app.js`); return m[0];
+  });
+  return new Function(parts.join('\n') + `\nreturn { ${names.join(', ')} };`)();
+}
+test('journal d’audit : détails lisibles — ni JSON brut, ni rôle technique (P3-9)', () => {
+  const { auditDetails } = fromApp(['ROLE_FR', 'DET_KEY', 'HIDDEN_DET', 'detVal', 'auditDetails']);
+  assert.equal(auditDetails('{"email":"admin@hlz.demo"}'), 'E-mail : admin@hlz.demo');
+  assert.equal(auditDetails('{"avant":"lecture","apres":"collaborateur","id":"usr_x"}'), 'Avant : Lecture seule · Après : Comptable');
+  assert.equal(auditDetails('{"annee":2026,"trimestre":1,"figee":false}'), 'Année : 2026 · Trimestre : T1 · Période figée : Non');
+  assert.equal(auditDetails('texte libre'), 'texte libre');
+  assert.equal(auditDetails(null), '');
+  assert.ok(!/[{}"]/.test(auditDetails('{"role":"admin","x":{"nb":3}}')), 'aucun caractère JSON');
+});
