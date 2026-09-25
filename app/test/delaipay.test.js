@@ -2803,24 +2803,36 @@ test('P3/NEW-4 + P3-1 + P3-12 : reprise sur l’étape annoncée, bannière seul
   assert.match(js, /window\.resumeOnboarding = function \(key\) \{ state\._obStep = key; setView\('onboarding'\); \}/);
 });
 
-test('DATA-1 + P3-10 : anomalie « convention absente » levée dès qu’une convention valide existe ; compteurs alignés ; pas d’échéance sans client', async () => {
+test('DATA-1 + P3-10 : levée d’une anomalie « convention absente » seulement si une convention COUVRE son trimestre, période non clôturée', async () => {
   const W = mkWorkspace('ano-a');
-  const four = uid('four');
-  db.prepare('INSERT INTO fournisseur (id,cabinet_id,entreprise_id,raison_sociale,delai_applicable) VALUES (?,?,?,?,120)').run(four, W.cab, W.ent, 'FRS CONV');
-  const ins = db.prepare("INSERT INTO anomalie (id,cabinet_id,entreprise_id,type,gravite,details,entite,entite_id,statut) VALUES (?,?,?,?,?,?,?,?,'ouverte')");
-  for (let i = 0; i < 34; i++) ins.run(uid('ano'), W.cab, W.ent, 'date_incoherente', 'moyenne', 'x', 'facture', null);
-  ins.run(uid('ano'), W.cab, W.ent, 'convention_absente', 'moyenne', 'Facture 1 SANS convention', 'facture', four);
   const ck = cookieOf(W.u);
   const get = async u => (await reqJson('GET', u, { cookie: ck })).body;
-  assert.equal((await get('/api/anomalies')).filter(a => a.statut === 'ouverte').length, 35);
-  const al0 = await get('/api/alerts');
-  assert.equal(al0.count - al0.alerts.filter(a => a.type === 'echeance' || a.type === 'convention').length, 35, 'compteur des alertes = total réel des anomalies (liste bornée à 30)');
-  db.prepare("INSERT INTO convention (id,cabinet_id,entreprise_id,fournisseur_id,delai_convenu,statut) VALUES (?,?,?,?,120,'valide')").run(uid('conv'), W.cab, W.ent, four);
-  const anos = (await get('/api/anomalies')).filter(a => a.statut === 'ouverte');
-  assert.equal(anos.length, 34, 'l’anomalie devenue fausse n’est plus affichée');
-  assert.ok(!anos.some(a => a.type === 'convention_absente'));
-  assert.equal((await get('/api/dashboard')).kpis.anomalies, 34, 'vue d’ensemble alignée');
-  assert.equal(db.prepare("SELECT COUNT(*) n FROM anomalie WHERE cabinet_id=? AND type='convention_absente' AND statut='ouverte'").get(W.cab).n, 1, 'rien n’est modifié en base (filtre de lecture)');
+  const four = (nom) => { const id = uid('four'); db.prepare('INSERT INTO fournisseur (id,cabinet_id,entreprise_id,raison_sociale,delai_applicable) VALUES (?,?,?,?,120)').run(id, W.cab, W.ent, nom); return id; };
+  const ano = (f, annee, trimestre) => { const id = uid('ano'); db.prepare("INSERT INTO anomalie (id,cabinet_id,entreprise_id,type,gravite,details,entite,entite_id,statut,annee,trimestre) VALUES (?,?,?,'convention_absente','moyenne','Facture SANS convention','facture',?,'ouverte',?,?)").run(id, W.cab, W.ent, f, annee, trimestre); return id; };
+  const conv = (f, debut, fin) => db.prepare("INSERT INTO convention (id,cabinet_id,entreprise_id,fournisseur_id,delai_convenu,statut,date_debut,date_fin) VALUES (?,?,?,?,120,'valide',?,?)").run(uid('conv'), W.cab, W.ent, f, debut, fin);
+  // 1. Période ouverte + convention couvrant T1 2026 → levée, affichée comme telle, hors compteurs.
+  const f1 = four('COUVERTE'); const a1 = ano(f1, 2026, 1); conv(f1, '2025-06-01', null);
+  // 2. Période CLÔTURÉE + convention couvrante → reste active.
+  const f2 = four('CLOTUREE'); const a2 = ano(f2, 2025, 4); conv(f2, '2025-01-01', null);
+  db.prepare("INSERT INTO periode_declaration (id,cabinet_id,entreprise_id,annee,trimestre,statut) VALUES (?,?,?,2025,4,'cloturee')").run(uid('pd'), W.cab, W.ent);
+  // 3. Convention « valide » mais FINIE avant le trimestre → reste active.
+  const f3 = four('EXPIREE'); const a3 = ano(f3, 2026, 1); conv(f3, '2024-01-01', '2025-12-31');
+  // 4. Convention signée APRÈS le trimestre → reste active.
+  const f4 = four('POSTERIEURE'); const a4 = ano(f4, 2026, 1); conv(f4, '2026-07-01', null);
+  // 5. Trimestre inconnu, ou convention sans date de début → couverture non prouvée → reste active.
+  const f5 = four('SANS-TRIMESTRE'); const a5 = ano(f5, null, null); conv(f5, '2020-01-01', null);
+  const f6 = four('SANS-DATE'); const a6 = ano(f6, 2026, 1); conv(f6, null, null);
+  const list = await get('/api/anomalies');
+  const by = id => list.find(x => x.id === id);
+  assert.equal(by(a1).levee, true, '1. levée');
+  assert.equal(by(a1).levee_convention.debut, '2025-06-01');
+  for (const [id, why] of [[a2, '2. période clôturée'], [a3, '3. convention finie avant le trimestre'], [a4, '4. convention postérieure'], [a5, '5a. trimestre inconnu'], [a6, '5b. convention sans date']])
+    assert.equal(by(id).levee, false, why + ' → reste active');
+  assert.equal(list.length, 6, 'toutes les anomalies restent listées (trace)');
+  assert.equal((await get('/api/dashboard')).kpis.anomalies, 5, 'compteur = anomalies actives seulement');
+  const al = await get('/api/alerts');
+  assert.equal(al.alerts.filter(x => x.type === 'convention_absente').length, 5);
+  assert.equal(db.prepare("SELECT COUNT(*) n FROM anomalie WHERE cabinet_id=? AND statut='ouverte'").get(W.cab).n, 6, 'rien n’est modifié en base');
   const V = mkWorkspace('ano-vide'); db.prepare('DELETE FROM entreprise WHERE cabinet_id=?').run(V.cab);
   const av = (await reqJson('GET', '/api/alerts', { cookie: cookieOf(V.u) })).body;
   assert.equal(av.alerts.filter(a => a.type === 'echeance').length, 0, 'P3-10 : pas d’échéance annoncée sans dossier client');

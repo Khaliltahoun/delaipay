@@ -2026,16 +2026,19 @@ async function renderCabConv() {
 async function renderAnomalies() {
   const rows = await api('/anomalies');
   const LBL = { date_incoherente: 'Date incohérente', date_future: 'Date dans le futur', date_manquante: 'Date manquante', montant_incoherent: 'Montant incohérent', doublon: 'Doublon', convention_absente: 'Convention absente (délai > 60 j)' };
-  const ouvertes = rows.filter(r => r.statut === 'ouverte').length;
+  // Levée automatique (DATA-1) : convention couvrant le trimestre de l'anomalie, période non clôturée — hors compteurs, trace conservée.
+  const active = rows.filter(r => r.statut === 'ouverte' && !r.levee).length, levees = rows.filter(r => r.levee).length;
+  const leveeTxt = c => c ? `Levée automatiquement — convention du ${dateFr(c.debut)}${c.fin ? ' au ' + dateFr(c.fin) : ''} (${c.delai} j) enregistrée le ${dateFr(String(c.enregistree_le || '').slice(0, 10))}.` : 'Levée automatiquement — convention enregistrée.';
   $('#view').innerHTML = `
-  <div class="page-head"><div class="eyebrow">Contrôle</div><h1>Anomalies</h1><p>${ouvertes} anomalie(s) ouverte(s) sur ${rows.length} détectée(s) — contrôles automatiques à l'import (dates, ICE, TTC, doublons).</p></div>
-  <div class="card">${rows.length ? rows.map(a => `<div class="alert-row">
-    <div class="al-ic ${a.statut !== 'ouverte' ? 'info' : a.gravite === 'haute' ? 'red' : 'orange'}">${svgI(a.statut !== 'ouverte' ? 'check' : 'warn', '')}</div>
-    <div class="al-body"><div class="t">${esc(LBL[a.type] || 'Anomalie')} <span class="sev ${a.gravite === 'haute' ? 'h' : 'm'}">${esc(a.gravite)}</span>${a.statut !== 'ouverte' ? '<span class="sev l">résolue</span>' : ''}</div>
-      <div class="m">${esc(a.details || '')}</div><div class="d">${esc(a.ent || '—')} · ${esc(a.created_at || '')}</div></div>
-    ${a.statut === 'ouverte' ? `<button class="btn btn-ghost btn-sm" data-perm="edit_client" data-res="${a.id}">Marquer résolue</button>` : ''}</div>`).join('')
+  <div class="page-head"><div class="eyebrow">Contrôle</div><h1>Anomalies</h1><p>${active} anomalie(s) ouverte(s) sur ${rows.length} détectée(s)${levees ? ` · ${levees} levée(s) automatiquement par une convention couvrant le trimestre (hors compteurs)` : ''} — contrôles automatiques à l'import (dates, ICE, TTC, doublons).</p></div>
+  <div class="card">${rows.length ? rows.map(a => `<div class="alert-row${a.levee ? ' is-levee' : ''}">
+    <div class="al-ic ${a.levee || a.statut !== 'ouverte' ? 'info' : a.gravite === 'haute' ? 'red' : 'orange'}">${svgI(a.levee || a.statut !== 'ouverte' ? 'check' : 'warn', '')}</div>
+    <div class="al-body"><div class="t">${esc(LBL[a.type] || 'Anomalie')} <span class="sev ${a.gravite === 'haute' ? 'h' : 'm'}">${esc(a.gravite)}</span>${a.levee ? '<span class="sev l">levée automatiquement</span>' : (a.statut !== 'ouverte' ? '<span class="sev l">résolue</span>' : '')}</div>
+      <div class="m">${esc(a.details || '')}</div>${a.levee ? `<div class="m levee-m">${esc(leveeTxt(a.levee_convention))} <button class="btn-link" data-conv-ent="${a.ent_id}">Voir la convention</button></div>` : ''}<div class="d">${esc(a.ent || '—')} · ${esc(a.created_at || '')}${a.annee ? ` · T${a.trimestre} ${a.annee}` : ''}</div></div>
+    ${a.statut === 'ouverte' && !a.levee ? `<button class="btn btn-ghost btn-sm" data-perm="edit_client" data-res="${a.id}">Marquer résolue</button>` : ''}</div>`).join('')
     : `<div class="empty"><div class="ic">${svgI('checkc', '')}</div><h4>Aucune anomalie</h4><p>Aucune anomalie détectée sur le portefeuille.</p></div>`}</div>`;
   $$('#view [data-res]').forEach(b => b.onclick = async () => { await api(`/anomalies/${b.dataset.res}/resolve`, { method: 'POST' }); toast('Anomalie résolue.', 'ok'); refreshAlertsBadge(); renderAnomalies(); });
+  $$('#view [data-conv-ent]').forEach(b => b.onclick = () => goClient(b.dataset.convEnt, 'conv'));
 }
 
 /* ============================== PARAMÈTRES (espace · utilisateurs · sécurité · taux · compte) ============================== */

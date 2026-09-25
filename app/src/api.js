@@ -75,9 +75,23 @@ const NOT_FOUND = {
   modele: 'Ce modèle de correspondance n’existe plus. Choisissez-en un autre ou enregistrez-le à nouveau.',
   fichier: 'Ce fichier n’est plus disponible (il a peut-être été supprimé). Actualisez la liste des fichiers.',
 };
-/* DATA-1 : une anomalie « convention absente » ne vaut que tant que le fournisseur n'a pas de convention valide.
- * Filtre de LECTURE (rien n'est supprimé ni modifié en base) appliqué à toutes les listes et à tous les compteurs. */
-const ANO_ACTIVE = `NOT (a.type='convention_absente' AND EXISTS (SELECT 1 FROM convention cv WHERE cv.fournisseur_id=a.entite_id AND cv.statut='valide'))`;
+/* DATA-1 — levée AUTOMATIQUE (affichage seulement) d'une anomalie « convention absente ».
+ * Levée si et seulement si, pour le trimestre DE L'ANOMALIE (annee/trimestre renseignés) :
+ *  - ce trimestre n'est ni clôturé ni déclaré pour ce dossier ;
+ *  - une convention « valide » du même fournisseur (même dossier) le COUVRE : début (date_debut, sinon date_signature)
+ *    ≤ fin du trimestre, et pas de date de fin ou fin ≥ début du trimestre.
+ * Sans trimestre connu ou sans date de début, la couverture n'est pas prouvée : l'anomalie reste active.
+ * Filtre de LECTURE : rien n'est écrit en base, le moteur et la règle LOT 4 (application par statut) sont inchangés.
+ * Voir DECISIONS.md (question ouverte pour l'expert-comptable). */
+const Q_START = `printf('%04d-%02d-01', a.annee, (a.trimestre - 1) * 3 + 1)`;
+const Q_END = `date(${Q_START}, '+3 months', '-1 day')`;
+const COVERING_CONV = `SELECT cv.id FROM convention cv WHERE cv.fournisseur_id=a.entite_id AND cv.entreprise_id=a.entreprise_id AND cv.statut='valide'
+  AND COALESCE(cv.date_debut, cv.date_signature) IS NOT NULL AND COALESCE(cv.date_debut, cv.date_signature) <= ${Q_END}
+  AND (cv.date_fin IS NULL OR cv.date_fin >= ${Q_START}) ORDER BY COALESCE(cv.date_debut, cv.date_signature) DESC, cv.rowid DESC LIMIT 1`;
+const ANO_LEVEE = `(a.type='convention_absente' AND a.annee IS NOT NULL AND a.trimestre IS NOT NULL
+  AND NOT EXISTS (SELECT 1 FROM periode_declaration pd WHERE pd.entreprise_id=a.entreprise_id AND pd.annee=a.annee AND pd.trimestre=a.trimestre AND pd.statut IN ('cloturee','declaree'))
+  AND EXISTS (${COVERING_CONV}))`;
+const ANO_ACTIVE = `NOT ${ANO_LEVEE}`;
 function notFound(res, what) { return res.status(404).json({ error: NOT_FOUND[what], code: what + '_introuvable' }); }
 // Téléchargements (réponse texte) : même message, sans JSON.
 function notFoundText(res, what) { return res.status(404).type('text/plain; charset=utf-8').send(NOT_FOUND[what]); }
@@ -1786,9 +1800,17 @@ router.get('/portfolio/conventions', (req, res) => {
   res.json(rows.map(c => ({ id: c.id, ent: c.ent, ent_id: c.ent_id, four: c.four, four_ice: c.four_ice, delai: c.delai_convenu, date_fin: c.date_fin, statut: computeConvStatut(c), fichier: c.fichier ? c.id : null })));
 });
 router.get('/anomalies', (req, res) => {
-  const rows = db.prepare(`SELECT a.*, e.raison_sociale ent, e.id ent_id FROM anomalie a LEFT JOIN entreprise e ON e.id=a.entreprise_id
-     WHERE a.cabinet_id=? AND (a.statut<>'ouverte' OR ${ANO_ACTIVE}) ORDER BY (a.statut='ouverte') DESC, a.created_at DESC LIMIT 300`).all(req.cabinetId);
-  res.json(rows);
+  // Toutes les anomalies restent listées ; une anomalie levée automatiquement est signalée comme telle (trace conservée).
+  const rows = db.prepare(`SELECT a.*, e.raison_sociale ent, e.id ent_id,
+       CASE WHEN a.statut='ouverte' AND ${ANO_LEVEE} THEN (${COVERING_CONV}) END levee_convention_id
+     FROM anomalie a LEFT JOIN entreprise e ON e.id=a.entreprise_id
+     WHERE a.cabinet_id=? ORDER BY (a.statut='ouverte' AND NOT ${ANO_LEVEE}) DESC, a.created_at DESC LIMIT 300`).all(req.cabinetId);
+  const conv = db.prepare('SELECT id, delai_convenu, date_debut, date_signature, date_fin, created_at FROM convention WHERE id=?');
+  res.json(rows.map(r => {
+    if (!r.levee_convention_id) return { ...r, levee: false };
+    const c = conv.get(r.levee_convention_id);
+    return { ...r, levee: true, levee_convention: c ? { id: c.id, delai: c.delai_convenu, debut: c.date_debut || c.date_signature, fin: c.date_fin, enregistree_le: c.created_at } : null };
+  }));
 });
 router.post('/anomalies/:id/resolve', (req, res) => {
   db.prepare(`UPDATE anomalie SET statut='resolue', resolue_le=datetime('now') WHERE id=? AND cabinet_id=?`).run(req.params.id, req.cabinetId);
