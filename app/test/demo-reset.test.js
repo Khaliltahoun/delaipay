@@ -25,7 +25,7 @@ const count = (t, cab) => db.prepare(`SELECT COUNT(*) n FROM ${t} WHERE cabinet_
 
 function demoWorkspace(slug, email) {
   const w = workspace.createWorkspace({ slug, nom: 'Démo ' + slug, raisonLegale: 'Démo SARL', contactEmail: 'contact@' + slug + '.demo',
-    admin: { email: email || `admin@${slug}.demo`, nom: 'Admin', password: 'DemoSaaS-2026' } });
+    admin: { email: email || `admin@${slug}.demo`, nom: 'Admin', password: 'ResetTestOnly-7q' } });
   const ent = uid('ent');
   db.prepare('INSERT INTO entreprise (id,cabinet_id,raison_sociale) VALUES (?,?,?)').run(ent, w.cabinetId, 'STE ESSAI SARL');
   importer.importWorkbook(fx.demoWorkbookBuffer(), { cabinetId: w.cabinetId, entrepriseId: ent, sourceName: 'x.xlsx', periode: { annee: 2026, trimestre: 1 } });
