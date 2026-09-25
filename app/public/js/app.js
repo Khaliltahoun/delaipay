@@ -662,9 +662,10 @@ async function renderDash() {
   ${onboardingBanner(ob)}
   <div class="hero">
     <div class="hero-main">
-      <div class="lbl">Montant à verser au Trésor · ${per}</div>
-      <div class="big">${money(k.montantAVerser)}<small>DH</small></div>
-      <div class="expl">Amende 69-21 cumulée du portefeuille pour le trimestre : <b>${money(k.enRetard, 0)}</b> facture(s) payée(s) hors délai ou impayée(s), pour <b>${money(k.montantConcerne)} DH</b> TTC concernés.</div>
+      <div class="lbl">Montant TTC concerné · ${per}</div>
+      <div class="big">${money(k.montantConcerne)}<small>DH</small></div>
+      <div class="expl">Factures du portefeuille payées hors délai ou impayées, à déclarer à la DGI : <b>${money(k.enRetard, 0)}</b> facture(s).</div>
+      <div class="hero-sub"><span class="k">Montant à verser au Trésor</span><span class="v penalty">${money(k.montantAVerser)} <small>DH</small></span></div>
       <div class="hero-foot">
         <span>Taux de conformité <b style="color:var(--${confTone})">${String(conf).replace('.', ',')} %</b></span>
         <span>Délai moyen de paiement <b>${money(k.dso, 0)} j</b></span>
@@ -980,9 +981,10 @@ async function renderClientOverview() {
   </div>
   <div class="hero">
     <div class="hero-main">
-      <div class="lbl">Amende du trimestre · T${s.periode.trimestre} ${s.periode.annee}</div>
-      <div class="big">${money(k.amende)}<small>DH</small></div>
-      <div class="expl"><b>${k.aDeclarer}</b> facture(s) en retard sur <b>${k.factures}</b> · <b>${money(k.ttcRetard)} DH</b> TTC concernés.</div>
+      <div class="lbl">Montant TTC concerné · T${s.periode.trimestre} ${s.periode.annee}</div>
+      <div class="big">${money(k.ttcRetard)}<small>DH</small></div>
+      <div class="expl"><b>${k.aDeclarer}</b> facture(s) en retard sur <b>${k.factures}</b>, à déclarer à la DGI.</div>
+      <div class="hero-sub"><span class="k">Amende du trimestre</span><span class="v penalty">${money(k.amende)} <small>DH</small></span></div>
       <div class="hero-foot"><span>Fournisseurs <b>${k.fournisseurs}</b></span><span>Conventions valides <b>${k.conventions}</b></span>
         <span>Conventions manquantes <b style="color:${k.convManq ? 'var(--severe)' : 'var(--ok)'}">${k.convManq}</b></span></div>
     </div>
@@ -1183,11 +1185,11 @@ async function renderDelais() {
     <div class="actions"><button class="btn btn-ghost" id="recompute" data-perm="import" ${locked ? 'disabled title="Période clôturée : montants figés, aucun recalcul"' : ''}>${svgI('refresh')}Recalculer</button>
     <button class="btn btn-primary" onclick="setView('decl')">${svgI('doc')}Préparer la déclaration</button></div></div>
   <div class="stat-strip">
-    <div class="stat"><div class="l">Factures analysées</div><div class="v">${t.count}</div></div>
+    <div class="stat lead"><div class="l">Montant TTC concerné</div><div class="v">${money(t.ttcRetard)}<small>DH</small></div></div>
     <div class="stat late"><div class="l">En retard (à déclarer)</div><div class="v">${t.aDeclarer}</div></div>
-    <div class="stat"><div class="l">Montant TTC concerné</div><div class="v">${money(t.ttcRetard)}<small>DH</small></div></div>
+    <div class="stat"><div class="l">Factures analysées</div><div class="v">${t.count}</div></div>
     <div class="stat"><div class="l">Retard moyen</div><div class="v">${t.retardMoyen}<small>j</small></div></div>
-    <div class="stat late"><div class="l">Amende du trimestre</div><div class="v">${money(t.amende)}<small>DH</small></div></div>
+    <div class="stat severe"><div class="l">Amende du trimestre</div><div class="v">${money(t.amende)}<small>DH</small></div></div>
   </div>
   <div class="toolbar">
     <div class="filters">${[['all', 'Toutes', data.rows.length], ['retard', 'Retard &gt; 0', t.aDeclarer], ['conv', 'Convention absente', t.sansConvention]].map(([k, label, count]) => `<button class="fpill" data-f="${k}" aria-pressed="${filt === k}">${label}<span class="c">${count}</span></button>`).join('')}</div>

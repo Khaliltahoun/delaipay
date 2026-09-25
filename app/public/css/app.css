@@ -312,6 +312,13 @@ a.ws-card:hover{background:rgba(255,255,255,.07);text-decoration:none}
 .hero-main .lbl{font-size:var(--fs-sm);font-weight:var(--fw-semibold);color:var(--muted);text-transform:uppercase;letter-spacing:var(--tracking-caps)}
 .hero-main .big{font-size:var(--fs-display);font-weight:var(--fw-semibold);letter-spacing:-.03em;line-height:1;font-variant-numeric:tabular-nums lining-nums;color:var(--ink)}
 .hero-main .big small{font-size:var(--fs-xl);color:var(--muted);font-weight:var(--fw-medium);margin-left:6px;letter-spacing:0}
+.hero-sub{display:flex;align-items:baseline;justify-content:space-between;gap:12px;padding:12px 14px;border-radius:var(--r-md);background:var(--surface-2);border:1px solid var(--line-soft)}
+.hero-sub .k{font-size:var(--fs-sm);color:var(--muted);font-weight:var(--fw-medium)}
+.hero-sub .v{font-size:var(--fs-xl);font-weight:var(--fw-semibold);font-variant-numeric:tabular-nums lining-nums;white-space:nowrap}
+.hero-sub .v small{font-size:var(--fs-sm);color:var(--muted);font-weight:var(--fw-medium)}
+.hero-sub .v.penalty{color:var(--st-penalty)}
+@media (min-width:900px){ .stat.lead{grid-column:span 2} }
+.stat.lead .v{font-size:var(--fs-3xl)}
 .hero-main .expl{font-size:var(--fs-md);color:var(--ink-2);max-width:62ch}
 .hero-main .expl b{font-variant-numeric:tabular-nums}
 .hero-foot{display:flex;gap:18px;flex-wrap:wrap;align-items:center;padding-top:12px;border-top:1px solid var(--line-soft);font-size:var(--fs-sm);color:var(--muted)}
