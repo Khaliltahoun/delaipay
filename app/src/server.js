@@ -91,7 +91,7 @@ app.get('/healthz', (req, res) => res.json({ ok: true, version: VERSION, ts: Dat
 
 // 404
 app.use((req, res) => {
-  if (req.path.startsWith('/api')) return res.status(404).json({ error: 'Route inconnue' });
+  if (req.path.startsWith('/api')) return res.status(404).json({ error: 'Cette action n’est pas disponible. Actualisez la page : l’application a peut-être été mise à jour.', code: 'route_inconnue' });
   res.redirect('/');
 });
 
@@ -99,8 +99,8 @@ app.use((req, res) => {
 app.use((err, req, res, next) => {
   console.error('Erreur non gérée :', err);
   if (res.headersSent) return next(err);
-  if (req.path.startsWith('/api')) return res.status(500).json({ error: 'Erreur serveur' });
-  res.status(500).send('Erreur serveur');
+  if (req.path.startsWith('/api')) return res.status(500).json({ error: 'L’opération n’a pas abouti à cause d’une erreur inattendue. Réessayez ; si le problème persiste, contactez votre administrateur.', code: 'erreur_serveur' });
+  res.status(500).send('Une erreur inattendue est survenue. Réessayez dans un instant.');
 });
 
 ensureSeed().then((info) => {

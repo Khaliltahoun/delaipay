@@ -48,6 +48,22 @@ function cleanupUploads(req) {
   for (const f of files) { if (f && f.path) try { fs.unlinkSync(f.path); } catch (_) {} }
 }
 
+
+/* Messages « introuvable » en clair : ce qui s'est passé + que faire. Le code permet à l'interface de réagir
+ * (ex. dossier supprimé par un collègue → sélection effacée, retour à la liste des clients). */
+const NOT_FOUND = {
+  client: 'Ce dossier client n’existe plus ou n’est pas accessible depuis votre espace (il a peut-être été supprimé par un collègue). Choisissez un client dans la liste « Clients ».',
+  convention: 'Cette convention n’existe plus (elle a peut-être été supprimée entre-temps). Actualisez la liste des conventions.',
+  fournisseur: 'Ce fournisseur n’existe plus dans ce dossier. Actualisez la page pour voir la liste à jour.',
+  facture: 'Cette facture n’existe plus (son import a peut-être été annulé). Actualisez la feuille des délais.',
+  import: 'Cet import n’existe plus (il a peut-être été annulé). Consultez l’historique des imports du dossier.',
+  modele: 'Ce modèle de correspondance n’existe plus. Choisissez-en un autre ou enregistrez-le à nouveau.',
+  fichier: 'Ce fichier n’est plus disponible (il a peut-être été supprimé). Actualisez la liste des fichiers.',
+};
+function notFound(res, what) { return res.status(404).json({ error: NOT_FOUND[what], code: what + '_introuvable' }); }
+// Téléchargements (réponse texte) : même message, sans JSON.
+function notFoundText(res, what) { return res.status(404).type('text/plain; charset=utf-8').send(NOT_FOUND[what]); }
+
 const router = express.Router();
 
 /* ============================================================ helpers */
@@ -517,12 +533,12 @@ router.post('/clients', (req, res) => {
 });
 router.get('/clients/:id', (req, res) => {
   const e = ownedEntreprise(req, req.params.id);
-  if (!e) return res.status(404).json({ error: 'Client introuvable.' });
+  if (!e) return notFound(res, 'client');
   e.assujettie = assujettie(e.ca_ht); e.regime = regimeOf(e.ca_ht, e.exercice_ref || 2026); e.type_visa = visaOf(e.ca_ht);
   res.json(e);
 });
 router.put('/clients/:id', (req, res) => {
-  const e = ownedEntreprise(req, req.params.id); if (!e) return res.status(404).json({ error: 'Introuvable.' });
+  const e = ownedEntreprise(req, req.params.id); if (!e) return notFound(res, 'client');
   const b = req.body || {};
   db.prepare(`UPDATE entreprise SET raison_sociale=?, ice=?, if_fiscal=?, rc=?, forme_juridique=?, secteur=?,
       ville=?, adresse=?, ca_ht=?, exercice_ref=?, email=?, telephone=?, expert_responsable=? WHERE id=?`)
@@ -534,7 +550,7 @@ router.put('/clients/:id', (req, res) => {
   res.json({ ok: true });
 });
 router.delete('/clients/:id', (req, res) => {
-  const e = ownedEntreprise(req, req.params.id); if (!e) return res.status(404).json({ error: 'Introuvable.' });
+  const e = ownedEntreprise(req, req.params.id); if (!e) return notFound(res, 'client');
   if (!permissions.guard(req, res, 'delete_client', 'Seul un administrateur peut supprimer un dossier client et toutes ses données.')) return;
   const declIds = db.prepare('SELECT id FROM declaration WHERE entreprise_id=?').all(e.id).map(d => d.id);
   for (const did of declIds) {
@@ -553,7 +569,7 @@ router.delete('/clients/:id', (req, res) => {
 });
 
 router.get('/clients/:id/summary', (req, res) => {
-  const e = ownedEntreprise(req, req.params.id); if (!e) return res.status(404).json({ error: 'Introuvable.' });
+  const e = ownedEntreprise(req, req.params.id); if (!e) return notFound(res, 'client');
   // Période ACTIVE fournie par le contexte global (annee/trimestre) ; sinon la plus récente.
   // La fiche client doit refléter EXACTEMENT la période sélectionnée (jamais figée sur « la dernière »).
   const p = (req.query.annee && req.query.trimestre)
@@ -577,7 +593,7 @@ router.get('/clients/:id/summary', (req, res) => {
 });
 
 router.get('/clients/:id/periods', (req, res) => {
-  const e = ownedEntreprise(req, req.params.id); if (!e) return res.status(404).json({ error: 'Introuvable.' });
+  const e = ownedEntreprise(req, req.params.id); if (!e) return notFound(res, 'client');
   const info = buildPeriodsList(req.cabinetId, e.id);
   // `latest` conservé pour compat ; défaut = période de travail si elle contient des données, sinon la plus fournie.
   const hasWork = info.disponibles.some(d => d.annee === info.travail.annee && d.trimestre === info.travail.trimestre);
@@ -587,7 +603,7 @@ router.get('/clients/:id/periods', (req, res) => {
 
 // Détail + calendrier + statut d'une période précise (crée la ligne si absente).
 router.get('/clients/:id/periods/:annee/:trimestre/summary', (req, res) => {
-  const e = ownedEntreprise(req, req.params.id); if (!e) return res.status(404).json({ error: 'Introuvable.' });
+  const e = ownedEntreprise(req, req.params.id); if (!e) return notFound(res, 'client');
   const p = requirePeriod(req, res); if (!p) return;
   const pr = ensurePeriode(req.cabinetId, e.id, p.annee, p.trimestre);
   const info = periode.periodInfo(p.annee, p.trimestre);
@@ -626,7 +642,7 @@ function periodHistory(cabinetId, entrepriseId, annee, trimestre) {
 
 // Clôture d'une période (réservé admin) → lecture seule.
 router.post('/clients/:id/periods/:annee/:trimestre/close', (req, res) => {
-  const e = ownedEntreprise(req, req.params.id); if (!e) return res.status(404).json({ error: 'Introuvable.' });
+  const e = ownedEntreprise(req, req.params.id); if (!e) return notFound(res, 'client');
   if (req.user.role !== 'admin') return res.status(403).json({ error: 'Seul un administrateur peut clôturer une période.' });
   const p = requirePeriod(req, res); if (!p) return;
   const pr = ensurePeriode(req.cabinetId, e.id, p.annee, p.trimestre);
@@ -646,7 +662,7 @@ router.post('/clients/:id/periods/:annee/:trimestre/close', (req, res) => {
 
 // Réouverture exceptionnelle (réservé admin, motif obligatoire) → audit.
 router.post('/clients/:id/periods/:annee/:trimestre/reopen', (req, res) => {
-  const e = ownedEntreprise(req, req.params.id); if (!e) return res.status(404).json({ error: 'Introuvable.' });
+  const e = ownedEntreprise(req, req.params.id); if (!e) return notFound(res, 'client');
   if (req.user.role !== 'admin') return res.status(403).json({ error: 'Seul un administrateur peut rouvrir une période.' });
   const motif = (req.body && req.body.motif || '').trim();
   if (!motif) return res.status(400).json({ error: 'Motif de réouverture obligatoire.' });
@@ -662,14 +678,14 @@ router.post('/clients/:id/periods/:annee/:trimestre/reopen', (req, res) => {
 });
 
 router.get('/clients/:id/fournisseurs', (req, res) => {
-  const e = ownedEntreprise(req, req.params.id); if (!e) return res.status(404).json({ error: 'Introuvable.' });
+  const e = ownedEntreprise(req, req.params.id); if (!e) return notFound(res, 'client');
   const rows = db.prepare(`SELECT f.*,
       (SELECT COUNT(*) FROM convention c WHERE c.fournisseur_id=f.id AND c.statut='valide') has_conv
       FROM fournisseur f WHERE f.entreprise_id=? ORDER BY f.raison_sociale`).all(e.id);
   res.json(rows);
 });
 router.post('/clients/:id/fournisseurs', (req, res) => {
-  const e = ownedEntreprise(req, req.params.id); if (!e) return res.status(404).json({ error: 'Introuvable.' });
+  const e = ownedEntreprise(req, req.params.id); if (!e) return notFound(res, 'client');
   const b = req.body || {};
   const id = uid('four');
   db.prepare(`INSERT INTO fournisseur (id, cabinet_id, entreprise_id, raison_sociale, ice, if_fiscal, rc, adresse, secteur, email, delai_applicable)
@@ -681,7 +697,7 @@ router.post('/clients/:id/fournisseurs', (req, res) => {
 
 /* ============================================================ CONVENTIONS */
 router.get('/clients/:id/conventions', (req, res) => {
-  const e = ownedEntreprise(req, req.params.id); if (!e) return res.status(404).json({ error: 'Introuvable.' });
+  const e = ownedEntreprise(req, req.params.id); if (!e) return notFound(res, 'client');
   const rows = db.prepare(`SELECT c.*, f.raison_sociale four_nom, f.ice four_ice, f.if_fiscal four_if
       FROM convention c LEFT JOIN fournisseur f ON f.id=c.fournisseur_id
       WHERE c.entreprise_id=? ORDER BY c.created_at DESC`).all(e.id);
@@ -742,7 +758,7 @@ function conventionDocKind(filePath, originalname) {
 }
 router.post('/clients/:id/conventions', upload.single('file'), (req, res) => {
   const e = ownedEntreprise(req, req.params.id);
-  if (!e) { cleanupUploads(req); return res.status(404).json({ error: 'Introuvable.' }); }
+  if (!e) { cleanupUploads(req); return notFound(res, 'client'); }
   const b = req.body || {};
   // 1) Délai OBLIGATOIRE et EXPLICITE (aucun OCR n'existe) — refusé AVANT toute écriture, sans défaut 120.
   const delaiConv = parseDelaiConventionExplicite(b.delai);
@@ -789,7 +805,7 @@ router.post('/clients/:id/conventions', upload.single('file'), (req, res) => {
 });
 router.get('/conventions/:id/file', (req, res) => {
   const c = db.prepare('SELECT * FROM convention WHERE id=? AND cabinet_id=?').get(req.params.id, req.cabinetId);
-  if (!c || !c.fichier) return res.status(404).send('Fichier introuvable');
+  if (!c || !c.fichier) return notFoundText(res, 'fichier');
   res.download(path.join(UP_DIR, c.fichier), c.fichier_nom || 'convention');
 });
 
@@ -805,7 +821,7 @@ function isExcelUpload(file) {
 // Import d'une LISTE de conventions (Excel) — crée les conventions SANS le PDF (document différé).
 router.post('/clients/:id/conventions/import', heavyLimiter, upload.single('file'), (req, res) => {
   const e = ownedEntreprise(req, req.params.id);
-  if (!e) { cleanupUploads(req); return res.status(404).json({ error: 'Introuvable.' }); }
+  if (!e) { cleanupUploads(req); return notFound(res, 'client'); }
   if (!req.file) return res.status(400).json({ error: 'Aucun fichier reçu.' });
   if (!isExcelUpload(req.file)) { cleanupUploads(req); return res.status(400).json({ error: 'Format non pris en charge : importez un fichier Excel (.xlsx ou .xls). Utilisez le modèle fourni.' }); }
   try {
@@ -827,9 +843,9 @@ router.post('/clients/:id/conventions/import', heavyLimiter, upload.single('file
 
 // Assistant conventions (mapping libre, réutilise le token d'analyse) — PRÉVISUALISATION (aucune écriture).
 router.post('/clients/:id/conventions/preview', (req, res) => {
-  const e = ownedEntreprise(req, req.params.id); if (!e) return res.status(404).json({ error: 'Introuvable.' });
+  const e = ownedEntreprise(req, req.params.id); if (!e) return notFound(res, 'client');
   const b = req.body || {};
-  const tmp = safeUploadPath(b.token, req); if (!tmp) return res.status(400).json({ error: 'Fichier expiré ou introuvable — relancez l\'analyse.' });
+  const tmp = safeUploadPath(b.token, req); if (!tmp) return res.status(400).json({ error: 'Le fichier analysé n’est plus disponible (analyse trop ancienne ou page rechargée). Relancez l’analyse du fichier : rien n’a été importé.', code: 'analyse_expiree' });
   try {
     const r = importer.importConventions(fs.readFileSync(tmp), {
       cabinetId: req.cabinetId, entrepriseId: e.id, userId: req.user.id,
@@ -840,9 +856,9 @@ router.post('/clients/:id/conventions/preview', (req, res) => {
 });
 // Assistant conventions — CONFIRMATION (écrit en transaction, recalcule les périodes ouvertes).
 router.post('/clients/:id/conventions/confirm', (req, res) => {
-  const e = ownedEntreprise(req, req.params.id); if (!e) return res.status(404).json({ error: 'Introuvable.' });
+  const e = ownedEntreprise(req, req.params.id); if (!e) return notFound(res, 'client');
   const b = req.body || {};
-  const tmp = safeUploadPath(b.token, req); if (!tmp) return res.status(400).json({ error: 'Fichier expiré ou introuvable — relancez l\'analyse.' });
+  const tmp = safeUploadPath(b.token, req); if (!tmp) return res.status(400).json({ error: 'Le fichier analysé n’est plus disponible (analyse trop ancienne ou page rechargée). Relancez l’analyse du fichier : rien n’a été importé.', code: 'analyse_expiree' });
   try {
     const crypto = require('crypto');
     const buf = fs.readFileSync(tmp);
@@ -862,9 +878,9 @@ router.post('/clients/:id/conventions/confirm', (req, res) => {
 // jamais d'écrasement silencieux.
 router.post('/clients/:id/conventions/:convId/file', upload.single('file'), (req, res) => {
   const e = ownedEntreprise(req, req.params.id);
-  if (!e) { cleanupUploads(req); return res.status(404).json({ error: 'Introuvable.' }); }
+  if (!e) { cleanupUploads(req); return notFound(res, 'client'); }
   const c = db.prepare('SELECT * FROM convention WHERE id=? AND entreprise_id=? AND cabinet_id=?').get(req.params.convId, e.id, req.cabinetId);
-  if (!c) { cleanupUploads(req); return res.status(404).json({ error: 'Convention introuvable.' }); }
+  if (!c) { cleanupUploads(req); return notFound(res, 'convention'); }
   if (!req.file) return res.status(400).json({ error: 'Aucun fichier reçu.' });
   const kind = conventionDocKind(req.file.path, req.file.originalname);
   if (!kind) { cleanupUploads(req); return res.status(400).json({ error: 'Format de document non pris en charge. Formats acceptés : PDF, JPEG, PNG.' }); }
@@ -891,9 +907,9 @@ router.get('/conventions/template.xlsx', (req, res) => {
 /* ============================================================ RÈGLE OPÉRATEUR DE RÉSEAU */
 // Classer / confirmer un fournisseur (règle de paiement applicable). Audité. Ne touche pas aux périodes clôturées.
 router.patch('/clients/:id/fournisseurs/:fid/classification', (req, res) => {
-  const e = ownedEntreprise(req, req.params.id); if (!e) return res.status(404).json({ error: 'Introuvable.' });
+  const e = ownedEntreprise(req, req.params.id); if (!e) return notFound(res, 'client');
   const f = db.prepare('SELECT * FROM fournisseur WHERE id=? AND entreprise_id=?').get(req.params.fid, e.id);
-  if (!f) return res.status(404).json({ error: 'Fournisseur introuvable.' });
+  if (!f) return notFound(res, 'fournisseur');
   const b = req.body || {};
   const op = b.operateur_reseau ? 1 : 0;
   const statut = b.statut === 'confirme' ? 'confirme' : (b.statut === 'a_verifier' ? 'a_verifier' : 'propose');
@@ -913,7 +929,7 @@ router.patch('/clients/:id/fournisseurs/:fid/classification', (req, res) => {
 });
 // Rapport de SIMULATION (lecture seule) — candidats « opérateur de réseau » et impact. NE modifie rien.
 router.get('/clients/:id/reseau/simulation', (req, res) => {
-  const e = ownedEntreprise(req, req.params.id); if (!e) return res.status(404).json({ error: 'Introuvable.' });
+  const e = ownedEntreprise(req, req.params.id); if (!e) return notFound(res, 'client');
   const candidats = [];
   for (const f of db.prepare('SELECT * FROM fournisseur WHERE entreprise_id=?').all(e.id)) {
     if (f.operateur_reseau && f.statut_classification === 'confirme') continue; // déjà appliqué
@@ -1046,14 +1062,14 @@ const DELAIS_FILTRES = {
 };
 
 router.get('/clients/:id/delais', (req, res) => {
-  const e = ownedEntreprise(req, req.params.id); if (!e) return res.status(404).json({ error: 'Introuvable.' });
+  const e = ownedEntreprise(req, req.params.id); if (!e) return notFound(res, 'client');
   const p = req.query.annee ? { annee: +req.query.annee, trimestre: +req.query.trimestre } : latestPeriod(e.id);
   res.json(delaisData(req.cabinetId, e, p));
 });
 
 // Export Excel formaté de la feuille de délais, filtré (toutes / retard / convention absente).
 router.get('/clients/:id/delais/export.xlsx', (req, res) => {
-  const e = ownedEntreprise(req, req.params.id); if (!e) return res.status(404).send('Introuvable');
+  const e = ownedEntreprise(req, req.params.id); if (!e) return notFoundText(res, 'client');
   const p = requireExportPeriod(req, res); if (!p) return;
   const filtre = DELAIS_FILTRES[req.query.filter] ? req.query.filter : 'all';
   const { rows, figee } = delaisData(req.cabinetId, e, p);
@@ -1126,7 +1142,7 @@ function buildDelaisXlsx(e, p, filtre, rows, figee) {
   return XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
 }
 router.post('/clients/:id/recompute', (req, res) => {
-  const e = ownedEntreprise(req, req.params.id); if (!e) return res.status(404).json({ error: 'Introuvable.' });
+  const e = ownedEntreprise(req, req.params.id); if (!e) return notFound(res, 'client');
   const p = req.query.annee ? { annee: +req.query.annee, trimestre: +req.query.trimestre } : latestPeriod(e.id);
   if (!assertWritable(res, req.cabinetId, e.id, p.annee, p.trimestre)) return;
   recomputePeriod(req.cabinetId, e.id, p.annee, p.trimestre);
@@ -1142,12 +1158,12 @@ router.post('/clients/:id/recompute', (req, res) => {
 const DOUBLON_STATUTS_REVUE = new Set(['confirme', 'faux_positif', 'potentiel']);
 router.patch('/clients/:id/factures/:factureId/doublon', (req, res) => {
   const e = ownedEntreprise(req, req.params.id);           // isolation tenant + appartenance client
-  if (!e) return res.status(404).json({ error: 'Introuvable.' });
+  if (!e) return notFound(res, 'client');
   const statut = String((req.body && req.body.statut) || '').trim();
   if (!DOUBLON_STATUTS_REVUE.has(statut))
     return res.status(400).json({ error: 'Statut de revue invalide (attendu : confirme, faux_positif ou potentiel).' });
   const f = db.prepare('SELECT * FROM facture WHERE id=? AND entreprise_id=?').get(req.params.factureId, e.id);
-  if (!f) return res.status(404).json({ error: 'Facture introuvable.' });
+  if (!f) return notFound(res, 'facture');
   // Période clôturée/déclarée = immuable : aucune modification de facture (revue doublon incluse).
   if (f.annee && f.trimestre && !assertWritable(res, req.cabinetId, e.id, f.annee, f.trimestre)) return;
   const avant = { statut_doublon: f.statut_doublon || 'aucun', doublon_potentiel: !!f.doublon_potentiel,
@@ -1178,7 +1194,7 @@ router.patch('/clients/:id/factures/:factureId/doublon', (req, res) => {
 
 /* ============================================================ FACTURE manuelle */
 router.post('/clients/:id/factures', (req, res) => {
-  const e = ownedEntreprise(req, req.params.id); if (!e) return res.status(404).json({ error: 'Introuvable.' });
+  const e = ownedEntreprise(req, req.params.id); if (!e) return notFound(res, 'client');
   const b = req.body || {};
   const iceN = normalizeIce(b.four_ice);
   let fId = b.fournisseur_id;
@@ -1215,7 +1231,7 @@ router.post('/clients/:id/factures', (req, res) => {
 /* ============================================================ IMPORT (upload) */
 router.post('/clients/:id/import', heavyLimiter, upload.array('files', 30), (req, res) => {
   const e = ownedEntreprise(req, req.params.id);
-  if (!e) { cleanupUploads(req); return res.status(404).json({ error: 'Introuvable.' }); }
+  if (!e) { cleanupUploads(req); return notFound(res, 'client'); }
   const files = req.files || (req.file ? [req.file] : []);
   if (!files.length) return res.status(400).json({ error: 'Aucun fichier reçu.' });
   // Contexte période OBLIGATOIRE et validé serveur (isolation stricte par trimestre).
@@ -1269,7 +1285,7 @@ function safeUploadPath(token, req) {
 }
 // Étape 2 — analyse du fichier (stocke un fichier temporaire, renvoie un token).
 router.post('/clients/:id/import/analyze', upload.single('file'), (req, res) => {
-  const e = ownedEntreprise(req, req.params.id); if (!e) { if (req.file) try { fs.unlinkSync(req.file.path); } catch (_) {} return res.status(404).json({ error: 'Introuvable.' }); }
+  const e = ownedEntreprise(req, req.params.id); if (!e) { if (req.file) try { fs.unlinkSync(req.file.path); } catch (_) {} return notFound(res, 'client'); }
   if (!req.file) return res.status(400).json({ error: 'Aucun fichier reçu.' });
   try {
     const buf = fs.readFileSync(req.file.path);
@@ -1283,10 +1299,10 @@ router.post('/clients/:id/import/analyze', upload.single('file'), (req, res) => 
 });
 // Étape 4 — prévisualisation (aucune écriture).
 router.post('/clients/:id/import/preview', (req, res) => {
-  const e = ownedEntreprise(req, req.params.id); if (!e) return res.status(404).json({ error: 'Introuvable.' });
+  const e = ownedEntreprise(req, req.params.id); if (!e) return notFound(res, 'client');
   const b = req.body || {};
   const p = requirePeriod(req, res); if (!p) return;
-  const tmp = safeUploadPath(b.token, req); if (!tmp) return res.status(400).json({ error: 'Fichier expiré ou introuvable — relancez l\'analyse.' });
+  const tmp = safeUploadPath(b.token, req); if (!tmp) return res.status(400).json({ error: 'Le fichier analysé n’est plus disponible (analyse trop ancienne ou page rechargée). Relancez l’analyse du fichier : rien n’a été importé.', code: 'analyse_expiree' });
   try {
     const out = importer.previewImport(fs.readFileSync(tmp), {
       sheetName: b.sheetName, headerRow: b.headerRow, mapping: b.mapping || {},
@@ -1297,11 +1313,11 @@ router.post('/clients/:id/import/preview', (req, res) => {
 });
 // Étape 5 — confirmation (écrit en transaction).
 router.post('/clients/:id/import/confirm', (req, res) => {
-  const e = ownedEntreprise(req, req.params.id); if (!e) return res.status(404).json({ error: 'Introuvable.' });
+  const e = ownedEntreprise(req, req.params.id); if (!e) return notFound(res, 'client');
   const b = req.body || {};
   const p = requirePeriod(req, res); if (!p) return;
   if (!assertWritable(res, req.cabinetId, e.id, p.annee, p.trimestre)) return;
-  const tmp = safeUploadPath(b.token, req); if (!tmp) return res.status(400).json({ error: 'Fichier expiré ou introuvable — relancez l\'analyse.' });
+  const tmp = safeUploadPath(b.token, req); if (!tmp) return res.status(400).json({ error: 'Le fichier analysé n’est plus disponible (analyse trop ancienne ou page rechargée). Relancez l’analyse du fichier : rien n’a été importé.', code: 'analyse_expiree' });
   // Contrôle de rattachement EXPLICITE (demandé par l'interface via strictPeriode ; l'API historique est
   // inchangée) : des lignes datées hors du trimestre choisi ne sont jamais rattachées sans confirmation.
   if (b.strictPeriode && !b.accepteHorsPeriode) {
@@ -1338,14 +1354,14 @@ router.post('/clients/:id/import/confirm', (req, res) => {
 // Rapport des lignes (ignorées/rejetées/doublons/valides) d'un import.
 router.get('/imports/:importId/rejections', (req, res) => {
   const lot = db.prepare('SELECT * FROM import_lot WHERE id=? AND cabinet_id=?').get(req.params.importId, req.cabinetId);
-  if (!lot) return res.status(404).json({ error: 'Import introuvable.' });
+  if (!lot) return notFound(res, 'import');
   const rows = db.prepare(`SELECT numero_ligne, feuille, statut, motif, champ, donnees_brutes_json FROM import_ligne
     WHERE import_lot_id=? AND statut IN ('ignoree','rejetee','doublon') ORDER BY numero_ligne`).all(lot.id);
   res.json({ importId: lot.id, source: lot.source_nom, lignes: rows.map(r => ({ ...r, brut: JSON.parse(r.donnees_brutes_json || '[]') })) });
 });
 router.get('/imports/:importId/rejections.csv', (req, res) => {
   const lot = db.prepare('SELECT * FROM import_lot WHERE id=? AND cabinet_id=?').get(req.params.importId, req.cabinetId);
-  if (!lot) return res.status(404).send('Introuvable');
+  if (!lot) return notFoundText(res, 'import');
   const rows = db.prepare(`SELECT numero_ligne, feuille, statut, motif, champ, donnees_brutes_json FROM import_ligne
     WHERE import_lot_id=? AND statut IN ('ignoree','rejetee','doublon') ORDER BY numero_ligne`).all(lot.id);
   // Toutes les cellules passent par csvCell : les valeurs viennent d'un classeur téléversé (nom de
@@ -1382,7 +1398,7 @@ router.post('/mapping-templates', (req, res) => {
 });
 router.put('/mapping-templates/:id', (req, res) => {
   const m = db.prepare('SELECT * FROM modele_mapping WHERE id=? AND cabinet_id=?').get(req.params.id, req.cabinetId);
-  if (!m) return res.status(404).json({ error: 'Introuvable.' });
+  if (!m) return notFound(res, 'modele');
   const b = req.body || {};
   db.prepare(`UPDATE modele_mapping SET nom=?, type_fichier=?, signature_colonnes=?, feuille=?, ligne_entete=?, mapping_json=?, transformations_json=?, updated_at=datetime('now'), derniere_utilisation=datetime('now') WHERE id=?`)
     .run(b.nom ?? m.nom, b.type_fichier ?? m.type_fichier, b.signature_colonnes ?? m.signature_colonnes, b.feuille ?? m.feuille,
@@ -1392,13 +1408,13 @@ router.put('/mapping-templates/:id', (req, res) => {
 });
 router.delete('/mapping-templates/:id', (req, res) => {
   const m = db.prepare('SELECT id FROM modele_mapping WHERE id=? AND cabinet_id=?').get(req.params.id, req.cabinetId);
-  if (!m) return res.status(404).json({ error: 'Introuvable.' });
+  if (!m) return notFound(res, 'modele');
   db.prepare('DELETE FROM modele_mapping WHERE id=?').run(m.id);
   res.json({ ok: true });
 });
 
 router.get('/clients/:id/documents', (req, res) => {
-  const e = ownedEntreprise(req, req.params.id); if (!e) return res.status(404).json({ error: 'Introuvable.' });
+  const e = ownedEntreprise(req, req.params.id); if (!e) return notFound(res, 'client');
   // Isolation : si une période est fournie, ne renvoyer QUE ses fichiers.
   const p = readPeriodParams(req);
   const rows = p
@@ -1407,15 +1423,15 @@ router.get('/clients/:id/documents', (req, res) => {
   res.json(rows);
 });
 router.get('/clients/:id/documents/:docId/download', (req, res) => {
-  const e = ownedEntreprise(req, req.params.id); if (!e) return res.status(404).send('Introuvable');
+  const e = ownedEntreprise(req, req.params.id); if (!e) return notFoundText(res, 'client');
   const doc = db.prepare('SELECT * FROM document WHERE id=? AND entreprise_id=?').get(req.params.docId, e.id);
-  if (!doc || !doc.chemin) return res.status(404).send('Fichier introuvable');
+  if (!doc || !doc.chemin) return notFoundText(res, 'fichier');
   res.download(path.join(UP_DIR, doc.chemin), doc.nom || 'fichier');
 });
 router.delete('/clients/:id/documents/:docId', (req, res) => {
-  const e = ownedEntreprise(req, req.params.id); if (!e) return res.status(404).json({ error: 'Introuvable.' });
+  const e = ownedEntreprise(req, req.params.id); if (!e) return notFound(res, 'client');
   const doc = db.prepare('SELECT * FROM document WHERE id=? AND entreprise_id=?').get(req.params.docId, e.id);
-  if (!doc) return res.status(404).json({ error: 'Introuvable.' });
+  if (!doc) return notFound(res, 'fichier');
   // Interdit si la période du document est clôturée/déclarée.
   if (doc.annee && doc.trimestre && !assertWritable(res, req.cabinetId, e.id, doc.annee, doc.trimestre)) return;
   let removed = 0;
@@ -1428,15 +1444,15 @@ router.delete('/clients/:id/documents/:docId', (req, res) => {
 // Détail d'un lot d'import (cloisonné cabinet).
 router.get('/imports/:importId', (req, res) => {
   const lot = db.prepare('SELECT * FROM import_lot WHERE id=? AND cabinet_id=?').get(req.params.importId, req.cabinetId);
-  if (!lot) return res.status(404).json({ error: 'Import introuvable.' });
+  if (!lot) return notFound(res, 'import');
   const nbFac = db.prepare('SELECT COUNT(*) n FROM facture WHERE import_id=?').get(lot.id).n;
   res.json({ ...lot, factures_actuelles: nbFac });
 });
 // Aperçu des conséquences d'une annulation (avant confirmation).
 router.get('/clients/:id/import/:importId/impact', (req, res) => {
-  const e = ownedEntreprise(req, req.params.id); if (!e) return res.status(404).json({ error: 'Introuvable.' });
+  const e = ownedEntreprise(req, req.params.id); if (!e) return notFound(res, 'client');
   const lot = db.prepare('SELECT * FROM import_lot WHERE id=? AND cabinet_id=? AND entreprise_id=?').get(req.params.importId, req.cabinetId, e.id);
-  if (!lot) return res.status(404).json({ error: 'Import introuvable.' });
+  if (!lot) return notFound(res, 'import');
   const agg = db.prepare('SELECT COUNT(*) n, COALESCE(SUM(ttc),0) ttc FROM facture WHERE entreprise_id=? AND import_id=?').get(e.id, lot.id);
   const decl = db.prepare('SELECT COUNT(*) n FROM declaration WHERE entreprise_id=? AND annee=? AND trimestre=?').get(e.id, lot.annee, lot.trimestre).n;
   const pr = ensurePeriode(req.cabinetId, e.id, lot.annee, lot.trimestre);
@@ -1445,9 +1461,9 @@ router.get('/clients/:id/import/:importId/impact', (req, res) => {
 });
 // Annulation atomique d'un import : retire UNIQUEMENT ses factures + anomalies. Réversibilité.
 router.post('/clients/:id/import/:importId/cancel', (req, res) => {
-  const e = ownedEntreprise(req, req.params.id); if (!e) return res.status(404).json({ error: 'Introuvable.' });
+  const e = ownedEntreprise(req, req.params.id); if (!e) return notFound(res, 'client');
   const lot = db.prepare('SELECT * FROM import_lot WHERE id=? AND cabinet_id=? AND entreprise_id=?').get(req.params.importId, req.cabinetId, e.id);
-  if (!lot) return res.status(404).json({ error: 'Import introuvable.' });
+  if (!lot) return notFound(res, 'import');
   if (lot.annee && lot.trimestre && !assertWritable(res, req.cabinetId, e.id, lot.annee, lot.trimestre)) return;
   let removed = 0;
   db.exec('BEGIN');
@@ -1464,9 +1480,9 @@ router.post('/clients/:id/import/:importId/cancel', (req, res) => {
 });
 
 router.delete('/clients/:id/conventions/:convId', (req, res) => {
-  const e = ownedEntreprise(req, req.params.id); if (!e) return res.status(404).json({ error: 'Introuvable.' });
+  const e = ownedEntreprise(req, req.params.id); if (!e) return notFound(res, 'client');
   const c = db.prepare('SELECT * FROM convention WHERE id=? AND entreprise_id=?').get(req.params.convId, e.id);
-  if (!c) return res.status(404).json({ error: 'Introuvable.' });
+  if (!c) return notFound(res, 'convention');
   db.prepare('DELETE FROM convention WHERE id=?').run(c.id);
   if (c.fichier) try { fs.unlinkSync(path.join(UP_DIR, c.fichier)); } catch (_) {}
   if (c.fournisseur_id) {
@@ -1567,7 +1583,7 @@ function buildDeclaration(cabinetId, entreprise, annee, trimestre) {
   return { declaration: d, lignes, exclusions, figee: false };
 }
 router.get('/clients/:id/declaration', (req, res) => {
-  const e = ownedEntreprise(req, req.params.id); if (!e) return res.status(404).json({ error: 'Introuvable.' });
+  const e = ownedEntreprise(req, req.params.id); if (!e) return notFound(res, 'client');
   const p = req.query.annee ? { annee: +req.query.annee, trimestre: +req.query.trimestre } : latestPeriod(e.id);
   const { declaration, lignes, exclusions, figee } = buildDeclaration(req.cabinetId, e, p.annee, p.trimestre);
   // Sur une période figée, l'en-tête affiché est celui ARRÊTÉ (CA / type de visa), pas la valeur courante.
@@ -1585,7 +1601,7 @@ function shapeEnt(e, fige) {
 function money2(n) { return round2(Number(n) || 0).toFixed(2); }
 
 router.get('/clients/:id/declaration/export.csv', (req, res) => {
-  const e = ownedEntreprise(req, req.params.id); if (!e) return res.status(404).send('Introuvable');
+  const e = ownedEntreprise(req, req.params.id); if (!e) return notFoundText(res, 'client');
   const p = requireExportPeriod(req, res); if (!p) return;
   const { declaration, lignes, exclusions, figee } = buildDeclaration(req.cabinetId, e, p.annee, p.trimestre);
   // Colonnes historiques conservées DANS LE MÊME ORDRE (aucun consommateur cassé) ; année et
@@ -1604,7 +1620,7 @@ router.get('/clients/:id/declaration/export.csv', (req, res) => {
   res.send('﻿' + csv);
 });
 router.get('/clients/:id/declaration/export.xml', (req, res) => {
-  const e = ownedEntreprise(req, req.params.id); if (!e) return res.status(404).send('Introuvable');
+  const e = ownedEntreprise(req, req.params.id); if (!e) return notFoundText(res, 'client');
   const p = requireExportPeriod(req, res); if (!p) return;
   const { declaration, lignes, exclusions, figee } = buildDeclaration(req.cabinetId, e, p.annee, p.trimestre);
   const esc = s => String(s == null ? '' : s).replace(/[<>&]/g, c => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;' }[c]));
@@ -1635,7 +1651,7 @@ function visaData(req, e) {
   return { p, declaration, data };
 }
 router.get('/clients/:id/visa', (req, res) => {
-  const e = ownedEntreprise(req, req.params.id); if (!e) return res.status(404).json({ error: 'Introuvable.' });
+  const e = ownedEntreprise(req, req.params.id); if (!e) return notFound(res, 'client');
   const { p, declaration, data } = visaData(req, e);
   res.json({
     type: data.type, typeLabel: data.typeLabel, periode: p,
@@ -1645,7 +1661,7 @@ router.get('/clients/:id/visa', (req, res) => {
   });
 });
 router.get('/clients/:id/visa/export.docx', asyncHandler(async (req, res) => {
-  const e = ownedEntreprise(req, req.params.id); if (!e) return res.status(404).send('Introuvable');
+  const e = ownedEntreprise(req, req.params.id); if (!e) return notFoundText(res, 'client');
   if (!requireExportPeriod(req, res)) return;
   const { p, declaration, data } = visaData(req, e);
   const buf = await visa.toDocx(data.blocks);
@@ -1655,7 +1671,7 @@ router.get('/clients/:id/visa/export.docx', asyncHandler(async (req, res) => {
   res.send(buf);
 }));
 router.get('/clients/:id/visa/export.pdf', (req, res, next) => {
-  const e = ownedEntreprise(req, req.params.id); if (!e) return res.status(404).send('Introuvable');
+  const e = ownedEntreprise(req, req.params.id); if (!e) return notFoundText(res, 'client');
   if (!requireExportPeriod(req, res)) return;
   const { p, declaration, data } = visaData(req, e);
   res.setHeader('Content-Type', 'application/pdf');

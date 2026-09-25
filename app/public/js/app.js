@@ -24,6 +24,17 @@ function invalidateCache() { _cache.clear(); }
 // Les données renvoyées sont traitées en lecture seule par les vues (aucune mutation),
 // on peut donc partager la référence — pas de clonage (coûteux sur les gros tableaux).
 
+// Erreur d'API lisible : message en clair + statut et code machine (pour réagir sans afficher de code technique).
+function apiError(message, status, data) { const e = new Error(plainMsg(message)); e.status = status; e.code = (data && data.code) || null; return e; }
+// Messages du moteur d'import : les clés techniques entre « » sont remplacées par leur libellé (aucune clé visible).
+const FIELD_FR = { numero: 'N° de facture', date_facture: 'Date de facture', four_nom: 'Fournisseur', four_ice: 'ICE fournisseur', four_if: 'IF fournisseur',
+  ttc: 'Montant TTC', mht: 'Montant HT', tva: 'Montant TVA', taux_tva: 'Taux TVA', date_paiement: 'Date de paiement', mode_reglement: 'Mode de paiement',
+  designation: 'Nature / désignation', delai_conv: 'Délai convenu', nom: 'Nom fournisseur', iff: 'IF', conv: 'Convention (OUI/NON)', delai: 'Délai conventionnel (jours)',
+  debut: 'Date de début', fin: 'Date de fin', ref: 'Référence convention', comm: 'Commentaire' };
+function plainMsg(m) {
+  return String(m == null ? '' : m).replace(/«\s*([a-z_]+)\s*»/g, (all, k) => FIELD_FR[k] ? `« ${FIELD_FR[k]} »` : all)
+    .replace(/^Mapping refusé\s*:/, 'Correspondance des colonnes refusée :').replace(/\s\|\s/g, ' — ');
+}
 async function api(path, opts = {}) {
   const method = (opts.method || 'GET').toUpperCase();
   const cacheable = method === 'GET' && !opts.noCache && typeof path === 'string';
@@ -49,8 +60,9 @@ async function api(path, opts = {}) {
     if (res.status === 401) { const code = (data && data.code) || 'expired'; window.location.href = '/login?reason=' + encodeURIComponent(code); throw new Error((data && data.error) || 'Session expirée.'); }
     if (!res.ok) {
       if (res.status >= 500) throw new Error(method === 'GET' ? 'Une erreur est survenue côté serveur. Réessayez ; si le problème persiste, contactez le support DelaiPay.' : 'Une erreur est survenue : l’opération n’a pas abouti et aucune donnée n’a été modifiée. Réessayez ou contactez le support.');
-      if (res.status === 429) throw new Error((data && data.error) || 'Trop de requêtes : patientez quelques instants.');
-      throw new Error((data && data.error) || 'Opération impossible.');
+      if (res.status === 429) throw apiError((data && data.error) || 'Trop de demandes en peu de temps : patientez quelques instants puis réessayez.', res.status, data);
+      if (res.status === 403) throw apiError((data && data.error) || 'Votre rôle ne permet pas cette action. Demandez à un administrateur de l’espace.', res.status, data);
+      throw apiError((data && data.error) || 'L’opération n’a pas pu être effectuée. Vérifiez les informations saisies puis réessayez.', res.status, data);
     }
     return data;
   })();
@@ -1554,9 +1566,9 @@ function wizPreviewHtml() {
   const valBox = blocked
     ? `<div class="note note-danger" role="alert">${svgI('stop')}<div><div class="note-t">Correspondance incohérente — import bloqué</div>
         La protection anti-corruption a détecté des colonnes qui ne correspondent pas aux champs attendus. Aucune donnée ne peut être enregistrée tant que ce n'est pas corrigé.
-        <ul>${[...(val.errors || []), ...(val.warnings || [])].map(e => `<li>${esc(e.message)}</li>`).join('')}</ul>
+        <ul>${[...(val.errors || []), ...(val.warnings || [])].map(e => `<li>${esc(plainMsg(e.message))}</li>`).join('')}</ul>
         <div style="margin-top:8px"><b>Comment corriger :</b> revenez à l'étape « Correspondance » et associez la bonne colonne à chaque champ signalé.</div></div></div>`
-    : (val.warnings && val.warnings.length ? `<div class="note note-warn">${svgI('warn')}<div><div class="note-t">Points à vérifier avant de confirmer</div><ul>${val.warnings.map(e => `<li>${esc(e.message)}</li>`).join('')}</ul></div></div>` : '');
+    : (val.warnings && val.warnings.length ? `<div class="note note-warn">${svgI('warn')}<div><div class="note-t">Points à vérifier avant de confirmer</div><ul>${val.warnings.map(e => `<li>${esc(plainMsg(e.message))}</li>`).join('')}</ul></div></div>` : '');
   const cohBox = (pv.sommeBruteTtc != null && !blocked)
     ? `<div class="note note-info">${svgI('info')}<div>Contrôle de cohérence : total TTC retenu (lignes valides) <b class="mono">${money(s.totalTtc)} DH</b> · somme brute de la colonne TTC associée <b class="mono">${money(pv.sommeBruteTtc)} DH</b>. Un écart s'explique par les lignes ignorées ou rejetées ci-dessous.</div></div>`
     : '';

@@ -102,3 +102,10 @@ test('navigation : groupes métier dans l’ordre, chaque entrée mène à une v
   for (const v of navTargets) assert.ok(views.has(v), `entrée « ${v} » sans vue`);
   for (const v of ['fournisseurs', 'reseau']) assert.ok(navTargets.includes(v), `page ${v} dans la navigation`);
 });
+
+test('messages d’erreur : aucune clé technique visible (« four_nom » → « Fournisseur »)', () => {
+  const { plainMsg } = fromApp(['FIELD_FR', 'plainMsg']);
+  assert.equal(plainMsg('Champ obligatoire « four_nom » non mappé.'), 'Champ obligatoire « Fournisseur » non mappé.');
+  assert.equal(plainMsg('Mapping refusé : a | b'), 'Correspondance des colonnes refusée : a — b');
+  assert.equal(plainMsg('La colonne « MONTANT » du champ « date_facture »'), 'La colonne « MONTANT » du champ « Date de facture »', 'un en-tête de fichier n’est pas traduit');
+});

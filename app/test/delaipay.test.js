@@ -2725,3 +2725,22 @@ test('fix/AUTH-3 : limitation par identité ciblée, pas par poste entier', asyn
   assert.equal((await post('rl-c.localhost', C.email, 'Motdepasse1!')).status, 200);
   for (let i = 0; i < 9; i++) assert.equal((await post('rl-c.localhost', C.email, 'faux2-' + i)).status, 401, '4. compteur remis à zéro après succès');
 });
+
+/* ============ Incrément 2 — messages d'erreur en clair ============ */
+test('erreurs/INC2 : un 404 dit ce qui s’est passé et que faire (jamais « Introuvable » seul)', async () => {
+  const t = newTenant();
+  const ck = cookieOf(t.u);
+  for (const [url, code, method] of [['/api/clients/ent_nexistepas/delais?annee=2026&trimestre=1', 'client_introuvable'],
+    ['/api/clients/ent_nexistepas/fournisseurs', 'client_introuvable'],
+    [`/api/clients/${t.ent}/conventions/conv_nexistepas`, 'convention_introuvable', 'DELETE'],
+    [`/api/clients/${t.ent}/documents/doc_nexistepas`, 'fichier_introuvable', 'DELETE']]) {
+    const r = await fetch(baseUrl() + url, { method: method || 'GET', headers: { Cookie: ck } });
+    const body = await r.json().catch(() => ({}));
+    assert.equal(r.status, 404, url);
+    assert.ok(body.error && body.error.length > 40, `${url} : message explicite`);
+    assert.ok(!/^Introuvable\.?$/.test(body.error), `${url} : pas de « Introuvable » brut`);
+    if (code) assert.equal(body.code, code);
+  }
+  const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'api.js'), 'utf8');
+  assert.ok(!/error: 'Introuvable\.?'/.test(src) && !/send\('Introuvable'\)/.test(src), 'aucun « Introuvable » brut dans l’API');
+});
