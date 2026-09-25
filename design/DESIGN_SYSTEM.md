@@ -12,15 +12,14 @@
 (quasi nulle). Un élément de rang inférieur ne peut jamais être plus contrasté, plus grand ou plus coloré qu'un élément de rang supérieur
 sur le même écran.
 
-## 1. Marque — direction « Échéance »
-- **Symbole** : un **D plein** et un **carré laiton détaché** en haut à droite — le repère de clôture du trimestre, à la manière d'un index
-  de cadran. Le temps est suggéré par la position du repère, jamais par des aiguilles.
-- **Logotype** : « DelaiPay » en Inter semi-gras, une seule couleur (encre ou ivoire). Le laiton n'existe que dans le carré.
-- **16×16** : dessin dédié (D plein 11 px + carré 3 px, contre-forme élargie) — jamais une réduction du symbole.
-- **Monochrome** : le carré prend la couleur du D ; aucune information n'est portée par la seule couleur.
-- Zone de protection = largeur du carré ; taille minimale du logotype 72 px de large, du symbole 14 px.
-- Directions écartées et raisons : `design/brand/exploration/README.md` (Registre : se lit P/E/F ; Trimestre : évoque Microsoft ;
-  Visa : la coche dit « conforme » sur un outil de retards ; logo actuel : se lit comme un indicateur de chargement).
+## 1. Marque — « quart d'échéance » (décision du fondateur, 2026-09-25)
+- **Symbole** : anneau aux ¾ (le temps écoulé) et quart laiton détaché (le trimestre déclaré), dans une tuile pétrole pour l'icône
+  d'application. La direction « Échéance » (D plein + carré laiton) a été explorée puis **écartée par le fondateur** au profit de l'anneau
+  d'origine ; elle reste documentée dans `design/brand/exploration/`.
+- **Logotype** : « DelaiPay » en Inter semi-gras, une seule couleur (encre ou ivoire). Le laiton n'existe que dans le quart.
+- **16×16** : dessin dédié (anneau plus épais, quart agrandi) — jamais une simple réduction.
+- **Monochrome** : `currentColor` pour l'anneau et le quart (version mono corrigée : elle codait `#111111` en dur).
+- Zone de protection = ¼ de la hauteur du symbole ; symbole ≥ 14 px.
 
 ## 2. Typographie
 Inter (auto-hébergée, OFL). Chiffres **tabulaires et alignés** (`font-variant-numeric: tabular-nums lining-nums`) sur tout montant,

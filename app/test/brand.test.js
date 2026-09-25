@@ -1,5 +1,5 @@
 'use strict';
-/* Jeu de marque « Échéance » : fichiers présents, dimensions exactes, 16×16 dédié, SVG dessinés à la main
+/* Jeu de marque (anneau « quart d'échéance », retenu par le fondateur) : fichiers présents, dimensions exactes, 16×16 dédié, SVG dessinés à la main
  * (aucune image raster intégrée, aucune ressource distante), manifeste et pages câblés. */
 const { test } = require('node:test');
 const assert = require('node:assert');
@@ -23,14 +23,13 @@ test('marque : SVG dessinés à la main — aucune image raster, aucune URL dist
   }
 });
 
-test('marque : monochromes en currentColor, 16×16 dédié (grille 16, pas une réduction)', () => {
+test('marque : monochromes en currentColor, 16×16 dédié (dessin propre à la grille 16, pas une réduction)', () => {
   for (const f of ['delaipay-symbol-mono.svg', 'delaipay-logo-mono.svg']) {
-    const fills = [...read(f).toString().matchAll(/fill="([^"]+)"/g)].map(m => m[1]);
-    assert.ok(fills.length && fills.every(x => x === 'currentColor'), `${f} : une seule couleur, héritée`);
+    const paints = [...read(f).toString().matchAll(/(?:fill|stroke)="([^"]+)"/g)].map(m => m[1]);
+    assert.ok(paints.includes('currentColor') && paints.every(x => x === 'currentColor' || x === 'none'), `${f} : une seule couleur, héritée`);
   }
   const f16 = read('favicon-16.svg').toString();
   assert.match(f16, /viewBox="0 0 16 16"/);
-  assert.match(f16, /shape-rendering="crispEdges"/);
   assert.notEqual(f16.replace(/\s/g, ''), read('favicon.svg').toString().replace(/\s/g, ''), 'dessin propre au 16 px');
 });
 

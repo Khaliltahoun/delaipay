@@ -25,7 +25,7 @@ logo client (« Propulsé par DelaiPay »).
 | 3 | **Trimestre** — grille 2×2 dont un quart laiton / D en quarts | `r1-05`, `r1-06` | **Rejetée** : la grille 2×2 évoque Microsoft/Windows ; `r1-06` se lit comme un arbre ou une voile. |
 | 4 | **Visa** — D dont le contre-poinçon est une coche / sceau coché | `r1-07`, `r1-08` | **Rejetée** : la coche signifie « conforme » alors que l'outil montre surtout des **retards** (contresens) ; `r1-08` ressemble à une case à cocher d'application de tâches. |
 
-## Direction retenue : « Échéance »
+## Direction « Échéance » — proposée, puis ÉCARTÉE par le fondateur (2026-09-25) au profit de l'anneau d'origine
 `r2-21`, `r2-22`, `r2-23` (planche). **Un D plein, sans ornement, et un carré laiton détaché en haut à droite** :
 le repère de clôture d'un trimestre, à la manière d'un index de cadran — le temps est suggéré par la *position* du
 repère, jamais par des aiguilles.
