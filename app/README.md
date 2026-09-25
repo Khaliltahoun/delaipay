@@ -32,6 +32,16 @@ Au **premier démarrage**, la base est créée et pré-alimentée :
 
 > Identifiants et compte initial configurables via `ADMIN_EMAIL` / `ADMIN_PASSWORD` (voir `.env.example`).
 
+### Espaces de démonstration (local uniquement)
+```bash
+DB_PATH=data/demo.db DEMO_PASSWORD='…' npm run demo:tenant          # crée « premium » et « client2 » (comptes …@….demo)
+DB_PATH=data/demo.db npm run demo:reset -- --slug client2 --confirm client2   # remet « client2 » à blanc
+```
+`demo:reset` supprime les données métier, fichiers, invitations, identité et progression d'onboarding de l'espace choisi, conserve
+ses comptes (même connexion) et écrit d'abord une sauvegarde complète dans `data/backups/`. Il refuse : la production, une base
+implicite ou `data/delaipay.db`, l'espace de référence `hlz`, tout espace contenant le client de référence ou un compte dont
+l'adresse n'est pas fictive (`@….demo`), et toute exécution sans `--confirm <slug>`.
+
 ## 3. Fonctionnalités
 | Module | Description |
 |---|---|

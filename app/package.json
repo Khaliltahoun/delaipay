@@ -12,7 +12,8 @@
     "seed": "node src/seed.js",
     "dev": "node --watch src/server.js",
     "demo:tenant": "node src/tenant-demo.js",
-    "workspace:create": "node src/workspace-cli.js"
+    "workspace:create": "node src/workspace-cli.js",
+    "demo:reset": "node src/demo-reset.js"
   },
   "engines": {
     "node": ">=22.5"
