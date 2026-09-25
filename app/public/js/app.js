@@ -1255,7 +1255,7 @@ async function renderDelais() {
       <td class="mono dh" data-prio="3" title="${esc(etatTip(f))}">${f.arrete_au ? dateFr(f.arrete_au) : '—'}</td>
       <td class="num" data-prio="2" title="${esc(etatTip(f))}">${f.delai_ecoule != null ? f.delai_ecoule + ' j' : '—'}${etatMini(f)}</td>
       <td data-rc="s"><div class="cell-stack"><span class="badge ${f.operateur_reseau ? 'b30' : (f.has_conv || f.delai_applicable >= 120 ? 'b120' : 'b60')}">${f.delai_applicable} j ${f.operateur_reseau ? '<small>réseau</small>' : (!f.has_conv && f.delai_applicable === 60 ? '<small>légal</small>' : '')}</span>${f.delai_ecoule > 60 && !f.operateur_reseau ? (f.has_conv
-        ? ' <span class="pill pill-sm pill-ok" title="Convention disponible">conv.</span>'
+        ? (f.conv_hors_validite ? ' <span class="pill pill-sm pill-warn" title="Convention appliquée au calcul (règle LOT 4) alors que ses dates ne couvrent pas ce trimestre — question ouverte pour l’expert-comptable.">conv. hors période de validité — à confirmer</span>' : ' <span class="pill pill-sm pill-ok" title="Convention disponible">conv.</span>')
         : (f.four_id && !locked
           ? ` <button class="btn btn-ghost btn-xs link-ink" data-perm="manage_conventions" title="Ce fournisseur a une convention signée : l'enregistrer en un clic" aria-label="Enregistrer la convention signée de ${esc(f.four || 'ce fournisseur')}" data-four="${f.four_id}" data-fournom="${esc(f.four || '')}" data-delai="${f.delai_ecoule}" onclick="event.stopPropagation();convExpress(this)">+ Conv.</button>`
           : ' <span class="pill pill-sm pill-late" title="Aucune convention pour ce fournisseur">sans conv.</span>')) : ''}</div>${(reseauBadge(f) + doublonBadge(f)).trim() ? `<div class="cell-stack">${reseauBadge(f)}${doublonBadge(f)}</div>` : ''}</td>
@@ -1740,12 +1740,13 @@ const LIGNE_STATUT_FR = { valide: 'Valide', rejetee: 'Rejetée', ignoree: 'Ignor
 const CONV_STATUT_LABEL = { creee: 'Convention créée', doublon: 'Doublon (déjà présente)', conflit: 'Conflit à vérifier', sans_convention: 'Sans convention', a_verifier: 'À vérifier', rejetee: 'Rejetée', ignoree: 'Ignorée' };
 async function renderConv() {
   if (!state.clientId) return noClient();
-  const rows = await api(`/clients/${state.clientId}/conventions`);
+  const rows = await api(`/clients/${state.clientId}/conventions${perQuery()}`);
   const S = { 'Trouvée': ['pill-ok', 'En vigueur'], 'Bientôt expirée': ['pill-warn', 'Expire bientôt'], 'Expirée': ['pill-late', 'Expirée'], 'Absente': ['pill-late', 'Absente'] };
   const SRC = { convention: ['conv', 'convention'], operateur_reseau: ['b30', 'réseau'], standard: ['b60', 'légal'] };
   const applied = rows.filter(c => c.appliquee).length, missingDoc = rows.filter(c => !c.fichier).length;
   const rule = c => { const r = c.regle_fournisseur; if (!r) return '<span class="dh">—</span>';
     const [cls, lbl] = SRC[r.source] || ['b60', r.source];
+    if (c.appliquee && c.hors_validite) return `<span class="pill pill-sm pill-warn" title="Le calcul applique la convention en vigueur selon son statut (règle LOT 4), mais ses dates ne couvrent pas la période consultée. Question ouverte pour l’expert-comptable.">${svgI('warn', '')}Appliquée hors de sa période de validité — à confirmer</span>`;
     if (c.appliquee) return `<span class="pill pill-sm pill-ok">${svgI('check', '')}Appliquée</span>`;
     return `<span class="dh t-sm">Non appliquée — règle en vigueur : </span><span class="badge ${cls}">${r.delai} j <small>${lbl}</small></span>`; };
   $('#view').innerHTML = `

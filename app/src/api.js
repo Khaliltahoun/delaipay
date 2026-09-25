@@ -746,6 +746,9 @@ router.get('/clients/:id/conventions', (req, res) => {
       created_at: c.created_at,
       regle_fournisseur: regle ? { delai: regle.delai, source: regle.source } : null,
       appliquee: !!(regle && regle.source === 'convention' && regle.conventionId === c.id),
+      // INC 2.1-D : appliquée par le moteur mais hors de sa période de validité pour le trimestre consulté (ou échue).
+      hors_validite: !!(regle && regle.source === 'convention' && regle.conventionId === c.id
+        && ((req.query.annee && anomalies.covers(c, +req.query.annee, +req.query.trimestre) === false) || computeConvStatut(c) === 'Expirée')),
     };
   }));
 });
@@ -1120,7 +1123,18 @@ const DELAIS_FILTRES = {
 router.get('/clients/:id/delais', (req, res) => {
   const e = ownedEntreprise(req, req.params.id); if (!e) return notFound(res, 'client');
   const p = req.query.annee ? { annee: +req.query.annee, trimestre: +req.query.trimestre } : latestPeriod(e.id);
-  res.json(delaisData(req.cabinetId, e, p));
+  const data = delaisData(req.cabinetId, e, p);
+  // INC 2.1-D (affichage seulement, calcul inchangé) : convention appliquée par le moteur (statut, LOT 4) dont les
+  // dates ne couvrent pas le trimestre → « appliquée hors de sa période de validité — à confirmer ».
+  const cache = new Map();
+  for (const r of data.rows || []) {
+    if (r.source_regle !== 'convention' || !r.four_id) continue;
+    if (!cache.has(r.four_id)) cache.set(r.four_id, activeConventionFor(e.id, r.four_id));
+    const c = cache.get(r.four_id);
+    if (c && anomalies.covers(c, p.annee, p.trimestre) === false)
+      r.conv_hors_validite = { id: c.id, debut: anomalies.convStart(c), fin: c.date_fin || null };
+  }
+  res.json(data);
 });
 
 // Export Excel formaté de la feuille de délais, filtré (toutes / retard / convention absente).

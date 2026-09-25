@@ -2916,3 +2916,22 @@ test('INC2.1/B : convention datée à la création, modifiable (audit ancien →
   const ro = addUser(W.cab, 'lecture', 'ro-conv@ex.ma');
   assert.equal((await reqJson('PATCH', `/api/clients/${W.ent}/conventions/${cr.id}`, { cookie: cookieOf(ro), body: { date_fin: null } })).status, 403, 'lecture seule refusée');
 });
+
+/* ============ Incrément 2.1 — D : convention appliquée hors de sa période de validité (affichage seul) ============ */
+test('INC2.1/D : feuille et conventions signalent une convention appliquée hors de ses dates ; calcul inchangé', async () => {
+  const W = mkWorkspace('conv-hv'); const ck = cookieOf(W.u);
+  importer.importWorkbook(demoFixture.demoWorkbookBuffer(), { cabinetId: W.cab, entrepriseId: W.ent, sourceName: 'x', periode: { annee: 2026, trimestre: 1 } });
+  const fid = nom => db.prepare('SELECT id FROM fournisseur WHERE entreprise_id=? AND raison_sociale=?').get(W.ent, nom).id;
+  for (const [nom, deb, fin] of [['ALPHA PIECES AUTO', '2026-05-01', null], ['ETOILE CARROSSERIE', '2025-01-01', '2025-12-31'], ['BETA EXPRESS SARL', '2026-01-01', null]]) {
+    const fd = new FormData(); fd.append('fournisseur_id', fid(nom)); fd.append('delai', '120'); fd.append('date_debut', deb); if (fin) fd.append('date_fin', fin);
+    assert.equal((await fetch(baseUrl() + `/api/clients/${W.ent}/conventions`, { method: 'POST', headers: { Cookie: ck }, body: fd })).status, 200);
+  }
+  const d = (await reqJson('GET', `/api/clients/${W.ent}/delais?annee=2026&trimestre=1`, { cookie: ck })).body;
+  const flagged = d.rows.filter(r => r.conv_hors_validite).map(r => r.numero).sort();
+  assert.deepEqual(flagged, ['0043/2025', '0104/2025', '885/25'], 'ALPHA (débute après T1) et ETOILE (finie avant T1) signalées, BETA non');
+  assert.equal(d.rows.find(r => r.numero === '885/25').amende, 0, 'calcul inchangé : la convention reste appliquée (LOT 4)');
+  const cv = (await reqJson('GET', `/api/clients/${W.ent}/conventions?annee=2026&trimestre=1`, { cookie: ck })).body;
+  const hv = cv.filter(c => c.hors_validite).map(c => c.fournisseur).sort();
+  assert.deepEqual(hv, ['ALPHA PIECES AUTO', 'ETOILE CARROSSERIE']);
+  assert.ok(cv.filter(c => c.statut === 'Expirée' && c.appliquee).every(c => c.hors_validite), 'jamais « Expirée » + « Appliquée » sans explication');
+});
