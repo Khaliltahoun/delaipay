@@ -2859,3 +2859,26 @@ test('INC2.1/E : le fichier de référence T1 2026 ne déclenche aucun avertisse
     assert.equal(c.status, 409); assert.equal(c.body.code, 'hors_periode'); assert.equal(c.body.autrePeriode, 2);
   }
 });
+
+/* ============ Incrément 2.1 — B : dates de convention, modification tracée ============ */
+test('INC2.1/B : convention datée à la création, modifiable (audit ancien → nouveau), sans effet sur le calcul', async () => {
+  const W = mkWorkspace('conv-dates'); const ck = cookieOf(W.u);
+  importer.importWorkbook(demoFixture.demoWorkbookBuffer(), { cabinetId: W.cab, entrepriseId: W.ent, sourceName: 'x', periode: { annee: 2026, trimestre: 1 } });
+  const four = db.prepare("SELECT id FROM fournisseur WHERE entreprise_id=? AND raison_sociale='BETA EXPRESS SARL'").get(W.ent).id;
+  const amende = () => db.prepare('SELECT ROUND(SUM(montant_amende),2) a FROM facture WHERE entreprise_id=?').get(W.ent).a;
+  const fd = new FormData(); fd.append('fournisseur_id', four); fd.append('delai', '120'); fd.append('date_signature', '2026-02-10'); fd.append('date_debut', '2026-01-01');
+  const cr = await (await fetch(baseUrl() + `/api/clients/${W.ent}/conventions`, { method: 'POST', headers: { Cookie: ck }, body: fd })).json();
+  const c0 = db.prepare('SELECT * FROM convention WHERE id=?').get(cr.id);
+  assert.equal(c0.date_signature, '2026-02-10'); assert.equal(c0.date_debut, '2026-01-01');
+  const a0 = amende();
+  const up = await reqJson('PATCH', `/api/clients/${W.ent}/conventions/${cr.id}`, { cookie: ck, body: { date_debut: '2026-04-01', date_fin: '2026-12-31' } });
+  assert.equal(up.status, 200);
+  assert.deepEqual(up.body.changes.date_debut, { avant: '2026-01-01', apres: '2026-04-01' });
+  assert.equal(amende(), a0, 'les dates ne changent pas le calcul (règle LOT 4 par statut)');
+  const au = db.prepare("SELECT details FROM audit_log WHERE cabinet_id=? AND action='update' AND entite='convention'").get(W.cab);
+  assert.match(au.details, /"date_debut":\{"avant":"2026-01-01","apres":"2026-04-01"\}/);
+  assert.equal((await reqJson('PATCH', `/api/clients/${W.ent}/conventions/${cr.id}`, { cookie: ck, body: { date_fin: '2026-01-15' } })).status, 400, 'fin avant effet refusée');
+  assert.equal((await reqJson('PATCH', `/api/clients/${W.ent}/conventions/${cr.id}`, { cookie: ck, body: { date_debut: '31/12/2026' } })).status, 400, 'format invalide refusé');
+  const ro = addUser(W.cab, 'lecture', 'ro-conv@ex.ma');
+  assert.equal((await reqJson('PATCH', `/api/clients/${W.ent}/conventions/${cr.id}`, { cookie: cookieOf(ro), body: { date_fin: null } })).status, 403, 'lecture seule refusée');
+});

@@ -416,6 +416,7 @@ td.dim{color:var(--faint)}
 .mb-18{margin-bottom:18px}
 .role-sel{height:32px;width:auto;min-width:150px}
 /* Anomalie levée automatiquement : visible, en retrait, hors compteurs */
+.row-focus td{background:var(--brand-50)!important}
 .alert-row.is-levee{background:var(--surface-2)}
 .alert-row.is-levee .t,.alert-row.is-levee .m{color:var(--muted)}
 .alert-row .levee-m{color:var(--ok);margin-top:2px}

@@ -759,7 +759,7 @@ router.get('/clients/:id/conventions', (req, res) => {
     const regle = regleOf(c.fournisseur_id);
     return {
       id: c.id, fournisseur: c.four_nom, four_ice: c.four_ice, four_if: c.four_if, fournisseur_id: c.fournisseur_id,
-      objet: c.objet, delai: c.delai_convenu, date_debut: c.date_debut, date_fin: c.date_fin,
+      objet: c.objet, delai: c.delai_convenu, date_signature: c.date_signature, date_debut: c.date_debut, date_fin: c.date_fin,
       statut: computeConvStatut(c), conforme: !!c.conforme, fichier: c.fichier ? c.id : null, fichier_nom: c.fichier_nom,
       created_at: c.created_at,
       regle_fournisseur: regle ? { delai: regle.delai, source: regle.source } : null,
@@ -830,6 +830,10 @@ router.post('/clients/:id/conventions', upload.single('file'), (req, res) => {
                   VALUES (?,?,?,?,?,?,?)`).run(fournisseurId, req.cabinetId, e.id, b.fournisseur || null, iceN, b.four_if || null, delaiConv);
     }
   }
+  const cd = convDates(b);
+  if (cd.errs.length) { cleanupUploads(req); return res.status(400).json({ error: cd.errs.join(' ') }); }
+  Object.assign(b, cd.out);
+  if (b.date_debut && b.date_fin && b.date_fin < b.date_debut) { cleanupUploads(req); return res.status(400).json({ error: 'La date de fin est antérieure à la date d’effet : corrigez l’une des deux dates.' }); }
   const id = uid('conv');
   db.prepare(`INSERT INTO convention (id, cabinet_id, entreprise_id, fournisseur_id, objet, delai_convenu,
       date_signature, date_debut, date_fin, statut, conforme, fichier, fichier_nom)
@@ -841,8 +845,37 @@ router.post('/clients/:id/conventions', upload.single('file'), (req, res) => {
   // Recalcul de toutes les périodes NON clôturées de ce fournisseur (jamais les périodes verrouillées).
   if (fournisseurId) recomputeOpenPeriodsForFournisseurs(req.cabinetId, e.id, [fournisseurId]);
   else { const p = latestPeriod(e.id); recomputePeriod(req.cabinetId, e.id, p.annee, p.trimestre); }
-  audit(req.cabinetId, req.user.id, 'create', 'convention', { id, entreprise: e.id, fournisseur: fournisseurId || null, delai: delaiConv, date_fin: b.date_fin || null, document: docKind }, req.ip);
+  audit(req.cabinetId, req.user.id, 'create', 'convention', { id, entreprise: e.id, fournisseur: fournisseurId || null, delai: delaiConv, date_signature: b.date_signature || null, date_debut: b.date_debut || null, date_fin: b.date_fin || null, document: docKind }, req.ip);
   res.json({ ok: true, id });
+});
+// Dates d'une convention (INC 2.1-B) : signature, effet (début), fin. Format jj/mm/aaaa accepté côté UI, stocké ISO.
+// Les dates alimentent l'AFFICHAGE et la VÉRIFICATION des anomalies ; le moteur applique toujours par statut (LOT 4).
+function convDates(b) {
+  const out = {}, errs = [];
+  for (const [k, lbl] of [['date_signature', 'La date de signature'], ['date_debut', 'La date d’effet'], ['date_fin', 'La date de fin']]) {
+    if (!(k in b)) continue;
+    const v = b[k] == null ? '' : String(b[k]).trim();
+    if (!v) { out[k] = null; continue; }
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(v) || isNaN(new Date(v + 'T00:00:00'))) { errs.push(`${lbl} est invalide : utilisez le format jj/mm/aaaa.`); continue; }
+    out[k] = v;
+  }
+  return { out, errs };
+}
+router.patch('/clients/:id/conventions/:convId', (req, res) => {
+  if (!permissions.guard(req, res, 'manage_conventions', 'Votre rôle ne permet pas de modifier une convention.')) return;
+  const e = ownedEntreprise(req, req.params.id); if (!e) return notFound(res, 'client');
+  const c = db.prepare('SELECT * FROM convention WHERE id=? AND entreprise_id=?').get(req.params.convId, e.id);
+  if (!c) return notFound(res, 'convention');
+  const { out, errs } = convDates(req.body || {});
+  if (errs.length) return res.status(400).json({ error: errs.join(' ') });
+  const next = { date_signature: c.date_signature, date_debut: c.date_debut, date_fin: c.date_fin, ...out };
+  if (next.date_debut && next.date_fin && next.date_fin < next.date_debut) return res.status(400).json({ error: 'La date de fin est antérieure à la date d’effet : corrigez l’une des deux dates.' });
+  const changes = {};
+  for (const k of Object.keys(out)) if ((c[k] || null) !== (out[k] || null)) changes[k] = { avant: c[k] || null, apres: out[k] || null };
+  if (!Object.keys(changes).length) return res.json({ ok: true, unchanged: true });
+  db.prepare('UPDATE convention SET date_signature=?, date_debut=?, date_fin=? WHERE id=?').run(next.date_signature, next.date_debut, next.date_fin, c.id);
+  audit(req.cabinetId, req.user.id, 'update', 'convention', { id: c.id, modifications: changes }, req.ip);
+  res.json({ ok: true, changes });
 });
 router.get('/conventions/:id/file', (req, res) => {
   const c = db.prepare('SELECT * FROM convention WHERE id=? AND cabinet_id=?').get(req.params.id, req.cabinetId);

@@ -1760,7 +1760,7 @@ async function renderConv() {
       <div class="stat ${missingDoc ? 'warn' : ''}"><div class="l">Justificatif manquant</div><div class="v">${missingDoc}</div></div></div>
     <div class="hint">${svgI('info')}<span>Règle appliquée à un fournisseur : <b>opérateur de réseau confirmé (30 j)</b> › <b>convention en vigueur la plus récente</b> › <b>délai légal (60 j)</b>. La colonne « Règle » indique si la convention est celle réellement utilisée.</span></div>
     <div class="table-wrap"><table class="dense rc"><thead><tr><th>Fournisseur (ICE)</th><th class="num">Délai convenu</th><th>Règle</th><th data-prio="2">Validité</th><th>Statut</th><th>Justificatif</th><th class="col-act"><span class="sr-only">Actions</span></th></tr></thead>
-    <tbody>${rows.map(c => { const st = S[c.statut] || ['pill-ok', c.statut]; return `<tr><td data-rc="t"><div class="fournisseur"><b>${esc(c.fournisseur || '—')}</b><small>${esc(c.four_ice || c.four_if || '')}</small></div></td>
+    <tbody>${rows.map(c => { const st = S[c.statut] || ['pill-ok', c.statut]; return `<tr data-conv-id="${c.id}" class="${state._convFocus === c.id ? 'row-focus' : ''}"><td data-rc="t"><div class="fournisseur"><b>${esc(c.fournisseur || '—')}</b><small>${esc(c.four_ice || c.four_if || '')}</small></div></td>
       <td class="num" data-rc="a"><span class="badge conv">${c.delai} j</span></td>
       <td data-rc="s">${rule(c)}</td>
       <td class="dh nowrap" data-prio="2">${c.date_debut ? `<span class="mono">${dateFr(c.date_debut)}</span> → ` : ''}${c.date_fin ? `<span class="mono">${dateFr(c.date_fin)}</span>` : 'Durée indéterminée'}</td>
@@ -1768,13 +1768,15 @@ async function renderConv() {
       <td data-rc="s">${c.fichier
         ? `<a href="/api/conventions/${c.fichier}/file" target="_blank" rel="noopener">${svgI('doc')} Voir</a> <button class="btn btn-quiet btn-xs" data-perm="manage_conventions" data-replacepdf="${c.id}">Remplacer</button>`
         : `<span class="pill pill-sm pill-warn">Manquant</span> <button class="btn btn-ghost btn-xs" data-perm="manage_conventions" data-addpdf="${c.id}">Ajouter</button>`}</td>
-      <td class="col-act" data-rc="s"><button class="btn btn-quiet btn-sm row-del" data-perm="manage_conventions" data-delc="${c.id}" data-four="${esc(c.fournisseur || '')}" title="Supprimer la convention de ${esc(c.fournisseur || 'ce fournisseur')}">${svgI('trash')}<span>Supprimer</span></button></td></tr>`; }).join('')}</tbody></table></div>`
+      <td class="col-act" data-rc="s"><button class="btn btn-ghost btn-sm" data-perm="manage_conventions" data-editc="${c.id}">Modifier</button> <button class="btn btn-quiet btn-sm row-del" data-perm="manage_conventions" data-delc="${c.id}" data-four="${esc(c.fournisseur || '')}" title="Supprimer la convention de ${esc(c.fournisseur || 'ce fournisseur')}">${svgI('trash')}<span>Supprimer</span></button></td></tr>`; }).join('')}</tbody></table></div>`
     : emptyBox('Aucune convention', 'Importez la liste des conventions depuis Excel ou ajoutez-les une à une. Sans convention, le délai légal de 60 jours s\'applique.', null, null, 'doc')}`;
   wireClientBar(renderConv);
   if ($('#newConv')) $('#newConv').onclick = convModal;
   // Import via l'ASSISTANT (mapping libre des colonnes) — même composant que l'import TVA.
   if ($('#impConv')) $('#impConv').onclick = () => openConvWizard();
   $$('#view [data-addpdf]').forEach(b => b.onclick = () => attachConvPdf(b, b.dataset.addpdf, false));
+  $$('#view [data-editc]').forEach(b => b.onclick = () => editConvModal(rows.find(x => x.id === b.dataset.editc)));
+  if (state._convFocus) { const tr = $(`#view tr[data-conv-id="${state._convFocus}"]`); if (tr) setTimeout(() => tr.scrollIntoView({ block: 'center' }), 60); state._convFocus = null; }
   $$('#view [data-replacepdf]').forEach(b => b.onclick = async () => {
     if (await ui.confirm({ tone: 'warn', title: 'Remplacer le justificatif ?', message: 'Le document déjà rattaché à cette convention sera remplacé par le nouveau fichier.', confirmLabel: 'Choisir le nouveau fichier' })) attachConvPdf(b, b.dataset.replacepdf, true);
   });
@@ -1843,6 +1845,25 @@ function downloadConvReportCsv(r) {
   const a = document.createElement('a'); a.href = URL.createObjectURL(blob);
   a.download = 'rapport_import_conventions.csv'; a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 2000);
 }
+// Modifier les dates d'une convention (tracé à l'audit : ancien → nouveau). Le justificatif se remplace par « Ajouter / Remplacer ».
+function editConvModal(c) {
+  if (!c) return;
+  const v = x => (x ? String(x).slice(0, 10) : '');
+  modal(`<div class="modal-h"><h3>Modifier la convention — ${esc(c.fournisseur || '')}</h3><button class="x" onclick="closeOverlay()">${XICO}</button></div>
+  <div class="modal-b"><div class="form-grid">
+    <div><label class="fld-lbl" for="e_sig">Date de signature</label><input class="input-fld" id="e_sig" type="date" value="${v(c.date_signature)}"></div>
+    <div><label class="fld-lbl" for="e_deb">Date d’effet (début)</label><input class="input-fld" id="e_deb" type="date" value="${v(c.date_debut)}"></div>
+    <div><label class="fld-lbl" for="e_fin">Date de fin</label><input class="input-fld" id="e_fin" type="date" value="${v(c.date_fin)}"></div>
+    <div><label class="fld-lbl">Justificatif</label><div class="t-sm mt-8">${c.fichier ? 'Présent — utilisez « Remplacer » dans la liste.' : '<span class="c-late">Manquant</span> — utilisez « Ajouter » dans la liste.'}</div></div>
+  </div><div class="hint mt-12">${svgI('info')}<span>Les dates servent à la vérification des anomalies. Le calcul des délais et des amendes n’en dépend pas (la convention en vigueur s’applique selon son statut). Chaque modification est inscrite au journal d’audit.</span></div></div>
+  <div class="modal-f"><button class="btn btn-ghost" onclick="closeOverlay()">Annuler</button><button class="btn btn-primary" id="e_save">Enregistrer</button></div>`);
+  $('#e_save').onclick = async () => {
+    try {
+      const r = await api(`/clients/${state.clientId}/conventions/${c.id}`, { method: 'PATCH', body: { date_signature: $('#e_sig').value, date_debut: $('#e_deb').value, date_fin: $('#e_fin').value } });
+      closeOverlay(); toast(r.unchanged ? 'Aucune modification.' : 'Dates de la convention enregistrées.', 'ok', 'Convention'); state._convFocus = c.id; renderConv(); refreshAlertsBadge();
+    } catch (e) { toast(e.message, 'err', 'Modification refusée'); }
+  };
+}
 async function convModal() {
   const fours = await api(`/clients/${state.clientId}/fournisseurs`);
   const opts = fours.map(f => `<option value="${f.id}">${esc(f.raison_sociale || f.ice || f.id)}</option>`).join('');
@@ -1852,8 +1873,10 @@ async function convModal() {
     <div><label class="fld-lbl">Nom (si nouveau)</label><input class="input-fld" id="v_nom"></div>
     <div><label class="fld-lbl">ICE</label><input class="input-fld" id="v_ice"></div>
     <div><label class="fld-lbl">Délai convenu (j) — obligatoire</label><input class="input-fld" id="v_delai" type="number" min="1" max="120" step="1" placeholder="entier 1 à 120"></div>
-    <div><label class="fld-lbl">Date de fin (option.)</label><input class="input-fld" id="v_fin" type="date"></div>
-    <div class="full"><label class="fld-lbl">Document signé (PDF, JPEG ou PNG) — optionnel</label><input class="input-fld" id="v_file" type="file" accept=".pdf,.png,.jpg,.jpeg"></div>
+    <div><label class="fld-lbl" for="v_sig">Date de signature</label><input class="input-fld" id="v_sig" type="date"></div>
+    <div><label class="fld-lbl" for="v_deb">Date d’effet (début)</label><input class="input-fld" id="v_deb" type="date"></div>
+    <div><label class="fld-lbl" for="v_fin">Date de fin (option.)</label><input class="input-fld" id="v_fin" type="date"></div>
+    <div class="full"><label class="fld-lbl">Justificatif — document signé (PDF, JPEG ou PNG)</label><input class="input-fld" id="v_file" type="file" accept=".pdf,.png,.jpg,.jpeg"></div>
   </div><div class="hint mt-12">${svgI('doc')}<span>Le document est archivé tel quel. Les informations (délai, dates, identifiants) doivent être saisies manuellement — aucune extraction automatique n'est effectuée.</span></div></div>
   <div class="modal-f"><button class="btn btn-ghost" onclick="closeOverlay()">Annuler</button><button class="btn btn-primary" id="v_save">Enregistrer</button></div>`);
   $('#v_save').onclick = async () => {
@@ -1867,7 +1890,7 @@ async function convModal() {
     fd.append('fournisseur_id', $('#v_four').value);
     fd.append('fournisseur', $('#v_nom').value); fd.append('four_ice', $('#v_ice').value);
     fd.append('delai', raw);
-    if ($('#v_fin').value) fd.append('date_fin', $('#v_fin').value);
+    for (const [k, id] of [['date_signature', '#v_sig'], ['date_debut', '#v_deb'], ['date_fin', '#v_fin']]) if ($(id).value) fd.append(k, $(id).value);
     if ($('#v_file').files[0]) fd.append('file', $('#v_file').files[0]);
     try { await api(`/clients/${state.clientId}/conventions`, { method: 'POST', body: fd }); closeOverlay(); toast('Convention enregistrée.', 'ok'); renderConv(); }
     catch (e) { toast(e.message, 'err'); }
