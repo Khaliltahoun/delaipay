@@ -206,7 +206,7 @@ const ui = {
       const icon = o.icon || ({ danger: 'warn', warn: 'warn', locked: 'lock', brand: 'info' }[tone]);
       const tcls = { danger: 'tone-late', warn: 'tone-warn', locked: 'tone-locked', brand: 'tone-brand' }[tone];
       const facts = (o.facts || []).length ? `<div class="dlg-facts">${o.facts.map(([k, v]) => `<div><span>${esc(k)}</span><b>${esc(v)}</b></div>`).join('')}</div>` : '';
-      const field = withInput ? `<div class="fld" style="margin:16px 0 0"><label class="fld-lbl" for="dlgIn">${esc(o.label || 'Motif')}${o.required ? ' <span style="color:var(--late)">*</span>' : ''}</label>
+      const field = withInput ? `<div class="fld mt-16"><label class="fld-lbl" for="dlgIn">${esc(o.label || 'Motif')}${o.required ? ' <span class="c-late">*</span>' : ''}</label>
         <textarea class="input-fld" id="dlgIn" rows="3" placeholder="${esc(o.placeholder || '')}"></textarea><span class="fld-err hidden" id="dlgErr"></span></div>` : '';
       const okCls = tone === 'danger' ? 'btn-danger' : 'btn-primary';
       modal(`<div class="modal-b" style="padding-top:22px">
@@ -709,7 +709,7 @@ async function renderDash() {
     </div>
   </div>
 
-  <div class="grid-2-3" style="margin-top:14px">
+  <div class="grid-2-3 mt-14">
     <div class="card"><div class="card-h"><div><h3>Actions requises</h3><div class="sub">calculées sur les données réelles du cabinet</div></div>${todo.length ? `<span class="pill pill-sm pill-late">${todo.length}</span>` : ''}</div>
       <div class="todo">${todo.length ? todo.map(x => `<button class="todo-item" data-goto="${x.go}"><span class="ti-ic tone-${x.tone}">${svgI(x.ic, '')}</span>
         <span class="ti-body"><b>${esc(x.t)}</b><small>${esc(x.s)}</small></span><span class="ti-n">${x.n}</span>${svgI('chev', 'ti-go')}</button>`).join('')
@@ -722,7 +722,7 @@ async function renderDash() {
         <div class="det-row"><span class="k">Période</span><span class="v">${per}</span></div>
         <div class="det-row"><span class="k">Statut</span><span class="v">${cMeta ? `<span class="period-badge ${cMeta[1]}">${cLocked ? svgI('lock', '') : ''}${esc(cMeta[0])}</span>` : '<span class="dh">aucune donnée sur la période</span>'}</span></div>
         <div class="det-row" style="border-bottom:0"><span class="k">Saisie</span><span class="v">${cLocked ? 'Lecture seule — montants figés' : 'Ouverte à la saisie et à l\'import'}</span></div>
-        <div class="actions" style="margin-top:12px"><button class="btn btn-ghost btn-sm" data-goto="client">Ouvrir le dossier</button><button class="btn btn-quiet btn-sm" data-goto="delais">Délais de paiement</button></div>`
+        <div class="actions mt-12"><button class="btn btn-ghost btn-sm" data-goto="client">Ouvrir le dossier</button><button class="btn btn-quiet btn-sm" data-goto="delais">Délais de paiement</button></div>`
         : `<div class="empty" style="padding:20px"><p>Aucun client. Créez un premier dossier dans « Clients ».</p></div>`}</div>
     </div>
   </div>
@@ -732,17 +732,17 @@ async function renderDash() {
     <div class="card"><div class="card-b">
       <div class="meter" style="height:10px">${segBar || '<i style="width:100%;background:var(--surface-3)"></i>'}</div>
       <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:10px;margin-top:16px">
-        ${segDefs.map(([kk, lbl, col]) => `<div style="display:flex;align-items:center;gap:9px"><span style="width:10px;height:10px;border-radius:3px;background:var(--${col})"></span><div><b class="mono">${seg[kk] || 0}</b> <span class="dh" style="font-size:var(--fs-sm)">${lbl}</span></div></div>`).join('')}
+        ${segDefs.map(([kk, lbl, col]) => `<div style="display:flex;align-items:center;gap:9px"><span style="width:10px;height:10px;border-radius:3px;background:var(--${col})"></span><div><b class="mono">${seg[kk] || 0}</b> <span class="dh t-sm">${lbl}</span></div></div>`).join('')}
       </div>
-      <div class="hint" style="margin:16px 0 0">${svgI('info')}<span>Taux de conformité = factures payées du trimestre réglées dans le délai applicable (légal, conventionnel ou réseau).</span></div>
+      <div class="hint mt-16">${svgI('info')}<span>Taux de conformité = factures payées du trimestre réglées dans le délai applicable (légal, conventionnel ou réseau).</span></div>
     </div></div>
     <div class="card"><div class="card-h"><div><h3>Échéances déclaratives</h3><div class="sub">dépôts SIMPL à venir</div></div></div>
-      <div class="card-b" style="padding-top:4px;padding-bottom:4px">${(d.deadlines || []).map(x => `<div class="dl"><div class="cal"><b>${x.day}</b><small>${esc(x.mon)}</small></div><div><b>${esc(x.label)}</b><div class="dh" style="font-size:var(--fs-sm)">${esc(x.sub)}</div></div><div class="cd" style="color:${x.days <= 15 ? 'var(--late)' : 'var(--muted)'}">${esc(x.cd)}</div></div>`).join('')}</div>
+      <div class="card-b py-4">${(d.deadlines || []).map(x => `<div class="dl"><div class="cal"><b>${x.day}</b><small>${esc(x.mon)}</small></div><div><b>${esc(x.label)}</b><div class="dh t-sm">${esc(x.sub)}</div></div><div class="cd" style="color:${x.days <= 15 ? 'var(--late)' : 'var(--muted)'}">${esc(x.cd)}</div></div>`).join('')}</div>
     </div>
   </div>
 
   <div class="section-title"><h2>Tendance et concentration</h2><span class="sub">historique complet du cabinet — toutes périodes confondues</span></div>
-  <div class="grid-2-3" style="margin-bottom:14px">
+  <div class="grid-2-3 mb-14">
     <div class="card"><div class="card-h"><div><h3>Amendes par mois de paiement</h3><div class="sub">DH · factures à déclarer, toutes périodes</div></div></div>
       <div class="card-b chart">${pts.length > 1 ? `<svg viewBox="0 0 720 240" preserveAspectRatio="none" role="img" aria-label="Évolution des amendes par mois">
         <line class="axis" x1="46" y1="200" x2="710" y2="200"/><line class="gl" x1="46" y1="150" x2="710" y2="150"/><line class="gl" x1="46" y1="100" x2="710" y2="100"/><line class="gl" x1="46" y1="50" x2="710" y2="50"/>
@@ -752,7 +752,7 @@ async function renderDash() {
       </svg>` : `<div class="empty" style="padding:36px 10px"><p>Pas assez de mois de paiement pour tracer une tendance.</p></div>`}</div>
     </div>
     <div class="card"><div class="card-h"><div><h3>Fournisseurs à surveiller</h3><div class="sub">amende cumulée, toutes périodes</div></div></div>
-      <div class="card-b" style="padding-top:4px;padding-bottom:4px">${(d.topFournisseurs || []).filter(t => t.amende > 0).map(t => `<div class="list-row"><div style="flex:1;min-width:0"><b style="display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(t.name)}</b><small class="dh mono">${t.nb} facture(s) en retard</small></div><b class="mono amount-late">${money(t.amende)}</b></div>`).join('') || '<div class="empty" style="padding:24px"><p>Aucun fournisseur en retard.</p></div>'}</div>
+      <div class="card-b py-4">${(d.topFournisseurs || []).filter(t => t.amende > 0).map(t => `<div class="list-row"><div style="flex:1;min-width:0"><b style="display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(t.name)}</b><small class="dh mono">${t.nb} facture(s) en retard</small></div><b class="mono amount-late">${money(t.amende)}</b></div>`).join('') || '<div class="empty p-24"><p>Aucun fournisseur en retard.</p></div>'}</div>
     </div>
   </div>
   <div class="grid-2-3">
@@ -761,13 +761,13 @@ async function renderDash() {
         ${(d.heatmap || []).length ? `<div class="heat"><div class="hr"><div></div>${(d.heatmapMonths || []).map(m => `<div class="hhead">${esc(m)}</div>`).join('')}</div>
         ${(d.heatmap || []).map(h => `<div class="hr"><div class="hlbl" title="${esc(h.name)}">${esc(h.name)}</div>${h.cells.map(c2 => `<div class="hc" style="background:${heatColor(c2.amende)}" title="${esc(c2.label)} : ${money(c2.amende)} DH">${c2.amende ? money(c2.amende, 0) : ''}</div>`).join('')}</div>`).join('')}</div>
         <div class="legend"><span><i style="background:var(--ok)"></i>Aucune</span><span><i style="background:var(--watch)"></i>&lt; 200</span><span><i style="background:var(--warn)"></i>&lt; 1 000</span><span><i style="background:var(--late)"></i>&lt; 4 000</span><span><i style="background:var(--severe)"></i>≥ 4 000</span></div>`
-        : '<div class="empty" style="padding:24px"><p>Aucun client exposé.</p></div>'}
+        : '<div class="empty p-24"><p>Aucun client exposé.</p></div>'}
       </div>
     </div>
     <div class="card"><div class="card-h"><div><h3>Activité récente</h3><div class="sub">journal d'audit du cabinet</div></div><button class="btn btn-quiet btn-sm" data-goto="audit">Tout voir</button></div>
-      <div class="card-b" style="padding-top:4px;padding-bottom:4px">${acts.length ? acts.map(a => `<div class="act"><span class="a-dot" style="background:${/cloture|delete|annulation/.test(a.action) ? 'var(--locked)' : /reouverture/.test(a.action) ? 'var(--warn)' : 'var(--brand-500)'}"></span>
-        <div class="a-body"><b>${esc(ACT[a.action] || a.action)}</b>${a.entite ? ` <span class="dh">· ${esc(a.entite)}</span>` : ''}<div class="dh" style="font-size:var(--fs-xs)">${esc(a.user_nom || '—')}</div></div><span class="a-time">${esc(dateTimeFr(a.created_at))}</span></div>`).join('')
-        : '<div class="empty" style="padding:24px"><p>Aucune activité enregistrée.</p></div>'}</div>
+      <div class="card-b py-4">${acts.length ? acts.map(a => `<div class="act"><span class="a-dot" style="background:${/cloture|delete|annulation/.test(a.action) ? 'var(--locked)' : /reouverture/.test(a.action) ? 'var(--warn)' : 'var(--brand-500)'}"></span>
+        <div class="a-body"><b>${esc(ACT[a.action] || a.action)}</b>${a.entite ? ` <span class="dh">· ${esc(a.entite)}</span>` : ''}<div class="dh t-xs">${esc(a.user_nom || '—')}</div></div><span class="a-time">${esc(dateTimeFr(a.created_at))}</span></div>`).join('')
+        : '<div class="empty p-24"><p>Aucune activité enregistrée.</p></div>'}</div>
     </div>
   </div>`;
 }
@@ -777,10 +777,10 @@ function onboardingBanner(ob) {
   if (!ob || ob.complete || ob.dismissed || !can('onboarding') || (!ob.started && ob.facts && ob.facts.factures > 0)) return '';
   const next = ob.steps.find(x => x.status === 'todo' && x.key !== 'bienvenue') || ob.steps[ob.steps.length - 1];
   const ws = (state.workspace && state.workspace.displayName) || '';
-  return `<div class="card ob-banner" style="margin-bottom:14px"><div class="card-b" style="display:flex;gap:18px;align-items:center;flex-wrap:wrap">
-    <div class="dlg-ic tone-brand" style="margin:0">${svgI('bolt', '')}</div>
+  return `<div class="card ob-banner mb-14"><div class="card-b" style="display:flex;gap:18px;align-items:center;flex-wrap:wrap">
+    <div class="dlg-ic tone-brand m-0">${svgI('bolt', '')}</div>
     <div style="flex:1;min-width:240px"><h3 style="font-size:var(--fs-lg);margin-bottom:2px">${ob.facts.clients ? 'Terminez la configuration de ' : 'Bienvenue dans l’espace '}${esc(ws)}</h3>
-      <div class="dh" style="font-size:var(--fs-sm)">Prochaine étape : <b style="color:var(--ink)">${esc(next.label)}</b> · ${ob.progress} % terminé</div>
+      <div class="dh t-sm">Prochaine étape : <b style="color:var(--ink)">${esc(next.label)}</b> · ${ob.progress} % terminé</div>
       <div class="meter" style="margin-top:8px;max-width:360px"><i style="width:${ob.progress}%;background:var(--brand-500)"></i></div></div>
     <div class="actions"><button class="btn btn-primary" onclick="resumeOnboarding('${esc(next.key)}')">${ob.progress ? 'Reprendre' : 'Commencer'} la configuration</button></div>
   </div></div>`;
@@ -815,26 +815,26 @@ async function renderOnboarding(stepKey) {
     <h2 class="ob-title">Configurez votre cabinet</h2>
     <p class="ob-lead">Nom affiché, raison sociale, logo et contact : ils identifient votre espace pour toute l'équipe.</p>
     ${st.status === 'done' ? doneNote('Identité de l’espace renseignée. Vous pouvez l’ajuster à tout moment dans Paramètres.') : ''}
-    <div class="form-grid" style="max-width:640px">
+    <div class="form-grid mw-640">
       <div><label class="fld-lbl" for="ob_name">Nom de l'espace</label><input class="input-fld" id="ob_name" value="${esc(ws.nomAffiche || ws.displayName || '')}"></div>
       <div><label class="fld-lbl" for="ob_legal">Raison sociale</label><input class="input-fld" id="ob_legal" value="${esc(ws.raisonLegale || '')}" placeholder="Ex. Cabinet Exemple SARL"></div>
       <div><label class="fld-lbl" for="ob_mail">E-mail de contact</label><input class="input-fld" id="ob_mail" type="email" value="${esc(ws.contactEmail || '')}"></div>
       <div><label class="fld-lbl" for="ob_logo">Logo (optionnel)</label><input class="input-fld" id="ob_logo" type="file" accept="image/png,image/jpeg,image/webp"><span class="fld-help">PNG, JPEG ou WebP, 1 Mo maximum.</span></div>
     </div>
-    <div class="actions" style="margin-top:18px"><button class="btn btn-primary" id="ob_save" data-perm="manage_workspace">Enregistrer et continuer ${svgI('arrow')}</button>${st.status === 'done' || !can('manage_workspace') ? go(nextKey).replace('btn-primary', 'btn-ghost') : ''}</div>
-    ${can('manage_workspace') ? '' : `<div class="hint" style="margin-top:12px">${svgI('info')}<span>Seul un administrateur peut modifier l'identité de l'espace.</span></div>`}`;
+    <div class="actions mt-18"><button class="btn btn-primary" id="ob_save" data-perm="manage_workspace">Enregistrer et continuer ${svgI('arrow')}</button>${st.status === 'done' || !can('manage_workspace') ? go(nextKey).replace('btn-primary', 'btn-ghost') : ''}</div>
+    ${can('manage_workspace') ? '' : `<div class="hint mt-12">${svgI('info')}<span>Seul un administrateur peut modifier l'identité de l'espace.</span></div>`}`;
   else if (st.key === 'client') body = `
     <h2 class="ob-title">Créez votre premier dossier client</h2>
     <p class="ob-lead">Un dossier = une entreprise dont vous suivez les délais de paiement fournisseurs. Le chiffre d'affaires détermine l'assujettissement et le type de visa.</p>
     ${f.clients ? doneNote(`${f.clients} dossier(s) client déjà créé(s).`) + `<div class="actions">${go(nextKey)}</div>` : `
-    <div class="form-grid" style="max-width:640px">
+    <div class="form-grid mw-640">
       <div class="full"><label class="fld-lbl" for="ob_rs">Raison sociale *</label><input class="input-fld" id="ob_rs" placeholder="Ex. STE ATLAS DISTRIBUTION SARL"></div>
       <div><label class="fld-lbl" for="ob_ice">ICE</label><input class="input-fld mono" id="ob_ice" inputmode="numeric" maxlength="15"></div>
       <div><label class="fld-lbl" for="ob_if">Identifiant fiscal</label><input class="input-fld mono" id="ob_if"></div>
       <div><label class="fld-lbl" for="ob_ville">Ville</label><input class="input-fld" id="ob_ville"></div>
       <div><label class="fld-lbl" for="ob_ca">CA HT (DH)</label><input class="input-fld mono" id="ob_ca" type="number" min="0"></div>
     </div>
-    <div class="actions" style="margin-top:18px"><button class="btn btn-primary" id="ob_client">Créer le dossier et continuer ${svgI('arrow')}</button></div>`}`;
+    <div class="actions mt-18"><button class="btn btn-primary" id="ob_client">Créer le dossier et continuer ${svgI('arrow')}</button></div>`}`;
   else if (st.key === 'factures') {
     const op = ob.periode;
     body = `
@@ -881,7 +881,7 @@ async function renderOnboarding(stepKey) {
     <h2 class="ob-title">${ob.readyToFinish ? 'Votre espace est prêt' : 'Presque prêt'}</h2>
     <p class="ob-lead">${ob.readyToFinish ? 'Les étapes indispensables sont terminées. Vous pouvez maintenant contrôler les délais, préparer la déclaration et générer le visa.' : 'Terminez les étapes indispensables ci-dessous pour finaliser la configuration.'}</p>
     <div class="ob-summary">${ob.steps.filter(x => !['bienvenue', 'pret'].includes(x.key)).map(x => `<div class="list-row"><span class="ti-ic tone-${x.status === 'done' ? 'ok' : x.status === 'skipped' ? 'locked' : 'warn'}" style="width:26px;height:26px;border-radius:50%;display:grid;place-items:center">${svgI(x.status === 'done' ? 'check' : x.status === 'skipped' ? 'chev' : 'warn', '')}</span><span style="flex:1">${esc(x.label)}${x.optional ? ' <span class="dh">(optionnelle)</span>' : ''}</span><button class="btn btn-quiet btn-sm" data-ob-goto="${x.key}">${x.status === 'done' ? 'Revoir' : 'Ouvrir'}</button></div>`).join('')}</div>
-    <div class="actions" style="margin-top:18px"><button class="btn btn-primary" id="ob_finish" ${ob.readyToFinish ? '' : 'disabled'}>${svgI('check')}Terminer la configuration</button></div>`;
+    <div class="actions mt-18"><button class="btn btn-primary" id="ob_finish" ${ob.readyToFinish ? '' : 'disabled'}>${svgI('check')}Terminer la configuration</button></div>`;
   }
   $('#view').innerHTML = `
   <div class="ob-wrap">
@@ -896,7 +896,7 @@ async function renderOnboarding(stepKey) {
       <div class="ob-ic tone-brand">${svgI(OB_ICON[st.key] || 'info', '')}</div>
       <div class="eyebrow">Étape ${idx + 1} sur ${ob.steps.length}${st.optional ? ' · optionnelle' : ''}</div>
       ${body}
-      ${editable ? '' : `<div class="note note-locked" style="margin-top:16px">${svgI('lock')}<div>Votre rôle ne permet pas de modifier la configuration ; vous pouvez consulter la progression.</div></div>`}
+      ${editable ? '' : `<div class="note note-locked mt-16">${svgI('lock')}<div>Votre rôle ne permet pas de modifier la configuration ; vous pouvez consulter la progression.</div></div>`}
     </div></section>
   </div>`;
   const goto = k => renderOnboarding(k);
@@ -1039,7 +1039,7 @@ async function renderClientOverview() {
     modal(`<div class="modal-h"><h3>Supprimer définitivement ${esc(e.raison_sociale)} ?</h3><button class="x" onclick="closeOverlay()">${XICO}</button></div>
     <div class="modal-b"><div class="note note-danger">${svgI('warn')}<div><div class="note-t">Action irréversible</div>Le dossier et toutes ses données seront supprimés :</div></div>
       <div class="dlg-facts"><div><span>Fournisseurs</span><b>${k.fournisseurs}</b></div><div><span>Conventions valides</span><b>${k.conventions}</b></div><div><span>Factures, déclarations, visas, fichiers</span><b>toutes les périodes</b></div></div>
-      <label class="fld-lbl" for="delName" style="margin-top:12px">Pour confirmer, saisissez le nom du client : <b>${esc(e.raison_sociale)}</b></label>
+      <label class="fld-lbl mt-12" for="delName">Pour confirmer, saisissez le nom du client : <b>${esc(e.raison_sociale)}</b></label>
       <input class="input-fld" id="delName" autocomplete="off" spellcheck="false"></div>
     <div class="modal-f"><button class="btn btn-ghost" onclick="closeOverlay()">Annuler</button>
       <button class="btn btn-danger" id="delOk" disabled>Supprimer définitivement</button></div>`, 'modal-sm');
@@ -1071,11 +1071,11 @@ async function renderPeriodCard(p) {
   body.innerHTML = `
     <div style="display:flex;align-items:center;gap:10px;margin-bottom:12px">
       <span class="period-badge ${m[1]}" style="font-size:var(--fs-sm);padding:3px 10px">${locked ? svgI('lock', '') : ''}${esc(m[0])}</span>
-      <span class="dh" style="font-size:var(--fs-sm)">${locked ? 'Montants, déclaration et exports figés' : 'Saisie et import autorisés'}</span></div>
+      <span class="dh t-sm">${locked ? 'Montants, déclaration et exports figés' : 'Saisie et import autorisés'}</span></div>
     ${hist.length ? `<div class="hist">${hist.slice(0, 3).map(h => `<div class="hist-i"><span class="h-ic ${h.action === 'cloture' ? 'tone-locked' : 'tone-warn'}">${svgI(h.action === 'cloture' ? 'lock' : 'unlock', '')}</span>
       <div class="h-b"><b>${h.action === 'cloture' ? 'Clôturée' : 'Rouverte'}</b> par ${esc(h.par || '—')}<small>${esc(dateTimeFr(h.date))}</small>${h.motif ? `<q>${esc(h.motif)}</q>` : ''}</div></div>`).join('')}</div>`
-      : `<div class="dh" style="font-size:var(--fs-sm)">Aucune clôture enregistrée pour cette période.</div>`}
-    <div class="actions" style="margin-top:12px">${isAdmin
+      : `<div class="dh t-sm">Aucune clôture enregistrée pour cette période.</div>`}
+    <div class="actions mt-12">${isAdmin
       ? (locked ? `<button class="btn btn-ghost btn-sm" id="pcReopen">${svgI('unlock')}Rouvrir…</button>` : `<button class="btn btn-ghost btn-sm" id="pcClose">${svgI('lock')}Clôturer la période…</button>`)
       : `<span class="pp-note">Clôture et réouverture réservées à un administrateur.</span>`}</div>`;
   const a = $('#pcClose'); if (a) a.onclick = closePeriodAction;
@@ -1231,7 +1231,7 @@ async function renderDelais() {
   </div>
   <div class="toolbar">
     <div class="filters">${[['all', 'Toutes', data.rows.length], ['retard', 'Retard &gt; 0', t.aDeclarer], ['conv', 'Convention absente', t.sansConvention]].map(([k, label, count]) => `<button class="fpill" data-f="${k}" aria-pressed="${filt === k}">${label}<span class="c">${count}</span></button>`).join('')}</div>
-    <div class="actions"><span class="dh" style="font-size:var(--fs-sm)">Exporter en Excel :</span>${['all', 'retard', 'conv'].map(k => `<button class="btn btn-ghost btn-sm xls-export" data-x="${k}" title="Exporter « ${FL[k]} » en Excel">${svgI('dl')}${FL[k]}</button>`).join('')}</div>
+    <div class="actions"><span class="dh t-sm">Exporter en Excel :</span>${['all', 'retard', 'conv'].map(k => `<button class="btn btn-ghost btn-sm xls-export" data-x="${k}" title="Exporter « ${FL[k]} » en Excel">${svgI('dl')}${FL[k]}</button>`).join('')}</div>
   </div>
   ${rows.length ? `<div class="hint">${svgI('info')}<span>Facture non payée à la clôture : le délai est calculé jusqu'au dernier jour du trimestre. Cliquez une ligne pour le détail du calcul.</span></div>
   <div class="table-wrap"><table class="dense rc"><thead><tr>
@@ -1268,7 +1268,7 @@ function factureDrawer(f) {
   if (!f) return;
   drawer(`<div class="drawer-h"><div><h3>Facture ${esc(f.numero || '')}</h3><div class="s">${esc(f.four || '')} · IF ${esc(f.four_if || '—')}</div></div><button class="x" onclick="closeOverlay()">${XICO}</button></div>
   <div class="drawer-b">
-    <div><div class="det-row"><span class="k">Nature</span><span class="v" style="font-variant-numeric:normal">${esc(f.nature || '—')}</span></div>
+    <div><div class="det-row"><span class="k">Nature</span><span class="v fvn-n">${esc(f.nature || '—')}</span></div>
       <div class="det-row"><span class="k">Montant HT</span><span class="v">${money(f.mht)} DH</span></div>
       <div class="det-row"><span class="k">TVA</span><span class="v">${money(f.tva)} DH</span></div>
       <div class="det-row"><span class="k">Montant TTC</span><span class="v">${money(f.ttc)} DH</span></div>
@@ -1276,7 +1276,7 @@ function factureDrawer(f) {
       <div class="det-row"><span class="k">Date paiement</span><span class="v">${dateFr(f.date_paiement)}</span></div>
       <div class="det-row"><span class="k">Date limite légale</span><span class="v">${dateFr(f.date_limite)}</span></div>
       <div class="det-row"><span class="k">Date d'arrêté retenue</span><span class="v">${f.arrete_au ? dateFr(f.arrete_au) : '—'}</span></div>
-      <div class="det-row"><span class="k">État</span><span class="v" style="font-variant-numeric:normal">${esc(ETAT_PAIEMENT_LABEL[f.etat_paiement] || '—')}</span></div>
+      <div class="det-row"><span class="k">État</span><span class="v fvn-n">${esc(ETAT_PAIEMENT_LABEL[f.etat_paiement] || '—')}</span></div>
     </div>
     ${etatTip(f) ? `<div class="dh" style="font-size:var(--fs-sm);margin:6px 0 2px">${esc(etatTip(f))}</div>` : ''}
     <div class="calc">
@@ -1288,7 +1288,7 @@ function factureDrawer(f) {
       <div class="row"><span>Taux total appliqué</span><b>${f.taux_total ? pct(f.taux_total) : '—'}</b></div>
       <div class="row tot"><span>Amende (trimestre)</span><span>${money(f.amende)} DH</span></div>
     </div>
-    <div class="dh" style="font-size:var(--fs-sm)">Modèle trimestriel apporté (mois calendaire) : 1ᵉʳ mois de retard au taux directeur BAM, mois suivants à 0,85 %, seuls les mois du trimestre déclaré sont facturés.</div>
+    <div class="dh t-sm">Modèle trimestriel apporté (mois calendaire) : 1ᵉʳ mois de retard au taux directeur BAM, mois suivants à 0,85 %, seuls les mois du trimestre déclaré sont facturés.</div>
     ${doublonDrawer(f)}
   </div>`);
 }
@@ -1313,7 +1313,7 @@ function doublonDrawer(f) {
     note = esc(f.motif_doublon || DUP_MOTIF_FR) + ' La facture est conservée : rien n’est supprimé tant que vous n’avez pas tranché.';
     actions = A('confirme', 'Confirmer le doublon', true) + ' ' + A('faux_positif', 'Marquer comme faux positif');
   }
-  return `<div class="calc" id="dupReview" style="margin-top:14px">
+  return `<div class="calc mt-14" id="dupReview">
     <div class="row" style="align-items:center"><span>Revue du doublon</span><b>${title}</b></div>
     <div class="dh" style="font-size:var(--fs-sm);margin:6px 0">${note}</div>${meta}
     <div id="dupActions" style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px">${actions}</div>
@@ -1512,7 +1512,7 @@ function drawWizard() {
   if (!conv) renderDocs();
 }
 async function wizAnalyze(file) {
-  $('#wizBody').innerHTML = `<div class="card"><div class="card-b" style="display:flex;gap:12px;align-items:center"><span class="spin"></span><div><b>Analyse de « ${esc(file.name)} »</b><div class="dh" style="font-size:var(--fs-sm)">Détection des feuilles, de la ligne d'en-tête et des colonnes — aucune donnée n'est encore enregistrée.</div></div></div></div>`;
+  $('#wizBody').innerHTML = `<div class="card"><div class="card-b row-12"><span class="spin"></span><div><b>Analyse de « ${esc(file.name)} »</b><div class="dh t-sm">Détection des feuilles, de la ligne d'en-tête et des colonnes — aucune donnée n'est encore enregistrée.</div></div></div></div>`;
   try {
     const fd = new FormData(); fd.append('file', file);
     if (wizIsConv()) fd.append('kind', 'conventions');
@@ -1537,7 +1537,7 @@ function wizMapHtml() {
   const autoM = sheet.mapping || {};
   const lowN = champs.filter(ch => autoM[ch.key] && autoM[ch.key].confidence < 0.5).length;
   const missN = champs.filter(ch => ch.requis && state.wiz.mapping[ch.key] == null).length;
-  return `<div class="card"><div class="card-h"><div><h3>Correspondance des colonnes — ${esc(state.wiz.sourceName || '')}</h3><div class="sub">Vérifiez chaque correspondance proposée · champs requis marqués <span style="color:var(--late)">*</span></div></div>
+  return `<div class="card"><div class="card-h"><div><h3>Correspondance des colonnes — ${esc(state.wiz.sourceName || '')}</h3><div class="sub">Vérifiez chaque correspondance proposée · champs requis marqués <span class="c-late">*</span></div></div>
       <div class="selctb"><label class="dh" for="wizSheet" style="font-size:var(--fs-sm);white-space:nowrap">Feuille</label><select id="wizSheet">${a.feuilles.map(f => `<option value="${esc(f.nom)}" ${f.nom === state.wiz.sheet ? 'selected' : ''}>${esc(f.nom)}${f.ignoree ? ' (grand-livre — ignorée)' : ''} · ${f.nbLignes} lignes</option>`).join('')}</select></div></div>
     <div class="card-b">
       ${missN ? `<div class="note note-danger">${svgI('stop')}<div><div class="note-t">${missN} champ(s) requis sans colonne</div>Associez une colonne à chaque champ marqué * avant de passer à l'aperçu.</div></div>` : ''}
@@ -1551,7 +1551,7 @@ function wizMapHtml() {
         return `<div class="map-row ${rowCls}">
           <div class="map-field">${esc(ch.label)}${ch.requis ? '<span class="req" title="Champ requis">*</span>' : ''}</div>
           <div class="map-pick"><select data-field="${ch.key}" class="mapsel">${colOpts(sel)}</select></div>
-          <div class="map-conf">${auto ? `<span class="cf ${confCls}" title="${conf >= 85 ? 'Confiance élevée' : conf >= 50 ? 'Confiance moyenne : vérifiez' : 'Confiance faible : à vérifier impérativement'}">${conf} %</span>` : (sel != null && sel !== '' ? '<span class="cf cf-med">manuel</span>' : '<span class="dh" style="font-size:var(--fs-xs)">non associé</span>')}
+          <div class="map-conf">${auto ? `<span class="cf ${confCls}" title="${conf >= 85 ? 'Confiance élevée' : conf >= 50 ? 'Confiance moyenne : vérifiez' : 'Confiance faible : à vérifier impérativement'}">${conf} %</span>` : (sel != null && sel !== '' ? '<span class="cf cf-med">manuel</span>' : '<span class="dh t-xs">non associé</span>')}
             ${auto && auto.apercu && auto.apercu.length ? `<span class="map-sample" title="${esc(auto.apercu.join(' · '))}">${esc(auto.apercu.slice(0, 3).join(' · '))}</span>` : ''}</div>
         </div>`;
       }).join('')}</div>
@@ -1573,7 +1573,7 @@ async function wizPreview() {
   const missing = req.filter(k => state.wiz.mapping[k] == null);
   if (missing.length && !state.wiz.xml) { toast('Champs requis non mappés : ' + missing.map(k => (champs.find(c => c.key === k) || {}).label || k).join(', '), 'err'); return; }
   state.wiz.step = 'preview';
-  $('#view').innerHTML = wizScaffold(`<div class="card"><div class="card-b" style="display:flex;gap:12px;align-items:center"><span class="spin"></span><div><b>Contrôle de cohérence et aperçu</b><div class="dh" style="font-size:var(--fs-sm)">Chaque ligne est vérifiée (montants, dates, fournisseur, doublons) — rien n'est encore enregistré.</div></div></div></div>`);
+  $('#view').innerHTML = wizScaffold(`<div class="card"><div class="card-b row-12"><span class="spin"></span><div><b>Contrôle de cohérence et aperçu</b><div class="dh t-sm">Chaque ligne est vérifiée (montants, dates, fournisseur, doublons) — rien n'est encore enregistré.</div></div></div></div>`);
   try {
     const body = { token: state.wiz.token, sheetName: state.wiz.sheet, headerRow: state.wiz.headerRow, mapping: state.wiz.mapping, sourceName: state.wiz.sourceName };
     const pv = wizIsConv()
@@ -1593,7 +1593,7 @@ function wizPreviewHtml() {
     ? `<div class="note note-danger" role="alert">${svgI('stop')}<div><div class="note-t">Correspondance incohérente — import bloqué</div>
         La protection anti-corruption a détecté des colonnes qui ne correspondent pas aux champs attendus. Aucune donnée ne peut être enregistrée tant que ce n'est pas corrigé.
         <ul>${[...(val.errors || []), ...(val.warnings || [])].map(e => `<li>${esc(plainMsg(e.message))}</li>`).join('')}</ul>
-        <div style="margin-top:8px"><b>Comment corriger :</b> revenez à l'étape « Correspondance » et associez la bonne colonne à chaque champ signalé.</div></div></div>`
+        <div class="mt-8"><b>Comment corriger :</b> revenez à l'étape « Correspondance » et associez la bonne colonne à chaque champ signalé.</div></div></div>`
     : (val.warnings && val.warnings.length ? `<div class="note note-warn">${svgI('warn')}<div><div class="note-t">Points à vérifier avant de confirmer</div><ul>${val.warnings.map(e => `<li>${esc(plainMsg(e.message))}</li>`).join('')}</ul></div></div>` : '');
   const cohBox = (pv.sommeBruteTtc != null && !blocked)
     ? `<div class="note note-info">${svgI('info')}<div>Contrôle de cohérence : total TTC retenu (lignes valides) <b class="mono">${money(s.totalTtc)} DH</b> · somme brute de la colonne TTC associée <b class="mono">${money(pv.sommeBruteTtc)} DH</b>. Un écart s'explique par les lignes ignorées ou rejetées ci-dessous.</div></div>`
@@ -1612,10 +1612,10 @@ function wizPreviewHtml() {
       ${cohBox}
       ${mism ? `<div class="note ${s.memePeriode ? 'note-warn' : 'note-danger'}" role="alert">${svgI(s.memePeriode ? 'cal' : 'stop')}<div><div class="note-t">${s.memePeriode ? `${s.autrePeriode} ligne(s) datée(s) hors de ${TRI_LABEL(state.period.trimestre)} ${state.period.annee}` : `Aucune ligne n'est datée de ${TRI_LABEL(state.period.trimestre)} ${state.period.annee}`}</div>
         ${s.memePeriode ? 'Elles seraient rattachées à cette période (la période d’origine est conservée).' : 'Ce fichier semble concerner un autre trimestre : choisissez le bon trimestre dans la barre de période, puis relancez l’import.'}
-        <label class="check" style="margin-top:8px"><input type="checkbox" id="wizAckPer" ${state.wiz.accepteHorsPeriode ? 'checked' : ''}> Je confirme le rattachement de ces ${s.autrePeriode} ligne(s) à <b>${TRI_LABEL(state.period.trimestre)} ${state.period.annee}</b></label></div></div>` : ''}
+        <label class="check mt-8"><input type="checkbox" id="wizAckPer" ${state.wiz.accepteHorsPeriode ? 'checked' : ''}> Je confirme le rattachement de ces ${s.autrePeriode} ligne(s) à <b>${TRI_LABEL(state.period.trimestre)} ${state.period.annee}</b></label></div></div>` : ''}
       ${s.doublons ? `<div class="note note-warn">${svgI('warn')}<div>${s.doublons} doublon(s) potentiel(s) : ces factures sont <b>conservées</b> et signalées « Doublon ? » dans la feuille de délais pour revue (paiement partiel ou facture scindée possible). Rien n'est supprimé.</div></div>` : ''}
-      ${s.rejetees ? `<h4 style="margin:16px 0 8px;font-size:var(--fs-md)">Lignes rejetées — numéro de ligne réel du fichier</h4><div class="table-wrap flat"><table><thead><tr><th>Ligne</th><th>Statut</th><th>Motif</th><th>Données</th></tr></thead><tbody>${rowsHtml(pv.apercu.rejetees, 'rej')}</tbody></table></div>` : ''}
-      ${s.ignorees ? `<details style="margin-top:12px"><summary class="dh" style="cursor:pointer">${s.ignorees} ligne(s) ignorée(s) (total, sous-total, ligne vide…)</summary><div class="table-wrap flat" style="margin-top:8px"><table><thead><tr><th>Ligne</th><th>Statut</th><th>Motif</th><th>Données</th></tr></thead><tbody>${rowsHtml(pv.apercu.ignorees, 'ign')}</tbody></table></div></details>` : ''}
+      ${s.rejetees ? `<h4 class="sub-h">Lignes rejetées — numéro de ligne réel du fichier</h4><div class="table-wrap flat"><table><thead><tr><th>Ligne</th><th>Statut</th><th>Motif</th><th>Données</th></tr></thead><tbody>${rowsHtml(pv.apercu.rejetees, 'rej')}</tbody></table></div>` : ''}
+      ${s.ignorees ? `<details class="mt-12"><summary class="dh" style="cursor:pointer">${s.ignorees} ligne(s) ignorée(s) (total, sous-total, ligne vide…)</summary><div class="table-wrap flat mt-8"><table><thead><tr><th>Ligne</th><th>Statut</th><th>Motif</th><th>Données</th></tr></thead><tbody>${rowsHtml(pv.apercu.ignorees, 'ign')}</tbody></table></div></details>` : ''}
       <div class="wiz-actions"><button class="btn btn-ghost" id="wizBack2">Revenir à la correspondance</button><span class="grow"></span>
         <button class="btn btn-primary" id="wizConfirm" ${(!s.valides || blocked || (mism && !state.wiz.accepteHorsPeriode)) ? 'disabled' : ''} title="${blocked ? 'Corrigez la correspondance incohérente pour continuer' : (mism && !state.wiz.accepteHorsPeriode ? 'Confirmez d’abord le rattachement des lignes hors période' : '')}">${svgI('check')}Confirmer l'import dans ${TRI_LABEL(state.period.trimestre)} ${state.period.annee} (${s.valides || 0} facture${(s.valides || 0) > 1 ? 's' : ''})</button></div>
     </div></div>`;
@@ -1639,7 +1639,7 @@ function wizConvPreviewHtml() {
         <div class="stat"><div class="l">Ignorées</div><div class="v">${r.ignored || 0}</div></div>
       </div>
       ${r.conflicts ? `<div class="note note-warn">${svgI('warn')}<div><div class="note-t">${r.conflicts} conflit(s)</div>Une convention différente existe déjà pour ces fournisseurs : elle n'est <b>jamais écrasée</b>. Vérifiez les lignes ci-dessous.</div></div>` : ''}
-      ${probl.length ? `<h4 style="margin:16px 0 8px;font-size:var(--fs-md)">Lignes à corriger — numéro de ligne réel du fichier Excel</h4><div class="table-wrap flat"><table><thead><tr><th>Ligne</th><th>Statut</th><th>Fournisseur</th><th>Motif</th></tr></thead><tbody>${rowsHtml(probl)}</tbody></table></div>` : `<div class="note note-ok">${svgI('checkc')}<div>Aucune anomalie détectée sur ce fichier.</div></div>`}
+      ${probl.length ? `<h4 class="sub-h">Lignes à corriger — numéro de ligne réel du fichier Excel</h4><div class="table-wrap flat"><table><thead><tr><th>Ligne</th><th>Statut</th><th>Fournisseur</th><th>Motif</th></tr></thead><tbody>${rowsHtml(probl)}</tbody></table></div>` : `<div class="note note-ok">${svgI('checkc')}<div>Aucune anomalie détectée sur ce fichier.</div></div>`}
       <div class="wiz-actions"><button class="btn btn-ghost" id="wizBack2">Revenir à la correspondance</button><span class="grow"></span>
         <button class="btn btn-primary" id="wizConfirm" ${!(r.conventionsCreated || r.withoutConvention) ? 'disabled' : ''}>${svgI('check')}Confirmer l'import (${r.conventionsCreated || 0} convention${(r.conventionsCreated || 0) > 1 ? 's' : ''})</button></div>
     </div></div>`;
@@ -1671,7 +1671,7 @@ function wizDoneHtml() {
   const r = state.wiz.result || {};
   if (wizIsConv()) {
     return `<div class="card"><div class="card-b">
-      <div class="result-hero"><div class="dlg-ic tone-ok">${svgI('checkc', '')}</div><div><h3 style="font-size:var(--fs-xl)">Import des conventions terminé</h3><div class="dh">${r.conventionsCreated || 0} convention(s) créée(s) · délais appliqués aux périodes non clôturées.</div></div></div>
+      <div class="result-hero"><div class="dlg-ic tone-ok">${svgI('checkc', '')}</div><div><h3 class="t-xl">Import des conventions terminé</h3><div class="dh">${r.conventionsCreated || 0} convention(s) créée(s) · délais appliqués aux périodes non clôturées.</div></div></div>
       <div class="stat-strip">
         <div class="stat ok"><div class="l">Conventions créées</div><div class="v">${r.conventionsCreated || 0}</div></div>
         <div class="stat"><div class="l">Sans convention</div><div class="v">${r.withoutConvention || 0}</div></div>
@@ -1688,7 +1688,7 @@ function wizDoneHtml() {
       </div></div></div>`;
   }
   return `<div class="card"><div class="card-b">
-      <div class="result-hero"><div class="dlg-ic tone-ok">${svgI('checkc', '')}</div><div><h3 style="font-size:var(--fs-xl)">Import terminé</h3><div class="dh">${r.imported || 0} facture(s) enregistrée(s) sur ${TRI_LABEL(state.period.trimestre)} ${state.period.annee} · retards et amendes calculés.</div></div></div>
+      <div class="result-hero"><div class="dlg-ic tone-ok">${svgI('checkc', '')}</div><div><h3 class="t-xl">Import terminé</h3><div class="dh">${r.imported || 0} facture(s) enregistrée(s) sur ${TRI_LABEL(state.period.trimestre)} ${state.period.annee} · retards et amendes calculés.</div></div></div>
       <div class="stat-strip">
         <div class="stat ok"><div class="l">Factures créées</div><div class="v">${r.imported || 0}</div></div>
         <div class="stat"><div class="l">Ignorées</div><div class="v">${r.ignored || 0}</div></div>
@@ -1719,7 +1719,7 @@ async function renderDocs() {
   const docs = await api(`/clients/${state.clientId}/documents${perQuery()}`);
   const locked = currentPeriodLocked();
   wrap.innerHTML = `<div class="card"><div class="card-h"><div><h3>Historique des imports</h3><div class="sub">${docs.length} fichier(s) · ${esc(currentClient().name)} · ${TRI_LABEL(state.period.trimestre)} ${state.period.annee}</div></div></div>
-    ${docs.length ? `<div class="table-wrap flat" style="border:0"><table style="min-width:640px"><thead><tr><th>Fichier</th><th class="num">Factures</th><th>Importé le</th><th></th></tr></thead>
+    ${docs.length ? `<div class="table-wrap flat b-0"><table style="min-width:640px"><thead><tr><th>Fichier</th><th class="num">Factures</th><th>Importé le</th><th></th></tr></thead>
       <tbody>${docs.map(d => `<tr><td><b>${esc(d.nom)}</b></td><td class="num">${d.nb_factures || 0}</td><td class="mono dh">${esc(dateTimeFr((d.created_at || '').replace('T', ' ')))}</td>
         <td style="text-align:right;white-space:nowrap"><a class="btn btn-quiet btn-sm" href="/api/clients/${state.clientId}/documents/${d.id}/download">${svgI('dl')}Télécharger</a>
           ${d.import_lot_id ? `<a class="btn btn-quiet btn-sm" href="/api/imports/${d.import_lot_id}/rejections.csv">Rejets</a>` : ''}
@@ -1746,7 +1746,7 @@ async function renderConv() {
   const rule = c => { const r = c.regle_fournisseur; if (!r) return '<span class="dh">—</span>';
     const [cls, lbl] = SRC[r.source] || ['b60', r.source];
     if (c.appliquee) return `<span class="pill pill-sm pill-ok">${svgI('check', '')}Appliquée</span>`;
-    return `<span class="dh" style="font-size:var(--fs-sm)">Non appliquée — règle en vigueur : </span><span class="badge ${cls}">${r.delai} j <small>${lbl}</small></span>`; };
+    return `<span class="dh t-sm">Non appliquée — règle en vigueur : </span><span class="badge ${cls}">${r.delai} j <small>${lbl}</small></span>`; };
   $('#view').innerHTML = `
   ${clientPeriodBar(null, false)}
   <div class="page-head headrow"><div><div class="eyebrow">${esc(currentClient().name)}</div><h1>Conventions fournisseurs</h1><p>Conventions de délai de paiement et justificatifs signés. <b>Les documents sont archivés : aucune extraction automatique n'est effectuée</b> — le délai est toujours celui que vous saisissez.</p></div>
@@ -1804,7 +1804,7 @@ function attachConvPdf(btn, convId, replace) {
 // Rapport d'import lisible : synthèse chiffrée + lignes à corriger + export CSV.
 function showConvImportReport(r) {
   const col = { ok: 'var(--r-green)', warn: 'var(--r-orange)', bad: 'var(--r-red)' };
-  const tile = (n, lbl, cls) => `<div class="kpi" style="padding:12px 14px;min-width:130px"><div class="val" style="font-size:var(--fs-2xl)${cls && n ? ';color:' + col[cls] : ''}">${n}</div><div class="lbl" style="font-weight:600">${lbl}</div></div>`;
+  const tile = (n, lbl, cls) => `<div class="kpi" style="padding:12px 14px;min-width:130px"><div class="val" style="font-size:var(--fs-2xl)${cls && n ? ';color:' + col[cls] : ''}">${n}</div><div class="lbl fw-6">${lbl}</div></div>`;
   const problems = (r.lignes || []).filter(l => l.statut !== 'ignoree');
   const rowsHtml = problems.length ? problems.map(l => `<tr>
       <td class="mono">${l.ligne}</td><td>${esc(l.fournisseur || '—')}</td>
@@ -1854,7 +1854,7 @@ async function convModal() {
     <div><label class="fld-lbl">Délai convenu (j) — obligatoire</label><input class="input-fld" id="v_delai" type="number" min="1" max="120" step="1" placeholder="entier 1 à 120"></div>
     <div><label class="fld-lbl">Date de fin (option.)</label><input class="input-fld" id="v_fin" type="date"></div>
     <div class="full"><label class="fld-lbl">Document signé (PDF, JPEG ou PNG) — optionnel</label><input class="input-fld" id="v_file" type="file" accept=".pdf,.png,.jpg,.jpeg"></div>
-  </div><div class="hint" style="margin-top:12px">${svgI('doc')}<span>Le document est archivé tel quel. Les informations (délai, dates, identifiants) doivent être saisies manuellement — aucune extraction automatique n'est effectuée.</span></div></div>
+  </div><div class="hint mt-12">${svgI('doc')}<span>Le document est archivé tel quel. Les informations (délai, dates, identifiants) doivent être saisies manuellement — aucune extraction automatique n'est effectuée.</span></div></div>
   <div class="modal-f"><button class="btn btn-ghost" onclick="closeOverlay()">Annuler</button><button class="btn btn-primary" id="v_save">Enregistrer</button></div>`);
   $('#v_save').onclick = async () => {
     // Délai OBLIGATOIRE et EXPLICITE : entier 1..120. Jamais de valeur par défaut (aucune extraction).
@@ -1905,14 +1905,14 @@ async function renderDecl() {
       <div class="field" style="grid-column:span 2"><label>Adresse</label><div class="v">${esc(e.adresse || '—')}</div></div></div></div>
     <div class="doc-sec"><h4>État des factures payées hors délai (${L.length})</h4>
       <div class="table-wrap flat"><table class="dense rc"><thead><tr><th>IF fournisseur</th><th>Raison sociale</th><th class="num">TTC</th><th class="num">Non payé</th><th class="num">Payé hors délai</th><th class="num">Retard</th><th class="num">Amende</th></tr></thead>
-      <tbody>${L.length ? L.map(l => `<tr><td class="mono dh" data-rc="m" data-label="IF">${esc(l.if || '—')}</td><td data-rc="t"><b>${esc(l.nom || '—')}</b></td><td class="num" data-rc="a">${money(l.ttc)}</td><td class="num" data-rc="m" data-label="Non payé">${money(l.non_paye)}</td><td class="num" data-rc="m" data-label="Hors délai">${money(l.hors_delai)}</td><td class="num amount-late" data-rc="s" data-label="Retard">+${l.retard} j</td><td class="num amount" data-rc="s" data-label="Amende">${money(l.amende)}</td></tr>`).join('') : '<tr><td colspan="7" class="dh" style="text-align:center;padding:24px">Aucune facture hors délai sur la période — déclaration « néant ».</td></tr>'}</tbody>
+      <tbody>${L.length ? L.map(l => `<tr><td class="mono dh" data-rc="m" data-label="IF">${esc(l.if || '—')}</td><td data-rc="t"><b>${esc(l.nom || '—')}</b></td><td class="num" data-rc="a">${money(l.ttc)}</td><td class="num" data-rc="m" data-label="Non payé">${money(l.non_paye)}</td><td class="num" data-rc="m" data-label="Hors délai">${money(l.hors_delai)}</td><td class="num amount-late" data-rc="s" data-label="Retard">+${l.retard} j</td><td class="num amount" data-rc="s" data-label="Amende">${money(l.amende)}</td></tr>`).join('') : '<tr><td colspan="7" class="dh ta-c p-24">Aucune facture hors délai sur la période — déclaration « néant ».</td></tr>'}</tbody>
       <tfoot><tr><td colspan="2">Total</td><td class="num" data-label="TTC">${money(dec.montant_total_ttc)}</td><td class="num" data-label="Non payé">${money(dec.montant_non_paye)}</td><td class="num" data-label="Hors délai">${money(dec.montant_paye_hors_delai)}</td><td></td><td class="num amount-late" data-label="Amende">${money(dec.montant_total_amende)}</td></tr></tfoot></table></div></div>
     ${d.exclusions && d.exclusions.nbFactures ? `<div class="doc-sec"><h4>Factures d'opérateurs de réseau exclues du tableau (non comptées dans les totaux)</h4>
-      <div class="dh" style="font-size:var(--fs-sm)">${d.exclusions.nbFactures} facture(s) · ${d.exclusions.nbFournisseurs} fournisseur(s) · TTC ${money(d.exclusions.ttc)} DH — <b>${esc(d.exclusions.motif)}</b>. Ces factures restent visibles dans le suivi interne (feuille de délais) mais sont volontairement exclues des tableaux déclaratifs.</div></div>` : ''}
+      <div class="dh t-sm">${d.exclusions.nbFactures} facture(s) · ${d.exclusions.nbFournisseurs} fournisseur(s) · TTC ${money(d.exclusions.ttc)} DH — <b>${esc(d.exclusions.motif)}</b>. Ces factures restent visibles dans le suivi interne (feuille de délais) mais sont volontairement exclues des tableaux déclaratifs.</div></div>` : ''}
     <div class="pay-band">
-      <div><div class="eyebrow" style="margin:0">Montant à verser</div><div class="amt">${money(dec.montant_a_verser)} DH</div><div class="dh" style="font-size:var(--fs-xs)">amende ${money(dec.montant_total_amende)} + sanctions ${money(dec.sanctions_retard)}</div></div>
+      <div><div class="eyebrow m-0">Montant à verser</div><div class="amt">${money(dec.montant_a_verser)} DH</div><div class="dh t-xs">amende ${money(dec.montant_total_amende)} + sanctions ${money(dec.sanctions_retard)}</div></div>
       <div class="visa-box"><div class="st"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M9 12l2 2 4-4"/></svg></div>
-        <div><b style="font-size:var(--fs-md)">Visa ${dec.type_visa === 'CAC' ? 'du commissaire aux comptes' : "de l'expert-comptable"}</b><div class="dh" style="font-size:var(--fs-sm)">${esc(state.me.nom)} · en attente de signature</div></div></div>
+        <div><b class="t-md">Visa ${dec.type_visa === 'CAC' ? 'du commissaire aux comptes' : "de l'expert-comptable"}</b><div class="dh t-sm">${esc(state.me.nom)} · en attente de signature</div></div></div>
     </div>
     <div class="doc-sec" style="border-bottom:0;display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap;color:var(--muted);font-size:var(--fs-sm)"><span>Édité le ${dateFr(dec.date_edition)} · DelaiPay</span><span>Référence : art. 78-3 &amp; 78-4 (loi 15-95)</span></div>
   </div>`;
@@ -2000,10 +2000,10 @@ async function renderConvMiss() {
   const rows = await api('/portfolio/conventions-manquantes');
   $('#view').innerHTML = `
   <div class="page-head"><div class="eyebrow">Cabinet</div><h1>Conventions manquantes</h1><p>${rows.length} fournisseur(s) avec un délai de 120 j appliqué mais <b>sans convention en GED</b> — à régulariser (justificatif requis pour le visa).</p></div>
-  ${rows.length ? `<div class="table-wrap"><table style="min-width:820px"><thead><tr><th>Client</th><th>Fournisseur</th><th>ICE / IF</th><th class="num">Factures en retard</th><th class="num">TTC concerné</th><th></th></tr></thead>
-    <tbody>${rows.map(r => `<tr class="clickable" data-ent="${r.ent_id}"><td><b>${esc(r.ent)}</b></td><td>${esc(r.four || '—')}</td><td class="mono dh">${esc(r.ice || r.if_fiscal || '—')}</td>
-      <td class="num" style="font-weight:600">${r.nb}</td><td class="num">${money(r.ttc)}</td>
-      <td><span class="pill pill-sm pill-severe"><span class="dot"></span>Justificatif requis</span></td></tr>`).join('')}</tbody></table></div>`
+  ${rows.length ? `<div class="table-wrap"><table class="dense rc"><thead><tr><th>Client</th><th>Fournisseur</th><th data-prio="2">ICE / IF</th><th class="num">Factures en retard</th><th class="num">TTC concerné</th><th class="col-act">Statut</th></tr></thead>
+    <tbody>${rows.map(r => `<tr class="clickable" data-ent="${r.ent_id}"><td data-rc="m"><b>${esc(r.ent)}</b></td><td data-rc="t">${esc(r.four || '—')}</td><td class="mono dh" data-prio="2">${esc(r.ice || r.if_fiscal || '—')}</td>
+      <td class="num fw-6" data-rc="s" data-label="En retard">${r.nb}</td><td class="num" data-rc="a">${money(r.ttc)}</td>
+      <td class="col-act" data-rc="s"><span class="pill pill-sm pill-severe"><span class="dot"></span>Justificatif requis</span></td></tr>`).join('')}</tbody></table></div>`
     : emptyBox('Aucune convention manquante', 'Tous les fournisseurs à 120 j disposent d\'une convention valide.', 'dash', "Vue d'ensemble", 'checkc')}`;
   $$('#view tbody tr[data-ent]').forEach(tr => tr.onclick = () => goClient(tr.dataset.ent, 'conv'));
 }
@@ -2013,13 +2013,13 @@ async function renderCabConv() {
   const S = { 'Trouvée': 'pill-ok', 'Bientôt expirée': 'pill-warn', 'Expirée': 'pill-late' };
   $('#view').innerHTML = `
   <div class="page-head"><div class="eyebrow">Cabinet</div><h1>Conventions du portefeuille</h1><p>${rows.length} convention(s) valide(s) enregistrée(s) sur l'ensemble des clients.</p></div>
-  ${rows.length ? `<div class="table-wrap"><table style="min-width:820px"><thead><tr><th>Client</th><th>Fournisseur (ICE)</th><th class="num">Délai</th><th>Fin</th><th>Statut</th><th>Document</th></tr></thead>
+  ${rows.length ? `<div class="table-wrap"><table class="dense rc"><thead><tr><th>Client</th><th>Fournisseur (ICE)</th><th class="num">Délai</th><th>Fin</th><th>Statut</th><th class="col-act">Document</th></tr></thead>
     <tbody id="pgBody"></tbody></table></div><div id="pgMore" class="table-foot"></div>`
     : emptyBox('Aucune convention', 'Aucune convention enregistrée dans le portefeuille.', 'dash', "Vue d'ensemble", 'doc')}`;
-  if (rows.length) mountPaged(rows, c => `<tr class="clickable" data-ent="${c.ent_id}"><td><b>${esc(c.ent)}</b></td><td><div class="fournisseur"><b>${esc(c.four || '—')}</b><small>${esc(c.four_ice || '')}</small></div></td>
-      <td class="num"><span class="badge b120">${c.delai} j</span></td><td class="mono dh">${c.date_fin ? dateFr(c.date_fin) : 'Indéterminée'}</td>
-      <td><span class="pill pill-sm ${S[c.statut] || 'pill-ok'}"><span class="dot"></span>${esc(c.statut === 'Trouvée' ? 'En vigueur' : c.statut)}</span></td>
-      <td>${c.fichier ? `<a href="/api/conventions/${c.fichier}/file" target="_blank" onclick="event.stopPropagation()">Ouvrir</a>` : '<span class="tag-no">—</span>'}</td></tr>`,
+  if (rows.length) mountPaged(rows, c => `<tr class="clickable" data-ent="${c.ent_id}"><td data-rc="m"><b>${esc(c.ent)}</b></td><td data-rc="t"><div class="fournisseur"><b>${esc(c.four || '—')}</b><small>${esc(c.four_ice || '')}</small></div></td>
+      <td class="num" data-rc="a"><span class="badge b120">${c.delai} j</span></td><td class="mono dh" data-rc="m" data-label="Fin">${c.date_fin ? dateFr(c.date_fin) : 'Indéterminée'}</td>
+      <td data-rc="s"><span class="pill pill-sm ${S[c.statut] || 'pill-ok'}"><span class="dot"></span>${esc(c.statut === 'Trouvée' ? 'En vigueur' : c.statut)}</span></td>
+      <td class="col-act" data-rc="s">${c.fichier ? `<a href="/api/conventions/${c.fichier}/file" target="_blank" onclick="event.stopPropagation()">Ouvrir</a>` : '<span class="tag-no">—</span>'}</td></tr>`,
     { onRow: tr => goClient(tr.dataset.ent, 'conv') });
 }
 
@@ -2088,7 +2088,7 @@ async function renderWorkspace(box) {
         <div><label class="fld-lbl" for="w_locale">Langue et format</label><select class="input-fld" id="w_locale" ${ro}>${opt(d.options.locales, w.locale, x => LOC[x] || x)}</select></div>
         <div><label class="fld-lbl" for="w_devise">Devise</label><select class="input-fld" id="w_devise" ${ro}>${opt(d.options.devises, w.devise, x => x === 'MAD' ? 'Dirham marocain (MAD)' : x)}</select></div>
         <div><label class="fld-lbl" for="w_tz">Fuseau horaire</label><select class="input-fld" id="w_tz" ${ro}>${opt(d.options.fuseaux, w.fuseauHoraire, x => TZ[x] || x)}</select></div>
-      </div><div class="hint" style="margin:12px 0 0">${svgI('info')}<span>L'interface est aujourd'hui en français, les montants en dirhams et les dates à l'heure du Maroc ; ces préférences préparent les versions suivantes.</span></div></div></div>
+      </div><div class="hint mt-12">${svgI('info')}<span>L'interface est aujourd'hui en français, les montants en dirhams et les dates à l'heure du Maroc ; ces préférences préparent les versions suivantes.</span></div></div></div>
       <div class="card"><div class="card-h"><div><h3>Contacts</h3><div class="sub">Coordonnées du cabinet</div></div></div><div class="card-b"><div class="form-grid">
         <div><label class="fld-lbl" for="w_mail">E-mail de contact</label><input class="input-fld" id="w_mail" type="email" value="${esc(w.contactEmail || '')}" ${ro}></div>
         <div><label class="fld-lbl" for="w_tel">Téléphone</label><input class="input-fld" id="w_tel" value="${esc(w.contactTelephone || '')}" ${ro}></div>
@@ -2097,13 +2097,13 @@ async function renderWorkspace(box) {
     </div>
     <div class="stack">
       <div class="card"><div class="card-h"><h3>Aperçu</h3></div><div class="card-b"><div class="preview-ws"><div class="pv-side">
-                    <div class="ws-card" style="margin:0"><div class="ws-mono ${w.logoUrl ? 'has-logo' : ''}" id="pvMono" style="${w.logoUrl ? '' : 'background:var(--tenant);color:var(--tenant-ink)'}">${w.logoUrl ? `<img class="ws-logo-img" src="${esc(w.logoUrl)}" alt="">` : esc(w.initials || 'DP')}</div><div class="ws-meta"><b id="pvName">${esc(w.displayName || '')}</b><small>${esc(w.raisonLegale || 'Espace de travail')}</small></div></div></div>
+                    <div class="ws-card m-0"><div class="ws-mono ${w.logoUrl ? 'has-logo' : ''}" id="pvMono" style="${w.logoUrl ? '' : 'background:var(--tenant);color:var(--tenant-ink)'}">${w.logoUrl ? `<img class="ws-logo-img" src="${esc(w.logoUrl)}" alt="">` : esc(w.initials || 'DP')}</div><div class="ws-meta"><b id="pvName">${esc(w.displayName || '')}</b><small>${esc(w.raisonLegale || 'Espace de travail')}</small></div></div></div>
           <div class="powered-by" style="margin:10px 2px 0"><img src="/assets/brand/delaipay-symbol-dark-bg.svg" alt="" width="14" height="14">Propulsé par <b>DelaiPay</b></div>
         <div class="pv-body">Chaque cabinet dispose de son espace, de ses données cloisonnées et de ses utilisateurs, dans une interface DelaiPay commune.</div></div></div></div>
       <div class="card"><div class="card-h"><div><h3>Espace</h3><div class="sub">informations d'abonnement</div></div></div><div class="card-b">
         <dl class="kv"><dt>Adresse</dt><dd><span class="code">${esc(w.slug || '—')}.delaipay.com</span></dd><dt>Statut</dt><dd>${w.active === false ? '<span class="pill pill-sm pill-late">Désactivé</span>' : '<span class="pill pill-sm pill-ok">Actif</span>'}</dd>
           <dt>Créé le</dt><dd>${esc(dateFr(w.createdAt))}</dd>${w.updatedAt ? `<dt>Modifié le</dt><dd>${esc(dateTimeFr(w.updatedAt))}</dd>` : ''}</dl>
-        <div class="hint" style="margin:12px 0 0">${svgI('info')}<span>L'adresse publique sera active à l'ouverture de la plateforme en ligne. Pour la changer, contactez DelaiPay.</span></div></div></div>
+        <div class="hint mt-12">${svgI('info')}<span>L'adresse publique sera active à l'ouverture de la plateforme en ligne. Pour la changer, contactez DelaiPay.</span></div></div></div>
     </div></div>`;
   if (!isAdmin) return;
   const pick = $('#w_colorPick'), col = $('#w_color');
@@ -2146,7 +2146,7 @@ async function renderUsers(box) {
   const INV = { en_attente: ['pill-brand', 'En attente'], acceptee: ['pill-ok', 'Acceptée'], revoquee: ['pill-locked', 'Révoquée'], expiree: ['pill-warn', 'Expirée'] };
   const pending = d.invitations.filter(i => i.statut === 'en_attente');
   box.innerHTML = `
-  <div class="toolbar"><div class="dh" style="font-size:var(--fs-md)">${d.users.filter(u => u.actif).length} utilisateur(s) actif(s) · ${pending.length} invitation(s) en attente</div>
+  <div class="toolbar"><div class="dh t-md">${d.users.filter(u => u.actif).length} utilisateur(s) actif(s) · ${pending.length} invitation(s) en attente</div>
     <button class="btn btn-primary" id="invBtn">${svgI('plus')}Inviter un utilisateur</button></div>
   <div class="table-wrap mb-18"><table class="dense rc"><thead><tr><th>Utilisateur</th><th>Rôle</th><th>Statut</th><th>Dernière connexion</th><th class="col-act"><span class="sr-only">Actions</span></th></tr></thead>
     <tbody>${d.users.map(u => `<tr><td data-rc="t"><div class="fournisseur"><b>${esc(u.nom || '—')}${u.id === state.me.id ? ' <span class="dh">(vous)</span>' : ''}</b><small>${esc(u.email)}</small></div></td>
@@ -2156,13 +2156,13 @@ async function renderUsers(box) {
       <td class="col-act" data-rc="s">${u.id === state.me.id ? '' : `<button class="btn ${u.actif ? 'btn-quiet row-del' : 'btn-ghost'} btn-sm" data-toggle="${u.id}" data-actif="${u.actif ? 1 : 0}" data-nom="${esc(u.nom || u.email)}">${u.actif ? 'Désactiver' : 'Réactiver'}</button>`}</td></tr>`).join('')}</tbody></table></div>
   <div class="grid-2">
     <div class="card"><div class="card-h"><div><h3>Invitations</h3><div class="sub">valables 7 jours, à usage unique</div></div></div>
-      ${d.invitations.length ? `<div class="table-wrap flat" style="border:0"><table style="min-width:520px"><thead><tr><th>E-mail</th><th>Rôle</th><th>Statut</th><th>Expire</th><th></th></tr></thead><tbody>
+      ${d.invitations.length ? `<div class="table-wrap flat b-0"><table style="min-width:520px"><thead><tr><th>E-mail</th><th>Rôle</th><th>Statut</th><th>Expire</th><th></th></tr></thead><tbody>
         ${d.invitations.map(i => { const st = INV[i.statut] || ['', i.statut]; return `<tr><td>${esc(i.email)}</td><td class="dh">${esc((ROLE_INFO[i.role] || [i.role])[0])}</td><td><span class="pill pill-sm ${st[0]}">${st[1]}</span></td><td class="dh mono">${esc(dateFr(i.expires_at))}</td>
           <td style="text-align:right">${i.statut === 'en_attente' ? `<button class="btn btn-quiet btn-sm" data-revoke="${i.id}" data-mail="${esc(i.email)}">Révoquer</button>` : ''}</td></tr>`; }).join('')}</tbody></table></div>`
         : `<div class="empty" style="padding:28px"><p>Aucune invitation envoyée. Invitez une collaboratrice ou un collaborateur pour partager l'espace.</p></div>`}</div>
     <div class="card"><div class="card-h"><h3>Rôles</h3></div><div class="card-b">
-      ${Object.entries(ROLE_INFO).map(([k, [l, t]]) => `<div class="list-row" style="align-items:flex-start"><span class="pill pill-sm ${k === 'admin' ? 'pill-brand' : k === 'lecture' ? 'pill-locked' : 'pill-ok'}" style="min-width:108px;justify-content:center">${l}</span><span class="dh" style="font-size:var(--fs-sm)">${t}</span></div>`).join('')}
-      <div class="hint" style="margin:10px 0 0">${svgI('lock')}<span>Chaque droit est vérifié par le serveur : masquer un bouton ne donne ni ne retire aucun accès.</span></div></div></div>
+      ${Object.entries(ROLE_INFO).map(([k, [l, t]]) => `<div class="list-row" style="align-items:flex-start"><span class="pill pill-sm ${k === 'admin' ? 'pill-brand' : k === 'lecture' ? 'pill-locked' : 'pill-ok'}" style="min-width:108px;justify-content:center">${l}</span><span class="dh t-sm">${t}</span></div>`).join('')}
+      <div class="hint mt-10">${svgI('lock')}<span>Chaque droit est vérifié par le serveur : masquer un bouton ne donne ni ne retire aucun accès.</span></div></div></div>
   </div>`;
   $('#invBtn').onclick = inviteModal;
   $$('[data-role]').forEach(sel => sel.onchange = async () => {
@@ -2186,7 +2186,7 @@ function inviteModal() {
   modal(`<div class="modal-h"><h3>Inviter un utilisateur</h3><button class="x" onclick="closeOverlay()" aria-label="Fermer">${XICO}</button></div>
   <div class="modal-b" id="invBody"><div class="form-grid">
     <div class="full"><label class="fld-lbl" for="i_mail">Adresse e-mail professionnelle</label><input class="input-fld" id="i_mail" type="email" placeholder="prenom.nom@cabinet.ma"></div>
-    <div class="full"><label class="fld-lbl">Rôle</label>${Object.entries(ROLE_INFO).map(([k, [l, t]]) => `<label class="check" style="align-items:flex-start;padding:8px 0"><input type="radio" name="i_role" value="${k}" ${k === 'collaborateur' ? 'checked' : ''}><span><b>${l}</b><br><span class="dh" style="font-size:var(--fs-sm)">${t}</span></span></label>`).join('')}</div>
+    <div class="full"><label class="fld-lbl">Rôle</label>${Object.entries(ROLE_INFO).map(([k, [l, t]]) => `<label class="check" style="align-items:flex-start;padding:8px 0"><input type="radio" name="i_role" value="${k}" ${k === 'collaborateur' ? 'checked' : ''}><span><b>${l}</b><br><span class="dh t-sm">${t}</span></span></label>`).join('')}</div>
   </div></div>
   <div class="modal-f" id="invFoot"><button class="btn btn-ghost" onclick="closeOverlay()">Annuler</button><button class="btn btn-primary" id="i_send">Créer l'invitation</button></div>`);
   $('#i_send').onclick = async () => {
@@ -2197,7 +2197,7 @@ function inviteModal() {
       const link = `${location.origin}/invite#t=${r.invitation.token}`;
       $('#invBody').innerHTML = `<div class="note note-ok">${svgI('checkc')}<div><div class="note-t">Invitation créée pour ${esc(r.invitation.email)}</div>Transmettez ce lien à la personne invitée. <b>Il n'est affiché qu'une seule fois</b> et expire le ${esc(dateFr(r.invitation.expires_at))}.</div></div>
         <label class="fld-lbl" for="i_link">Lien d'invitation</label><div class="color-row"><input class="input-fld mono" id="i_link" readonly value="${esc(link)}"><button class="btn btn-ghost" id="i_copy">Copier</button></div>
-        <div class="hint" style="margin:10px 0 0">${svgI('info')}<span>L'envoi automatique par e-mail sera proposé ultérieurement. Le lien donne accès à cet espace uniquement.</span></div>`;
+        <div class="hint mt-10">${svgI('info')}<span>L'envoi automatique par e-mail sera proposé ultérieurement. Le lien donne accès à cet espace uniquement.</span></div>`;
       $('#invFoot').innerHTML = `<button class="btn btn-primary" id="i_done">Terminé</button>`;
       $('#i_copy').onclick = async () => { try { await navigator.clipboard.writeText(link); toast('Lien copié.', 'ok'); } catch (_) { $('#i_link').select(); } };
       $('#i_done').onclick = () => { closeOverlay(); renderSettings('users'); };
@@ -2220,7 +2220,7 @@ function renderSecurity(box) {
 }
 function renderAccount(box) {
   const m = state.me || {};
-  box.innerHTML = `<div class="card" style="max-width:640px"><div class="card-h"><h3>Mon compte</h3></div><div class="card-b">
+  box.innerHTML = `<div class="card mw-640"><div class="card-h"><h3>Mon compte</h3></div><div class="card-b">
     <dl class="kv"><dt>Nom</dt><dd>${esc(m.nom || '—')}</dd><dt>E-mail</dt><dd>${esc(m.email || '—')}</dd>${m.titre && !Object.values(ROLE_INFO).some(r => r[0] === m.titre) ? `<dt>Fonction</dt><dd>${esc(m.titre)}</dd>` : ''}
       <dt>Rôle</dt><dd>${esc(m.roleLabel || m.role)} — ${esc((ROLE_INFO[m.role] || ['', ''])[1])}</dd>
       <dt>Espace</dt><dd>${esc((state.workspace && state.workspace.displayName) || '—')}</dd></dl>
@@ -2244,8 +2244,8 @@ async function renderTaux(box = $('#view')) {
   <div class="toolbar"><div class="dh" style="font-size:var(--fs-md);max-width:70ch">Historique du taux directeur appliqué au 1ᵉʳ mois de retard. Le taux en vigueur au mois de retard concerné est utilisé.</div>
     ${isAdmin ? `<button class="btn btn-primary" id="addTaux">${svgI('plus')}Ajouter un taux</button>` : ''}</div>
   <div class="table-wrap"><table style="min-width:560px"><thead><tr><th class="num">Taux</th><th>Début</th><th>Fin</th><th>Référence</th></tr></thead>
-  <tbody>${rows.map(t => `<tr><td class="num" style="font-weight:600">${pct(t.taux)}</td><td class="mono dh">${dateFr(t.date_debut)}</td><td class="mono dh">${t.date_fin ? dateFr(t.date_fin) : '<span class="pill pill-sm pill-ok">En vigueur</span>'}</td><td class="dh">${esc(t.reference || '—')}</td></tr>`).join('')}</tbody></table></div>
-  <div class="note note-info" style="margin-top:16px">${svgI('info')}<div><b>Règle de calcul (confirmée) :</b> découpage par <b>mois calendaire</b>. 1ᵉʳ mois de retard = taux directeur BAM ; chaque mois suivant = <b>0,85 %</b> ; seuls les mois du trimestre déclaré sont facturés.</div></div>`;
+  <tbody>${rows.map(t => `<tr><td class="num fw-6">${pct(t.taux)}</td><td class="mono dh">${dateFr(t.date_debut)}</td><td class="mono dh">${t.date_fin ? dateFr(t.date_fin) : '<span class="pill pill-sm pill-ok">En vigueur</span>'}</td><td class="dh">${esc(t.reference || '—')}</td></tr>`).join('')}</tbody></table></div>
+  <div class="note note-info mt-16">${svgI('info')}<div><b>Règle de calcul (confirmée) :</b> découpage par <b>mois calendaire</b>. 1ᵉʳ mois de retard = taux directeur BAM ; chaque mois suivant = <b>0,85 %</b> ; seuls les mois du trimestre déclaré sont facturés.</div></div>`;
   const add = $('#addTaux'); if (!add) return;
   add.onclick = () => {
     modal(`<div class="modal-h"><h3>Ajouter un taux</h3><button class="x" onclick="closeOverlay()" aria-label="Fermer">${XICO}</button></div>
@@ -2327,7 +2327,7 @@ async function renderAudit() {
   $('#view').innerHTML = `
   <div class="page-head"><div class="eyebrow">Contrôle</div><h1>Journal d'audit</h1><p>Traçabilité des actions sensibles : connexions, imports, conventions, clôtures et réouvertures, exports. Les 100 dernières entrées.</p></div>
   <div class="table-wrap"><table class="dense rc"><thead><tr><th>Date</th><th>Utilisateur</th><th>Action</th><th data-prio="2">Objet</th><th>Détails</th></tr></thead>
-  <tbody>${rows.length ? rows.map(a => { const det = auditDetails(a.details); return `<tr><td class="mono dh nowrap" data-rc="m">${esc(dateTimeFr(a.created_at))}</td><td data-rc="m">${esc(a.user_nom || '—')}</td><td data-rc="t"><span class="pill pill-sm ${tone(a.action)}">${esc(AUDIT_LBL[a.action] || a.action)}</span></td><td class="dh" data-prio="2">${esc(ENTITE_LBL[a.entite] || a.entite || '—')}</td><td class="dh audit-det" data-rc="s" title="${esc(det)}">${esc(det)}</td></tr>`; }).join('') : '<tr><td colspan="5" class="dh" style="text-align:center;padding:24px">Aucune entrée.</td></tr>'}</tbody></table></div>`;
+  <tbody>${rows.length ? rows.map(a => { const det = auditDetails(a.details); return `<tr><td class="mono dh nowrap" data-rc="m">${esc(dateTimeFr(a.created_at))}</td><td data-rc="m">${esc(a.user_nom || '—')}</td><td data-rc="t"><span class="pill pill-sm ${tone(a.action)}">${esc(AUDIT_LBL[a.action] || a.action)}</span></td><td class="dh" data-prio="2">${esc(ENTITE_LBL[a.entite] || a.entite || '—')}</td><td class="dh audit-det" data-rc="s" title="${esc(det)}">${esc(det)}</td></tr>`; }).join('') : '<tr><td colspan="5" class="dh ta-c p-24">Aucune entrée.</td></tr>'}</tbody></table></div>`;
 }
 
 /* ============================== divers ============================== */
