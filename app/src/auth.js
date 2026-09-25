@@ -69,7 +69,10 @@ function checkSession(req) {
   const u = readUser(req);
   if (!u) return { ok: false, code: 'expired', error: 'Non authentifié' };
   const dbUser = db.prepare('SELECT id, cabinet_id, nom, email, role, initiales, titre, actif FROM utilisateur WHERE id=?').get(u.uid);
-  if (!dbUser || !dbUser.actif) return { ok: false, code: 'user_inactive', error: 'Votre compte a été désactivé ou n’existe plus.' };
+  // Jeton valide mais utilisateur absent (base de démonstration réinitialisée, compte supprimé) : session expirée,
+  // pas « compte désactivé » (NEW-3).
+  if (!dbUser) return { ok: false, code: 'expired_stale', error: 'Votre session a expiré. Reconnectez-vous.' };
+  if (!dbUser.actif) return { ok: false, code: 'user_inactive', error: 'Votre compte a été désactivé par l’administrateur de votre espace.' };
   // Espace revérifié à CHAQUE requête (rôle, statut et espace relus en base, jamais depuis le jeton) :
   //  - espace désactivé → plus aucun accès, même avec une session encore valide ;
   //  - hôte désignant un AUTRE espace que celui de la session → refus (défense en profondeur).

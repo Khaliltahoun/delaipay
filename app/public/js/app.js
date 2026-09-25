@@ -2292,10 +2292,11 @@ function auditDetails(raw) {
 }
 const AUDIT_LBL = { login: 'Connexion', import: 'Import de factures', import_confirme: 'Import confirmé', import_analyse: 'Fichier analysé', annulation_import: 'Import annulé',
   create: 'Création', update: 'Modification', delete: 'Suppression', cloture_periode: 'Clôture de période', reouverture_periode: 'Réouverture de période', recalcul: 'Recalcul',
-  revue_doublon: 'Revue de doublon', classification_fournisseur: 'Classification réseau', import_conventions: 'Import de conventions', export: 'Export' };
+  revue_doublon: 'Revue de doublon', classification_fournisseur: 'Classification réseau', import_conventions: 'Import de conventions', export: 'Export',
+  connexion_refusee: 'Connexion refusée', verrouillage_connexion: 'Connexion verrouillée' };
 async function renderAudit() {
   const rows = await api('/audit');
-  const tone = a => /cloture/.test(a) ? 'pill-locked' : /reouverture/.test(a) ? 'pill-warn' : /delete|annulation/.test(a) ? 'pill-late' : a === 'login' ? '' : 'pill-brand';
+  const tone = a => /cloture/.test(a) ? 'pill-locked' : /reouverture|connexion_refusee/.test(a) ? 'pill-warn' : /delete|annulation|verrouillage/.test(a) ? 'pill-late' : a === 'login' ? '' : 'pill-brand';
   $('#view').innerHTML = `
   <div class="page-head"><div class="eyebrow">Contrôle</div><h1>Journal d'audit</h1><p>Traçabilité des actions sensibles : connexions, imports, conventions, clôtures et réouvertures, exports. Les 100 dernières entrées.</p></div>
   <div class="table-wrap"><table class="dense rc"><thead><tr><th>Date</th><th>Utilisateur</th><th>Action</th><th data-prio="2">Objet</th><th>Détails</th></tr></thead>

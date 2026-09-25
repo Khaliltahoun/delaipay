@@ -2744,3 +2744,42 @@ test('erreurs/INC2 : un 404 dit ce qui s’est passé et que faire (jamais « In
   const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'api.js'), 'utf8');
   assert.ok(!/error: 'Introuvable\.?'/.test(src) && !/send\('Introuvable'\)/.test(src), 'aucun « Introuvable » brut dans l’API');
 });
+
+/* ============ Incrément 2 — P3 Cowork (NEW-2, NEW-3, NEW-5) ============ */
+test('P3/NEW-2 : verrouillage par compte — le message parle du compte, pas du poste', async () => {
+  const A = mkWorkspace('lk-a');
+  const post = (email, password) => reqJson('POST', '/api/auth/login', { host: 'lk-a.localhost', body: { email, password } });
+  for (let i = 0; i < 10; i++) await post(A.email, 'faux-' + i);
+  const r = await post(A.email, 'faux-x');
+  assert.equal(r.status, 429);
+  assert.equal(r.body.code, 'account_locked');
+  assert.match(r.body.error, /compte est temporairement verrouillé/);
+  assert.ok(!/poste/.test(r.body.error), 'plus de « depuis ce poste »');
+  assert.ok(!/depuis ce poste/.test(fs.readFileSync(path.join(__dirname, '..', 'public', 'js', 'login.js'), 'utf8')), 'la page de connexion affiche le message du serveur');
+});
+
+test('P3/NEW-5 : connexions refusées et verrouillages tracés dans le journal de l’espace, sans mot de passe', async () => {
+  const A = mkWorkspace('au-a'), B = mkWorkspace('au-b');
+  const post = (email, password) => reqJson('POST', '/api/auth/login', { host: 'au-a.localhost', body: { email, password } });
+  assert.equal((await post(A.email, 'Secret-Faux-123')).status, 401);
+  assert.equal((await post('inconnu@ex.ma', 'Secret-Faux-456')).status, 401);
+  for (let i = 0; i < 10; i++) await post(A.email, 'Secret-Faux-' + i);
+  const rows = db.prepare("SELECT action, details, user_id FROM audit_log WHERE cabinet_id=? AND action IN ('connexion_refusee','verrouillage_connexion')").all(A.cab);
+  const refus = rows.filter(r => r.action === 'connexion_refusee');
+  assert.ok(refus.some(r => JSON.parse(r.details).motif === 'mot de passe incorrect' && JSON.parse(r.details).email === A.email), 'mauvais mot de passe tracé');
+  assert.ok(refus.some(r => JSON.parse(r.details).motif === 'aucun compte actif pour cette adresse'), 'adresse inconnue tracée dans l’espace visé');
+  assert.equal(rows.filter(r => r.action === 'verrouillage_connexion').length, 1, 'un seul événement de verrouillage par fenêtre');
+  for (const r of rows) { assert.ok(!/Secret-Faux/.test(r.details), 'aucun mot de passe journalisé'); assert.equal(r.user_id, null); }
+  assert.equal(db.prepare("SELECT COUNT(*) n FROM audit_log WHERE cabinet_id=? AND action IN ('connexion_refusee','verrouillage_connexion')").get(B.cab).n, 0, 'rien dans un autre espace');
+});
+
+test('P3/NEW-3 : cookie d’un utilisateur qui n’existe plus → « session expirée », pas « compte désactivé »', async () => {
+  const ghost = { id: 'usr_fantome', cabinet_id: 'cab_x', role: 'admin', email: 'x@ex.ma', nom: 'X' };
+  const r = await reqJson('GET', '/api/me', { cookie: auth.COOKIE + '=' + auth.signToken(ghost) });
+  assert.equal(r.status, 401);
+  assert.equal(r.body.code, 'expired_stale');
+  assert.ok(!/désactivé/.test(r.body.error));
+  const A = mkWorkspace('st-a'); db.prepare('UPDATE utilisateur SET actif=0 WHERE id=?').run(A.u);
+  const d = await reqJson('GET', '/api/me', { cookie: cookieOf(A.u) });
+  assert.equal(d.body.code, 'user_inactive', 'un compte réellement désactivé reste signalé comme tel');
+});

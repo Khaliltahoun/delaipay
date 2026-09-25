@@ -32,6 +32,9 @@ fetch('/api/tenant', { credentials: 'same-origin' }).then(r => r.ok ? r.json() :
     // Sous-domaine d'espace inconnu : on le dit clairement plutôt que d'accepter une connexion ambiguë.
     errBox.innerHTML = ERR_ICO + `<span>Aucun espace de travail ne correspond à l'adresse « ${esc(t.slug)} ». Vérifiez le lien fourni par votre cabinet.</span>`;
     errBox.classList.remove('hidden');
+    // P3-7 : formulaire désactivé — aucune connexion possible vers un espace qui n'existe pas.
+    btn.disabled = true;
+    document.querySelectorAll('#loginForm input').forEach(i => { i.disabled = true; });
   }
 }).catch(() => {});
 
@@ -44,6 +47,7 @@ function showNotice(kind, title, msg) {
 }
 const REASONS = {
   expired: ['info', 'Session expirée', 'Pour votre sécurité, votre session a pris fin. Reconnectez-vous pour reprendre là où vous en étiez — aucune donnée n’a été perdue.'],
+  expired_stale: ['info', 'Session expirée', 'Votre session n’est plus valide (elle a peut-être expiré ou l’espace a été réinitialisé). Reconnectez-vous.'],
   user_inactive: ['warn', 'Compte désactivé', 'Votre accès a été désactivé par l’administrateur de votre espace.'],
   workspace_inactive: ['warn', 'Espace désactivé', 'Cet espace de travail est suspendu. Contactez DelaiPay pour le réactiver.'],
   wrong_workspace: ['info', 'Autre espace de travail', 'Vous étiez connecté·e à un autre espace. Connectez-vous avec un compte de cet espace.'],
@@ -73,7 +77,7 @@ form.addEventListener('submit', async (e) => {
       body: JSON.stringify({ email, password: pw.value }),
     });
     const data = await res.json();
-    if (res.status === 429) throw new Error('Trop de tentatives de connexion depuis ce poste. Patientez quelques minutes avant de réessayer.');
+    if (res.status === 429) throw new Error(data.error || 'Trop de tentatives de connexion. Patientez 15 minutes avant de réessayer.');
     if (!res.ok) throw new Error(data.error || 'Échec de la connexion.');
     btn.innerHTML = 'Ouverture de l\'espace…';
     window.location.replace('/');
@@ -82,4 +86,4 @@ form.addEventListener('submit', async (e) => {
     btn.disabled = false; btn.textContent = 'Se connecter';
   }
 });
-function showErr(msg) { errBox.innerHTML = ERR_ICO + `<span>${esc(msg)}</span>`; errBox.classList.remove('hidden'); }
+function showErr(msg) { const n = document.getElementById('notice'); if (n) n.classList.add('hidden'); errBox.innerHTML = ERR_ICO + `<span>${esc(msg)}</span>`; errBox.classList.remove('hidden'); }

@@ -22,10 +22,25 @@ const { uid, normalizeIce, fmtMoney, slugify } = require('./util');
 //    ne bloque ni ses collègues derrière la même IP, ni un autre espace ; remis à zéro après une connexion réussie ;
 //  - plafond global par IP (100 / 15 min) : limite la pulvérisation de mots de passe sur de nombreux comptes.
 const loginKey = req => `${req.ip}|${require('./tenant').slugFromHost(req.hostname || req.headers.host || '') || '-'}|${String((req.body && req.body.email) || '').toLowerCase().trim()}`;
-const loginLimiter = rateLimit({ windowMs: 15 * 60 * 1000, max: 10, keyGenerator: loginKey,
-  message: 'Trop de tentatives de connexion pour ce compte. Réessayez dans quelques minutes.' });
-const loginIpCeiling = rateLimit({ windowMs: 15 * 60 * 1000, max: 100,
-  message: 'Trop de tentatives de connexion depuis ce poste. Réessayez dans quelques minutes.' });
+const loginLimiter = rateLimit({ windowMs: 15 * 60 * 1000, max: 10, keyGenerator: loginKey, code: 'account_locked',
+  message: 'Ce compte est temporairement verrouillé après plusieurs mots de passe incorrects. Réessayez dans 15 minutes, ou demandez à l’administrateur de votre espace de vérifier votre accès.',
+  onLimit: req => auditLogin(req, 'verrouillage_connexion', 'compte verrouillé 15 min après 10 échecs') });
+const loginIpCeiling = rateLimit({ windowMs: 15 * 60 * 1000, max: 100, code: 'network_locked',
+  message: 'Trop de tentatives de connexion depuis votre réseau, tous comptes confondus. Réessayez dans 15 minutes.',
+  onLimit: req => auditLogin(req, 'verrouillage_connexion', 'plafond du réseau atteint (100 tentatives / 15 min)') });
+
+// Journal des connexions refusées et des verrouillages (NEW-5) : écrit dans l'espace VISÉ (hôte, ou espaces
+// où l'e-mail existe) — e-mail et motif uniquement, jamais le mot de passe saisi.
+function auditLogin(req, action, motif, cabinetIds) {
+  const email = String((req.body && req.body.email) || '').toLowerCase().trim().slice(0, 254);
+  let cabs = cabinetIds;
+  if (!cabs) {
+    const ws = tenant.resolve(req);
+    cabs = ws.slug ? (ws.cabinet ? [ws.cabinet.id] : [])
+      : db.prepare('SELECT DISTINCT cabinet_id FROM utilisateur WHERE email=?').all(email).map(r => r.cabinet_id);
+  }
+  for (const c of (cabs.length ? cabs : [null])) audit(c, null, action, 'utilisateur', { email: email || null, motif }, req.ip);
+}
 
 // Limiteur pour les routes coûteuses (import de gros classeurs, exports) :
 // le parsing/génération est synchrone et bloque la boucle d'événements — on
@@ -218,16 +233,21 @@ router.post('/auth/login', loginIpCeiling, loginLimiter, (req, res) => {
   // Le mot de passe est comparé à CHAQUE compte candidat (jamais au seul « premier trouvé ») ;
   // hash factice si aucun compte, pour ne pas révéler l'existence d'un compte par le temps de réponse.
   const matches = candidates.length ? candidates.filter(c => auth.verifyPassword(password, c.password_hash)) : (auth.verifyPassword(password, auth.DUMMY_HASH), []);
-  if (!matches.length)
+  if (!matches.length) {
+    auditLogin(req, 'connexion_refusee', candidates.length ? 'mot de passe incorrect' : 'aucun compte actif pour cette adresse',
+      candidates.length ? [...new Set(candidates.map(c => c.cabinet_id))] : undefined);
     return res.status(401).json({ error: 'Identifiants incorrects.' });
+  }
   const u = matches[0];
   // Hôte neutre + e-mail présent dans plusieurs espaces : aucune sélection implicite, quel que soit
   // le compte dont le mot de passe correspond (même réponse pour tous — pas d'indication de l'espace).
   if (candidates.length > 1)
     return res.status(409).json({ error: 'Cette adresse e-mail est rattachée à plusieurs espaces de travail. Connectez-vous depuis l’adresse de votre espace (ex. votre-cabinet.delaipay.com).', code: 'ambiguous_workspace' });
   const ucab = db.prepare('SELECT actif FROM cabinet WHERE id=?').get(u.cabinet_id);
-  if (!ucab || ucab.actif === 0)
+  if (!ucab || ucab.actif === 0) {
+    auditLogin(req, 'connexion_refusee', 'espace de travail désactivé', [u.cabinet_id]);
     return res.status(403).json({ error: 'Cet espace de travail est désactivé. Contactez DelaiPay pour le réactiver.', code: 'workspace_inactive' });
+  }
   try { db.prepare(`UPDATE utilisateur SET derniere_connexion=datetime('now') WHERE id=?`).run(u.id); } catch (_) {}
   loginLimiter.reset(req);   // connexion réussie : le compteur de CETTE identité repart de zéro
   const token = auth.signToken(u);

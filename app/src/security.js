@@ -37,7 +37,7 @@ function securityHeaders(req, res, next) {
 
 /**
  * Limiteur de débit en mémoire (fenêtre glissante simple).
- * @param {object} opts { windowMs, max, keyGenerator, message }
+ * @param {object} opts { windowMs, max, keyGenerator, message, code, onLimit(req) — appelé une fois au 1er refus de la fenêtre }
  */
 function rateLimit(opts = {}) {
   const windowMs = opts.windowMs || 15 * 60 * 1000; // 15 min
@@ -65,7 +65,8 @@ function rateLimit(opts = {}) {
     res.setHeader('RateLimit-Reset', String(Math.ceil((rec.reset - now) / 1000)));
     if (rec.count > max) {
       res.setHeader('Retry-After', String(Math.ceil((rec.reset - now) / 1000)));
-      return res.status(429).json({ error: message });
+      if (rec.count === max + 1 && typeof opts.onLimit === 'function') { try { opts.onLimit(req); } catch (_) {} }
+      return res.status(429).json({ error: message, ...(opts.code ? { code: opts.code } : {}) });
     }
     next();
   };
