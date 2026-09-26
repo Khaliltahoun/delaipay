@@ -2801,9 +2801,9 @@ test('P3/NEW-4 + P3-1 + P3-12 : reprise sur l’étape annoncée, bannière seul
   const h = (await reqJson('GET', '/api/onboarding', { cookie: cookieOf(H.u) })).body;
   assert.equal(h.started, false);
   const js = fs.readFileSync(path.join(__dirname, '..', 'public', 'js', 'app.js'), 'utf8');
-  assert.match(js, /!ob\.started && ob\.facts && ob\.facts\.factures > 0\)\) return ''/, 'P3-1 : bannière masquée pour un espace déjà exploité');
+  assert.match(js, /!ob\.started && !ob\.dismissed && ob\.facts && ob\.facts\.factures > 0\)\) return ''/, 'P3-1 : bannière masquée pour un espace déjà exploité');
   assert.match(js, /onclick="resumeOnboarding\('\$\{esc\(next\.key\)\}'\)"/, 'NEW-4 : le bouton ouvre l’étape annoncée');
-  assert.match(js, /window\.resumeOnboarding = function \(key\) \{ state\._obStep = key; setView\('onboarding'\); \}/);
+  assert.match(js, /window\.resumeOnboarding = function \(key\) \{ state\._obStep = key \|\| null; setView\('onboarding'\); \}/);
 });
 
 /* ============ Incrément 2.1 — C : vérification des anomalies (plus de levée automatique) ============ */
@@ -3023,3 +3023,20 @@ test('INC2.2/VISA-1 : aucune conclusion par défaut, vérifications listées, cl
   const au = JSON.parse(db.prepare("SELECT details FROM audit_log WHERE cabinet_id=? AND action='cloture_periode'").get(W.cab).details);
   assert.equal(au.accuse_verifications, true); assert.deepEqual(au.verifications_en_attente, v0.verifications);
 });
+
+/* ============ Incrément 2.2 — ONB-3 : la bannière de reprise survit à « Terminer plus tard » ============ */
+test('INC2.2/ONB-3 : « Terminer plus tard » ne masque pas la reprise ; entrée permanente dans Paramètres', async () => {
+  const W = mkWorkspace('onb3'); db.prepare('DELETE FROM entreprise WHERE cabinet_id=?').run(W.cab); const ck = cookieOf(W.u);
+  const later = (await reqJson('PUT', '/api/onboarding', { cookie: ck, body: { dismissed: true, current: 'client' } })).body;
+  assert.equal(later.dismissed, true); assert.equal(later.complete, false);
+  const ob = (await reqJson('GET', '/api/onboarding', { cookie: ck })).body; // rechargement / nouvelle connexion : état relu en base
+  assert.equal(ob.dismissed, true); assert.equal(ob.complete, false);
+  const js = fs.readFileSync(path.join(__dirname, '..', 'public', 'js', 'app.js'), 'utf8');
+  const { onboardingBanner } = new Function('esc', 'svgI', 'can', 'state', fromAppSrc(js, 'onboardingBanner') + '\nreturn { onboardingBanner };')(
+    x => String(x), () => '', () => true, { workspace: { displayName: 'Onb3' } });
+  const html = onboardingBanner(ob);
+  assert.match(html, /Reprendre la configuration/, 'bannière affichée après « Terminer plus tard »');
+  assert.equal(onboardingBanner({ ...ob, complete: true }), '', 'disparaît une fois la configuration terminée');
+  assert.match(js, /onclick="resumeOnboarding\(null\)">\$\{svgI\('bolt'\)\}Configuration de l’espace/, 'entrée permanente dans Paramètres');
+});
+function fromAppSrc(src, name) { const m = src.match(new RegExp(`^function ${name}\\([\\s\\S]*?\\n}\\n`, 'm')); assert.ok(m, name); return m[0]; }

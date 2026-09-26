@@ -789,7 +789,8 @@ async function renderDash() {
 // Bandeau de reprise de la configuration (espace non terminé) — progression réelle.
 function onboardingBanner(ob) {
   // P3-1 : un espace qui a déjà des factures n'est plus « en configuration » (l'onboarding reste accessible).
-  if (!ob || ob.complete || ob.dismissed || !can('onboarding') || (!ob.started && ob.facts && ob.facts.factures > 0)) return '';
+  // ONB-3 : « Terminer plus tard » ne masque plus la bannière — elle reste jusqu'à la fin de la configuration.
+  if (!ob || ob.complete || !can('onboarding') || (!ob.started && !ob.dismissed && ob.facts && ob.facts.factures > 0)) return '';
   const next = ob.steps.find(x => x.status === 'todo' && x.key !== 'bienvenue') || ob.steps[ob.steps.length - 1];
   const ws = (state.workspace && state.workspace.displayName) || '';
   return `<div class="card ob-banner mb-14"><div class="card-b" style="display:flex;gap:18px;align-items:center;flex-wrap:wrap">
@@ -801,7 +802,7 @@ function onboardingBanner(ob) {
   </div></div>`;
 }
 // NEW-4 : « Reprendre » ouvre l'étape annoncée par la bannière (la prochaine étape incomplète), pas la dernière visitée.
-window.resumeOnboarding = function (key) { state._obStep = key; setView('onboarding'); };
+window.resumeOnboarding = function (key) { state._obStep = key || null; setView('onboarding'); };
 /* ============================== ONBOARDING (8 étapes, capacités réelles uniquement) ============================== */
 const OB_ICON = { bienvenue: 'bolt', cabinet: 'building', client: 'users', factures: 'up', conventions: 'doc', reseau: 'info', periode: 'cal', pret: 'checkc' };
 async function renderOnboarding(stepKey) {
@@ -2191,7 +2192,8 @@ async function renderSettings(tab = 'workspace') {
   if (!tabs.some(t => t[0] === tab)) tab = 'workspace';
   state._settingsTab = tab;
   $('#view').innerHTML = `
-  <div class="page-head"><div class="eyebrow">${esc((state.workspace && state.workspace.displayName) || '')} · Administration</div><h1>Paramètres</h1><p>Identité de l'espace, utilisateurs, sécurité, taux de référence et compte.</p></div>
+  <div class="page-head headrow"><div><div class="eyebrow">${esc((state.workspace && state.workspace.displayName) || '')} · Administration</div><h1>Paramètres</h1><p>Identité de l'espace, utilisateurs, sécurité, taux de référence et compte.</p></div>
+    ${can('onboarding') ? `<div class="actions"><button class="btn btn-ghost" onclick="resumeOnboarding(null)">${svgI('bolt')}Configuration de l’espace</button></div>` : ''}</div>
   <div class="tabs" role="tablist">${tabs.map(([k, l]) => `<button class="tab" role="tab" data-tab="${k}" aria-selected="${k === tab}">${l}</button>`).join('')}</div>
   <div id="setBody"></div>`;
   $$('.tab[data-tab]').forEach(b => b.onclick = () => { if (b.dataset.tab === 'taux') return setView('taux'); if (state.view !== 'settings') return setView('settings'); renderSettings(b.dataset.tab); });
