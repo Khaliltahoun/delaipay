@@ -199,6 +199,8 @@ for (const stmt of [
   "ALTER TABLE anomalie ADD COLUMN levee_validee_par TEXT",
   "ALTER TABLE anomalie ADD COLUMN levee_commentaire TEXT",
   "ALTER TABLE anomalie ADD COLUMN levee_convention_id TEXT",
+  // INC 2.2 : résolution motivée et attribuée.
+  "ALTER TABLE anomalie ADD COLUMN resolue_par TEXT",
   // Identité d'ESPACE DE TRAVAIL (tenant = cabinet) — affichage uniquement, aucune incidence métier.
   // slug / logo / plan existaient déjà ; le slug désigne le futur sous-domaine (premium.delaipay.com).
   "ALTER TABLE cabinet ADD COLUMN nom_affiche TEXT",

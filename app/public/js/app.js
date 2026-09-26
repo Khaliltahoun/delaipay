@@ -2081,6 +2081,29 @@ function anoFacts(a) {
     ${cell('Enregistrée le', c.enregistree_le ? dateFr(String(c.enregistree_le).slice(0, 10)) : '—')}${cell('Justificatif', c.justificatif ? 'Présent' : '<span class="c-late">Manquant</span>')}</div>
     ${(c.avertissements || []).length ? `<div class="ano-warns">${c.avertissements.map(w => `<span class="pill pill-sm pill-warn">${svgI('warn', '')}${esc(w)}</span>`).join('')}</div>` : ''}`;
 }
+// Validation d'une levée : convention et facture nommées, justificatif consultable, signature rétroactive à accuser explicitement.
+function leverModal(a) {
+  const c = a.convention, f = a.facture || {};
+  const retro = c.signature_retroactive;
+  modal(`<div class="modal-h"><h3>Valider la levée — facture ${esc(f.numero || '')}</h3><button class="x" onclick="closeOverlay()">${XICO}</button></div>
+  <div class="modal-b">
+    <p class="m-0">La convention de <b>${c.delai} j</b> ${esc(a.fournisseur_nom ? 'avec ' + a.fournisseur_nom : '')} couvre ${a.annee ? `T${a.trimestre} ${a.annee}` : 'la période'}.
+      Seule l’alerte « convention absente » sera levée : le retard et la pénalité éventuels restent déclarés.</p>
+    ${anoFacts(a)}
+    <p class="mt-8"><a href="/api/conventions/${c.id}/file" target="_blank" rel="noopener">${svgI('doc', '')} Ouvrir le justificatif signé${c.justificatif_nom ? ' (' + esc(c.justificatif_nom) + ')' : ''}</a></p>
+    ${retro ? `<div class="note note-danger mt-12">${svgI('warn')}<div><div class="note-t">Signature rétroactive</div>La convention est signée le <b>${dateFr(c.date_signature)}</b>,
+      ${[f.date_facture && c.date_signature > f.date_facture ? `après la facture (${dateFr(f.date_facture)})` : '', a.annee ? `${(c.avertissements || []).includes('Signée après la fin du trimestre') ? 'après la fin du trimestre' : ''}` : ''].filter(Boolean).join(' et ')}.
+      <label class="check mt-8"><input type="checkbox" id="lvAck"> J’ai pris connaissance de cette signature rétroactive et je valide la levée en connaissance de cause.</label></div></div>` : ''}
+    <label class="fld-lbl mt-12" for="lvCom">Commentaire (facultatif)</label><textarea class="input-fld" id="lvCom" rows="2" placeholder="Ex. original signé vérifié"></textarea>
+  </div>
+  <div class="modal-f"><button class="btn btn-ghost" onclick="closeOverlay()">Annuler</button><button class="btn btn-primary" id="lvOk" ${retro ? 'disabled' : ''}>Valider la levée</button></div>`);
+  const ack = $('#lvAck'); if (ack) ack.onchange = () => { $('#lvOk').disabled = !ack.checked; };
+  $('#lvOk').onclick = async () => {
+    try { await api(`/anomalies/${a.id}/levee`, { method: 'POST', body: { commentaire: $('#lvCom').value, ackRetroactif: !!(ack && ack.checked) } });
+      closeOverlay(); toast('Levée validée et inscrite au journal d’audit.', 'ok', 'Anomalie levée'); refreshAlertsBadge(); renderAnomalies(); }
+    catch (e) { toast(e.message, 'err', 'Levée refusée'); }
+  };
+}
 async function renderAnomalies() {
   const d = await api('/anomalies', { fresh: true });
   const n = d.counts, rows = d.rows;
@@ -2088,46 +2111,49 @@ async function renderAnomalies() {
   const line = a => {
     const st = a.statut_calc, verif = st === 'a_verifier', levee = st === 'levee', conv = a.convention;
     const title = esc(ANO_LBL[a.type] || 'Anomalie') + (verif ? ' — couverte par une convention, à vérifier' : levee ? ' — levée' : '');
-    const badge = levee ? '<span class="sev muted">levée</span>' : st === 'resolue' ? '<span class="sev muted">résolue</span>'
+    const badge = levee ? '<span class="sev muted">levée</span>' : st === 'resolue' ? `<span class="sev ${a.sans_justification ? 'm' : 'muted'}">${a.sans_justification ? 'résolue sans justification' : 'résolue'}</span>`
       : `<span class="sev ${verif ? 'muted' : sevCls(a.gravite)}">${esc(GRAVITE_FR[a.gravite] || a.gravite || '')}</span>${verif ? '<span class="sev info">à vérifier</span>' : ''}`;
     const maintenus = (verif || levee) && a.facture && a.facture.a_declarer && a.facture.montant_amende > 0
       ? `<div class="m ano-keep">${svgI('clock', '')}Retard et pénalité maintenus : ${money(a.facture.montant_amende)} DH déclarés (la levée ne concerne que l’alerte « convention absente »).</div>` : '';
     const lock = a.periode_verrouillee && (verif || levee) ? `<div class="m ano-lock">${svgI('lock', '')}T${a.trimestre} ${a.annee} est clôturée : lecture seule, la levée ne peut être ni validée ni annulée.</div>` : '';
+    const resolu = st === 'resolue' ? (a.sans_justification
+      ? `<div class="m"><span class="pill pill-sm pill-warn">${svgI('warn', '')}Résolue sans justification</span> <span class="dh t-sm">résolution antérieure, sans motif enregistré — à revoir</span></div>`
+      : `<div class="m levee-m">${svgI('checkc', '')}Résolue${a.resolue_le ? ' le ' + dateFr(String(a.resolue_le).slice(0, 10)) : ''}${a.resolue_par_nom ? ' par ' + esc(a.resolue_par_nom) : ''} — « ${esc(a.motif_resolution)} »</div>`) : '';
     const valid = levee ? `<div class="m levee-m">${svgI('checkc', '')}Levée validée le ${dateFr(String(a.levee_validee_le).slice(0, 10))} par ${esc(a.levee_validee_par_nom || '—')}${a.levee_commentaire ? ` — « ${esc(a.levee_commentaire)} »` : ''}.</div>` : '';
     const acts = [];
     if (verif && !a.periode_verrouillee && can('manage_conventions')) acts.push(conv && conv.justificatif
       ? `<button class="btn btn-primary btn-sm" data-lever="${a.id}">Valider la levée</button>`
       : `<button class="btn btn-ghost btn-sm" disabled title="Ajoutez d’abord le justificatif signé de la convention">Valider la levée</button>`);
     if (levee && admin && !a.periode_verrouillee) acts.push(`<button class="btn btn-quiet btn-sm" data-unlever="${a.id}">Annuler la levée</button>`);
-    if (st === 'ouverte') acts.push(`<button class="btn btn-ghost btn-sm" data-perm="edit_client" data-res="${a.id}">Marquer résolue</button>`);
+    if (st === 'ouverte' && a.type !== 'convention_absente' && !a.periode_verrouillee && can('manage_conventions')) acts.push(`<button class="btn btn-ghost btn-sm" data-res="${a.id}">Marquer résolue</button>`);
     return `<div class="alert-row ${verif ? 'is-verif' : ''} ${levee || st === 'resolue' ? 'is-levee' : ''}">
       <div class="al-ic ${levee || st === 'resolue' ? 'info' : verif ? 'info' : a.gravite === 'haute' ? 'red' : 'orange'}">${svgI(levee || st === 'resolue' ? 'check' : verif ? 'info' : 'warn', '')}</div>
       <div class="al-body"><div class="t">${title} ${badge}</div>
         <div class="m">${esc(anoMessage(a))}</div>
         ${a.type === 'convention_absente' && !verif && !levee && a.situation ? `<div class="m ano-sit">${esc(anoSituation(a))}</div>` : ''}
-        ${(verif || levee) && conv ? anoFacts(a) + `<div class="m"><button class="btn-link" data-conv-ent="${a.ent_id}" data-conv-id="${conv.id}">Voir la convention (${conv.delai} j)</button></div>` : ''}
-        ${maintenus}${valid}${lock}
+        ${(verif || levee) && conv ? anoFacts(a) + `<div class="m"><button class="btn-link" data-conv-ent="${a.ent_id}" data-conv-id="${conv.id}">Voir la convention (${conv.delai} j)</button>${conv.justificatif ? ` · <a href="/api/conventions/${conv.id}/file" target="_blank" rel="noopener">${svgI('doc', '')} Ouvrir le justificatif signé</a>` : ''}</div>` : ''}
+        ${maintenus}${valid}${resolu}${lock}
         <div class="d">${esc(a.ent || '—')} · ${esc(String(a.created_at || '').slice(0, 10))}${a.annee ? ` · T${a.trimestre} ${a.annee}` : ''}</div></div>
       ${acts.length ? `<div class="al-acts">${acts.join('')}</div>` : ''}</div>`;
   };
   $('#view').innerHTML = `
   <div class="page-head"><div class="eyebrow">Contrôle</div><h1>Anomalies</h1><p><b>${n.aTraiter}</b> anomalie(s) à traiter${n.aVerifier ? ` (dont <b>${n.aVerifier}</b> couverte(s) par une convention, à vérifier)` : ''} · ${n.levees} levée(s) validée(s) · ${n.resolues} résolue(s) — sur ${rows.length} détectée(s).</p></div>
   <div class="card">${rows.length ? rows.map(line).join('') : `<div class="empty"><div class="ic">${svgI('checkc', '')}</div><h4>Aucune anomalie</h4><p>Aucune anomalie détectée sur le portefeuille.</p></div>`}</div>`;
-  $$('#view [data-res]').forEach(b => b.onclick = async () => { await api(`/anomalies/${b.dataset.res}/resolve`, { method: 'POST' }); toast('Anomalie résolue.', 'ok'); refreshAlertsBadge(); renderAnomalies(); });
-  $$('#view [data-conv-ent]').forEach(b => b.onclick = () => { state._convFocus = b.dataset.convId; goClient(b.dataset.convEnt, 'conv'); });
-  $$('#view [data-lever]').forEach(b => b.onclick = async () => {
-    const a = rows.find(x => x.id === b.dataset.lever), c = a.convention;
-    const v = await ui.prompt({ tone: 'brand', icon: 'checkc', title: `Valider la levée de l’anomalie de la facture ${a.facture ? a.facture.numero : ''} ?`,
-      html: `<p>La convention de <b>${c.delai} j</b> (effet ${c.date_debut ? dateFr(c.date_debut) : '—'}, signée ${c.date_signature ? dateFr(c.date_signature) : '—'}) couvre ${a.annee ? `T${a.trimestre} ${a.annee}` : 'la période'}. Seule l’alerte « convention absente » est levée : le retard et la pénalité éventuels restent déclarés.</p>`,
-      facts: [['Facture', `${a.facture ? a.facture.numero : '—'} · ${a.ent || ''}`], ['Convention', `${c.delai} j · enregistrée le ${dateFr(String(c.enregistree_le).slice(0, 10))}`], ...(c.avertissements || []).map(w => ['À noter', w])],
-      label: 'Commentaire (facultatif)', placeholder: 'Ex. convention signée vérifiée sur l’original', confirmLabel: 'Valider la levée' });
-    if (v === null) return;
-    try { await api(`/anomalies/${a.id}/levee`, { method: 'POST', body: { commentaire: v } }); toast('Levée validée et inscrite au journal d’audit.', 'ok', 'Anomalie levée'); refreshAlertsBadge(); renderAnomalies(); }
-    catch (e) { toast(e.message, 'err', 'Levée refusée'); }
+  $$('#view [data-res]').forEach(b => b.onclick = async () => {
+    const a = rows.find(x => x.id === b.dataset.res);
+    const motif = await ui.prompt({ tone: 'warn', title: `Marquer résolue : ${ANO_LBL[a.type] || 'anomalie'} ?`, html: `<p>${esc(anoMessage(a))}</p>`,
+      facts: [['Client', a.ent || '—'], ['Période', a.annee ? `T${a.trimestre} ${a.annee}` : 'non renseignée']], label: 'Motif de la résolution', required: true,
+      placeholder: 'Ex. paiement partiel confirmé par le relevé bancaire', confirmLabel: 'Marquer résolue' });
+    if (!motif) return;
+    try { await api(`/anomalies/${a.id}/resolve`, { method: 'POST', body: { motif } }); toast('Anomalie résolue — motif inscrit au journal d’audit.', 'ok'); refreshAlertsBadge(); renderAnomalies(); }
+    catch (e) { toast(e.message, 'err', 'Résolution refusée'); }
   });
+  $$('#view [data-conv-ent]').forEach(b => b.onclick = () => { state._convFocus = b.dataset.convId; goClient(b.dataset.convEnt, 'conv'); });
+  $$('#view [data-lever]').forEach(b => b.onclick = () => leverModal(rows.find(x => x.id === b.dataset.lever)));
   $$('#view [data-unlever]').forEach(b => b.onclick = async () => {
-    if (!await ui.confirm({ tone: 'warn', title: 'Annuler la levée de cette anomalie ?', message: 'L’anomalie redeviendra « à vérifier » et sera de nouveau comptée. L’annulation est inscrite au journal d’audit.', confirmLabel: 'Annuler la levée' })) return;
-    try { await api(`/anomalies/${b.dataset.unlever}/levee`, { method: 'DELETE' }); toast('Levée annulée.', 'ok', 'Anomalie'); refreshAlertsBadge(); renderAnomalies(); }
+    const motif = await ui.prompt({ tone: 'warn', title: 'Annuler la levée de cette anomalie ?', message: 'L’anomalie redeviendra « à vérifier » et sera de nouveau comptée.', label: 'Motif de l’annulation', required: true, confirmLabel: 'Annuler la levée' });
+    if (!motif) return;
+    try { await api(`/anomalies/${b.dataset.unlever}/levee`, { method: 'DELETE', body: { motif } }); toast('Levée annulée — motif inscrit au journal d’audit.', 'ok', 'Anomalie'); refreshAlertsBadge(); renderAnomalies(); }
     catch (e) { toast(e.message, 'err', 'Annulation refusée'); }
   });
 }

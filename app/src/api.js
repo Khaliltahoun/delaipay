@@ -1827,33 +1827,61 @@ router.get('/anomalies', (req, res) => {
   res.json({ counts: anomalies.anomalyCounts(scope), rows });
 });
 router.get('/anomalies/counts', (req, res) => res.json(anomalies.anomalyCounts({ cabinetId: req.cabinetId, entrepriseId: req.query.entreprise || null })));
-// Valider la levée (INC 2.1-C) : admin ou comptable, justificatif présent, période ni clôturée ni déclarée.
+// Contexte d'audit COMPLET d'une anomalie (VER-2) : facture, fournisseur, type, période, convention, justificatif, auteur, horodatage.
+function anoAuditCtx(req, a, extra = {}) {
+  const c = a.convention || {};
+  return { anomalie: a.id, type: a.type, facture: (a.facture && a.facture.numero) || a.facture_numero_directe || null, fournisseur: a.fournisseur_nom || null,
+    client: a.ent || null, periode: a.annee != null ? `T${a.trimestre} ${a.annee}` : null,
+    convention: c.id ? { id: c.id, delai: c.delai, date_signature: c.date_signature || null, date_effet: c.date_debut || null, date_fin: c.date_fin || null } : null,
+    justificatif: c.id ? (c.justificatif ? (c.justificatif_nom || 'document joint') : null) : null,
+    utilisateur: { id: req.user.id, nom: req.user.nom || null, role: req.user.role }, horodatage: new Date().toISOString(), ...extra };
+}
+const findAno = (req) => anomalies.listAnomalies({ cabinetId: req.cabinetId }).find(x => x.id === req.params.id);
+const ANO_GONE = { error: 'Cette anomalie n’existe plus. Actualisez la page des anomalies.', code: 'anomalie_introuvable' };
+const lockedMsg = (a, verbe) => ({ error: `T${a.trimestre} ${a.annee} est clôturée : l’anomalie ne peut plus être ${verbe} (lecture seule). Rouvrez la période si nécessaire.`, code: 'periode_verrouillee' });
+
+// Valider la levée : admin ou comptable, justificatif présent, période ni clôturée ni déclarée ; signature rétroactive → accusé obligatoire.
 router.post('/anomalies/:id/levee', (req, res) => {
   if (!permissions.guard(req, res, 'manage_conventions', 'Votre rôle ne permet pas de valider une levée d’anomalie.')) return;
-  const a = anomalies.listAnomalies({ cabinetId: req.cabinetId }).find(x => x.id === req.params.id);
-  if (!a) return res.status(404).json({ error: 'Cette anomalie n’existe plus. Actualisez la page des anomalies.', code: 'anomalie_introuvable' });
-  if (a.periode_verrouillee) return res.status(409).json({ error: `T${a.trimestre} ${a.annee} est clôturée : la levée ne peut plus être validée (lecture seule). Rouvrez la période si nécessaire.`, code: 'periode_verrouillee' });
+  const a = findAno(req); if (!a) return res.status(404).json(ANO_GONE);
+  if (a.periode_verrouillee) return res.status(409).json(lockedMsg(a, 'levée'));
   if (a.statut_calc !== 'a_verifier' || !a.convention) return res.status(409).json({ error: 'Aucune convention valide ne couvre le trimestre de cette anomalie : la levée est impossible.', code: 'non_couverte' });
   if (!a.convention.justificatif) return res.status(409).json({ error: 'Ajoutez d’abord le justificatif signé de la convention : une levée ne peut pas être validée sans pièce.', code: 'justificatif_manquant' });
-  const com = String((req.body && req.body.commentaire) || '').trim().slice(0, 500) || null;
+  const b = req.body || {};
+  if (a.convention.signature_retroactive && b.ackRetroactif !== true)
+    return res.status(409).json({ error: 'La convention est signée après la facture ou après la fin du trimestre : cochez la case confirmant que vous avez pris connaissance de cette signature rétroactive.', code: 'ack_retroactif_requis' });
+  const com = String(b.commentaire || '').trim().slice(0, 500) || null;
   db.prepare(`UPDATE anomalie SET levee_validee_le=datetime('now'), levee_validee_par=?, levee_commentaire=?, levee_convention_id=? WHERE id=? AND cabinet_id=?`)
     .run(req.user.id, com, a.convention.id, a.id, req.cabinetId);
-  audit(req.cabinetId, req.user.id, 'levee_anomalie', 'anomalie', { id: a.id, facture: a.facture ? a.facture.numero : null, convention: a.convention.id, commentaire: com }, req.ip);
+  audit(req.cabinetId, req.user.id, 'levee_anomalie', 'anomalie', anoAuditCtx(req, a, { commentaire: com,
+    signature_retroactive: !!a.convention.signature_retroactive, accuse_signature_retroactive: !!a.convention.signature_retroactive,
+    avertissements: a.convention.avertissements }), req.ip);
   res.json({ ok: true });
 });
-// Annuler la levée : administrateur seulement, période ni clôturée ni déclarée.
+// Annuler la levée : administrateur seulement, motif OBLIGATOIRE, période ni clôturée ni déclarée.
 router.delete('/anomalies/:id/levee', (req, res) => {
   if (req.user.role !== 'admin') return res.status(403).json({ error: 'Seul un administrateur peut annuler une levée validée.', code: 'forbidden' });
-  const a = anomalies.listAnomalies({ cabinetId: req.cabinetId }).find(x => x.id === req.params.id);
-  if (!a) return res.status(404).json({ error: 'Cette anomalie n’existe plus. Actualisez la page des anomalies.', code: 'anomalie_introuvable' });
-  if (a.periode_verrouillee) return res.status(409).json({ error: `T${a.trimestre} ${a.annee} est clôturée : la levée ne peut plus être annulée (lecture seule).`, code: 'periode_verrouillee' });
+  const a = findAno(req); if (!a) return res.status(404).json(ANO_GONE);
+  if (a.periode_verrouillee) return res.status(409).json(lockedMsg(a, 'modifiée'));
   if (a.statut_calc !== 'levee') return res.status(409).json({ error: 'Cette anomalie n’est pas levée.', code: 'non_levee' });
+  const motif = String((req.body && req.body.motif) || '').trim().slice(0, 500);
+  if (!motif) return res.status(400).json({ error: 'Indiquez le motif de l’annulation : il est inscrit au journal d’audit.', code: 'motif_requis' });
   db.prepare(`UPDATE anomalie SET levee_validee_le=NULL, levee_validee_par=NULL, levee_commentaire=NULL, levee_convention_id=NULL WHERE id=? AND cabinet_id=?`).run(a.id, req.cabinetId);
-  audit(req.cabinetId, req.user.id, 'annulation_levee', 'anomalie', { id: a.id, facture: a.facture ? a.facture.numero : null, convention: a.levee_convention_id }, req.ip);
+  audit(req.cabinetId, req.user.id, 'annulation_levee', 'anomalie', anoAuditCtx(req, a, { motif,
+    levee_initiale: { le: a.levee_validee_le, par: a.levee_validee_par_nom || a.levee_validee_par, commentaire: a.levee_commentaire || null } }), req.ip);
   res.json({ ok: true });
 });
+// Résolution manuelle (VER-1) : jamais pour « convention absente » (vérification obligatoire) ; motif, rôle, période, audit.
 router.post('/anomalies/:id/resolve', (req, res) => {
-  db.prepare(`UPDATE anomalie SET statut='resolue', resolue_le=datetime('now') WHERE id=? AND cabinet_id=?`).run(req.params.id, req.cabinetId);
+  if (!permissions.guard(req, res, 'manage_conventions', 'Votre rôle ne permet pas de résoudre une anomalie.')) return;
+  const a = findAno(req); if (!a) return res.status(404).json(ANO_GONE);
+  if (a.type === 'convention_absente') return res.status(409).json({ error: 'Une anomalie « convention absente » ne se résout pas manuellement : enregistrez la convention datée avec son justificatif, puis validez la levée.', code: 'verification_obligatoire' });
+  if (a.statut !== 'ouverte') return res.status(409).json({ error: 'Cette anomalie est déjà résolue.', code: 'deja_resolue' });
+  if (a.periode_verrouillee) return res.status(409).json(lockedMsg(a, 'résolue'));
+  const motif = String((req.body && req.body.motif) || '').trim().slice(0, 500);
+  if (!motif) return res.status(400).json({ error: 'Indiquez le motif de la résolution : il est inscrit au journal d’audit.', code: 'motif_requis' });
+  db.prepare(`UPDATE anomalie SET statut='resolue', resolue_le=datetime('now'), motif_resolution=?, resolue_par=? WHERE id=? AND cabinet_id=?`).run(motif, req.user.id, a.id, req.cabinetId);
+  audit(req.cabinetId, req.user.id, 'resolution_anomalie', 'anomalie', anoAuditCtx(req, a, { motif }), req.ip);
   res.json({ ok: true });
 });
 

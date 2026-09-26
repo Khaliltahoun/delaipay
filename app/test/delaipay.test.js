@@ -2839,7 +2839,8 @@ test('INC2.1/C : valider la levée — justificatif exigé, lecture seule et pé
   let d = (await reqJson('GET', '/api/anomalies', { cookie: ck })).body;
   assert.equal(d.rows.find(x => x.id === a).statut_calc, 'levee'); assert.equal(d.counts.aTraiter, 0, 'levée hors compteurs'); assert.equal(d.counts.levees, 1);
   assert.equal((await reqJson('DELETE', `/api/anomalies/${a}/levee`, { cookie: cookieOf(compta) })).status, 403, 'annulation réservée à l’admin');
-  assert.equal((await reqJson('DELETE', `/api/anomalies/${a}/levee`, { cookie: ck })).status, 200, 'annulation admin');
+  assert.equal((await reqJson('DELETE', `/api/anomalies/${a}/levee`, { cookie: ck })).status, 400, 'annulation sans motif refusée');
+  assert.equal((await reqJson('DELETE', `/api/anomalies/${a}/levee`, { cookie: ck, body: { motif: 'Justificatif non conforme' } })).status, 200, 'annulation admin motivée');
   d = (await reqJson('GET', '/api/anomalies', { cookie: ck })).body; assert.equal(d.rows.find(x => x.id === a).statut_calc, 'a_verifier'); assert.equal(d.counts.aTraiter, 1);
   const logs = db.prepare("SELECT action, details, user_id FROM audit_log WHERE cabinet_id=? AND action IN ('levee_anomalie','annulation_levee') ORDER BY rowid").all(W.cab);
   assert.deepEqual(logs.map(l => l.action), ['levee_anomalie', 'annulation_levee']);
@@ -2954,4 +2955,45 @@ test('INC2.2/CONV-1 : fournisseurs à 120 j (colonne « Convention » du fichier
   assert.equal(fs_.filter(f => f.sans_convention_justificative).length, 10, 'page Fournisseurs : même indicateur');
   assert.equal((await reqJson('GET', '/api/dashboard?annee=2026&trimestre=1', { cookie: ck })).body.kpis.conventionsManquantes, 10);
   assert.equal(db.prepare('SELECT ROUND(SUM(montant_amende),2) a FROM facture WHERE entreprise_id=?').get(W.ent).a, 7025.33, 'calcul inchangé');
+});
+
+/* ============ Incrément 2.2 — VER-1 / VER-2 / signature rétroactive ============ */
+test('INC2.2/VER-1 : aucun contournement — « convention absente » jamais résolue à la main ; autres types : motif, rôle, période, audit', async () => {
+  const { W, four, fac, ano } = anoSetup('ver1'); const ck = cookieOf(W.u);
+  const f = four('GAMMA'); fac(f, 'G1', '2026-01-10', '2026-03-20', 0); const ca = ano(f, 'G1');
+  const r0 = await reqJson('POST', `/api/anomalies/${ca}/resolve`, { cookie: ck, body: { motif: 'test' } });
+  assert.equal(r0.status, 409); assert.equal(r0.body.code, 'verification_obligatoire', 'contournement refusé côté serveur');
+  const dup = uid('ano'); db.prepare("INSERT INTO anomalie (id,cabinet_id,entreprise_id,type,gravite,details,entite,statut,annee,trimestre) VALUES (?,?,?,'date_incoherente','moyenne','Date incohérente sur G1','facture','ouverte',2026,1)").run(dup, W.cab, W.ent);
+  assert.equal((await reqJson('POST', `/api/anomalies/${dup}/resolve`, { cookie: ck, body: {} })).status, 400, 'motif obligatoire');
+  const ro = addUser(W.cab, 'lecture', 'ro-ver1@ex.ma');
+  assert.equal((await reqJson('POST', `/api/anomalies/${dup}/resolve`, { cookie: cookieOf(ro), body: { motif: 'x' } })).status, 403, 'lecture seule refusée');
+  db.prepare("INSERT INTO periode_declaration (id,cabinet_id,entreprise_id,annee,trimestre,statut) VALUES (?,?,?,2026,1,'declaree')").run(uid('pd'), W.cab, W.ent);
+  const rc = await reqJson('POST', `/api/anomalies/${dup}/resolve`, { cookie: ck, body: { motif: 'x' } }); assert.equal(rc.status, 409); assert.equal(rc.body.code, 'periode_verrouillee', 'période déclarée refusée');
+  db.prepare("DELETE FROM periode_declaration WHERE entreprise_id=?").run(W.ent);
+  assert.equal((await reqJson('POST', `/api/anomalies/${dup}/resolve`, { cookie: ck, body: { motif: 'Date corrigée dans le fichier source' } })).status, 200);
+  const au = db.prepare("SELECT details FROM audit_log WHERE cabinet_id=? AND action='resolution_anomalie'").get(W.cab);
+  assert.ok(au, 'entrée d’audit'); const d = JSON.parse(au.details);
+  assert.equal(d.motif, 'Date corrigée dans le fichier source'); assert.equal(d.type, 'date_incoherente'); assert.equal(d.periode, 'T1 2026'); assert.equal(d.utilisateur.id, W.u);
+  // Résolution historique sans motif → signalée.
+  const old = uid('ano'); db.prepare("INSERT INTO anomalie (id,cabinet_id,entreprise_id,type,gravite,details,entite,statut,resolue_le) VALUES (?,?,?,'date_future','basse','x','facture','resolue',datetime('now'))").run(old, W.cab, W.ent);
+  const list = (await reqJson('GET', '/api/anomalies', { cookie: ck })).body.rows;
+  assert.equal(list.find(x => x.id === old).sans_justification, true); assert.equal(list.find(x => x.id === dup).sans_justification, false);
+});
+test('INC2.2/VER-2 + signature rétroactive : entrées de levée et d’annulation complètes ; accusé obligatoire si signée après la facture', async () => {
+  const { W, four, fac, ano, conv } = anoSetup('ver2'); const ck = cookieOf(W.u);
+  const f = four('DELTA SARL'); fac(f, 'D7', '2026-01-10', '2026-03-20', 12.5); const a = ano(f, 'D7');
+  const c = conv(f, '2026-01-01', null, 'up_d7.pdf', '2026-02-15'); // signée APRÈS la facture (10/01)
+  db.prepare("UPDATE convention SET fichier_nom='convention-delta.pdf' WHERE id=?").run(c);
+  const r1 = await reqJson('POST', `/api/anomalies/${a}/levee`, { cookie: ck, body: {} });
+  assert.equal(r1.status, 409); assert.equal(r1.body.code, 'ack_retroactif_requis', 'signature rétroactive : accusé requis');
+  assert.equal((await reqJson('POST', `/api/anomalies/${a}/levee`, { cookie: ck, body: { ackRetroactif: true, commentaire: 'Vu' } })).status, 200);
+  const lev = JSON.parse(db.prepare("SELECT details FROM audit_log WHERE cabinet_id=? AND action='levee_anomalie'").get(W.cab).details);
+  assert.equal(lev.facture, 'D7'); assert.equal(lev.fournisseur, 'DELTA SARL'); assert.equal(lev.type, 'convention_absente'); assert.equal(lev.periode, 'T1 2026');
+  assert.deepEqual(lev.convention, { id: c, delai: 120, date_signature: '2026-02-15', date_effet: '2026-01-01', date_fin: null });
+  assert.equal(lev.justificatif, 'convention-delta.pdf'); assert.equal(lev.commentaire, 'Vu'); assert.equal(lev.utilisateur.id, W.u); assert.ok(lev.horodatage);
+  assert.equal(lev.accuse_signature_retroactive, true);
+  assert.equal((await reqJson('DELETE', `/api/anomalies/${a}/levee`, { cookie: ck, body: { motif: 'Signature à revérifier' } })).status, 200);
+  const an = JSON.parse(db.prepare("SELECT details FROM audit_log WHERE cabinet_id=? AND action='annulation_levee'").get(W.cab).details);
+  assert.equal(an.motif, 'Signature à revérifier'); assert.equal(an.facture, 'D7'); assert.equal(an.fournisseur, 'DELTA SARL'); assert.equal(an.convention.id, c);
+  assert.equal(an.levee_initiale.commentaire, 'Vu');
 });

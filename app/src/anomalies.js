@@ -37,7 +37,10 @@ function scopeWhere(scope) {
 /** Anomalies d'un périmètre (cabinet, dossier éventuel), chacune avec son statut calculé et son contexte. */
 function listAnomalies(scope) {
   const { where, params } = scopeWhere(scope);
-  const rows = db.prepare(`SELECT a.*, e.raison_sociale ent, e.id ent_id, u.nom levee_validee_par_nom FROM anomalie a LEFT JOIN entreprise e ON e.id=a.entreprise_id LEFT JOIN utilisateur u ON u.id=a.levee_validee_par
+  const rows = db.prepare(`SELECT a.*, e.raison_sociale ent, e.id ent_id, u.nom levee_validee_par_nom, ur.nom resolue_par_nom,
+      COALESCE(fo.raison_sociale, fo2.raison_sociale) fournisseur_nom, fx.numero facture_numero_directe
+    FROM anomalie a LEFT JOIN entreprise e ON e.id=a.entreprise_id LEFT JOIN utilisateur u ON u.id=a.levee_validee_par LEFT JOIN utilisateur ur ON ur.id=a.resolue_par
+      LEFT JOIN fournisseur fo ON fo.id=a.entite_id LEFT JOIN facture fx ON fx.id=a.entite_id LEFT JOIN fournisseur fo2 ON fo2.id=fx.fournisseur_id
     WHERE ${where} ORDER BY a.created_at DESC, a.rowid DESC`).all(...params);
   const convByFour = new Map();
   const convs = db.prepare(`SELECT * FROM convention WHERE cabinet_id=? AND statut='valide'${scope.entrepriseId ? ' AND entreprise_id=?' : ''}`)
@@ -49,7 +52,7 @@ function listAnomalies(scope) {
   const facQ = db.prepare(`SELECT id, numero, date_facture, date_paiement, a_declarer, montant_amende, retard_jours FROM facture
     WHERE entreprise_id=? AND fournisseur_id=? AND numero=? ORDER BY (annee=? AND trimestre=?) DESC, rowid LIMIT 1`);
   return rows.map(a => {
-    const out = { ...a, periode_verrouillee: a.annee != null && locked.has(`${a.entreprise_id}|${a.annee}|${a.trimestre}`) };
+    const out = { ...a, sans_justification: a.statut !== 'ouverte' && !String(a.motif_resolution || '').trim(), periode_verrouillee: a.annee != null && locked.has(`${a.entreprise_id}|${a.annee}|${a.trimestre}`) };
     if (a.type === 'convention_absente') {
       const m = String(a.details || '').match(/^Facture\s+([^\s:]+)/);
       const fac = m && m[1] !== '?' ? facQ.get(a.entreprise_id, a.entite_id, m[1], a.annee, a.trimestre) : null;
@@ -70,10 +73,14 @@ function convSummary(c, a, fac) {
   const q = a.annee != null ? quarterBounds(a.annee, a.trimestre) : null;
   const avert = [];
   if (q && c.created_at && c.created_at.slice(0, 10) > q.end) avert.push('Convention enregistrée après la fin du trimestre');
-  if (fac && c.date_signature && fac.date_facture && c.date_signature > fac.date_facture) avert.push('Signée après la date de la facture');
+  const apresFacture = !!(fac && c.date_signature && fac.date_facture && c.date_signature > fac.date_facture);
+  const apresTrimestre = !!(q && c.date_signature && c.date_signature > q.end);
+  if (apresFacture) avert.push('Signée après la date de la facture');
+  if (apresTrimestre) avert.push('Signée après la fin du trimestre');
   if (!c.fichier) avert.push('Justificatif manquant');
   return { id: c.id, delai: c.delai_convenu, date_signature: c.date_signature, date_debut: c.date_debut, date_fin: c.date_fin,
-    enregistree_le: c.created_at, justificatif: !!c.fichier, avertissements: avert };
+    enregistree_le: c.created_at, justificatif: !!c.fichier, justificatif_nom: c.fichier_nom || null,
+    signature_retroactive: apresFacture || apresTrimestre, avertissements: avert };
 }
 
 /** Compteurs — les SEULS utilisés par les écrans. « aTraiter » = ouvertes + à vérifier. */
