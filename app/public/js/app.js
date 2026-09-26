@@ -2118,7 +2118,7 @@ function leverModal(a) {
     <p class="m-0">La convention de <b>${c.delai} j</b> ${esc(a.fournisseur_nom ? 'avec ' + a.fournisseur_nom : '')} couvre ${a.annee ? `T${a.trimestre} ${a.annee}` : 'la période'}.
       Seule l’alerte « convention absente » sera levée : le retard et la pénalité éventuels restent déclarés.</p>
     ${anoFacts(a)}
-    <p class="mt-8"><a href="/api/conventions/${c.id}/file" target="_blank" rel="noopener">${svgI('doc', '')} Ouvrir le justificatif signé${c.justificatif_nom ? ' (' + esc(c.justificatif_nom) + ')' : ''}</a></p>
+    <p class="mt-8"><a href="/api/conventions/${c.id}/file" target="_blank" rel="noopener">${svgI('doc')} Ouvrir le justificatif signé${c.justificatif_nom ? ' (' + esc(c.justificatif_nom) + ')' : ''}</a></p>
     ${retro ? `<div class="note note-danger mt-12">${svgI('warn')}<div><div class="note-t">Signature rétroactive</div>La convention est signée le <b>${dateFr(c.date_signature)}</b>,
       ${[f.date_facture && c.date_signature > f.date_facture ? `après la facture (${dateFr(f.date_facture)})` : '', a.annee ? `${(c.avertissements || []).includes('Signée après la fin du trimestre') ? 'après la fin du trimestre' : ''}` : ''].filter(Boolean).join(' et ')}.
       <label class="check mt-8"><input type="checkbox" id="lvAck"> J’ai pris connaissance de cette signature rétroactive et je valide la levée en connaissance de cause.</label></div></div>` : ''}
@@ -2159,7 +2159,7 @@ async function renderAnomalies() {
       <div class="al-body"><div class="t">${title} ${badge}</div>
         <div class="m">${esc(anoMessage(a))}</div>
         ${a.type === 'convention_absente' && !verif && !levee && a.situation ? `<div class="m ano-sit">${esc(anoSituation(a))}</div>` : ''}
-        ${(verif || levee) && conv ? anoFacts(a) + `<div class="m"><button class="btn-link" data-conv-ent="${a.ent_id}" data-conv-id="${conv.id}">Voir la convention (${conv.delai} j)</button>${conv.justificatif ? ` · <a href="/api/conventions/${conv.id}/file" target="_blank" rel="noopener">${svgI('doc', '')} Ouvrir le justificatif signé</a>` : ''}</div>` : ''}
+        ${(verif || levee) && conv ? anoFacts(a) + `<div class="m"><button class="btn-link" data-conv-ent="${a.ent_id}" data-conv-id="${conv.id}">Voir la convention (${conv.delai} j)</button>${conv.justificatif ? ` · <a href="/api/conventions/${conv.id}/file" target="_blank" rel="noopener">${svgI('doc')} Ouvrir le justificatif signé</a>` : ''}</div>` : ''}
         ${maintenus}${valid}${resolu}${lock}
         <div class="d">${esc(a.ent || '—')} · ${esc(String(a.created_at || '').slice(0, 10))}${a.annee ? ` · T${a.trimestre} ${a.annee}` : ''}</div></div>
       ${acts.length ? `<div class="al-acts">${acts.join('')}</div>` : ''}</div>`;
