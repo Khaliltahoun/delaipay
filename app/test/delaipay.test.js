@@ -3059,3 +3059,32 @@ test('INC2.3/VER-2b : résolution d’un doublon réel → toutes les factures d
   assert.equal((shown.match(/FA25-5256 du \d{2}\/\d{2}\/\d{4} 76 111,00 DH TTC/g) || []).length, 2, `les deux factures affichées : ${shown}`);
   assert.match(shown, /Fournisseur : MISTRAL ACIERS SA/); assert.ok(!/ano_/.test(shown));
 });
+
+/* ============ Incrément 2.3 — CONV-1 : enjeu simulé à 60 j, lecture seule ============ */
+test('INC2.3/CONV-1 : enjeu à 60 j = 7 057,19 DH sur la référence ; simulation sans aucun effet sur les chiffres enregistrés ni les livrables', async () => {
+  const W = mkWorkspace('enjeu'); const ck = cookieOf(W.u);
+  importer.importWorkbook(demoFixture.demoWorkbookBuffer(), { cabinetId: W.cab, entrepriseId: W.ent, sourceName: 'demo.xlsx', periode: { annee: 2026, trimestre: 1 } });
+  for (const nom of ['KORAL ENGINS SA', 'ALPHA PIECES AUTO', 'BETA EXPRESS SARL', 'ETOILE CARROSSERIE']) {
+    const f = db.prepare('SELECT id FROM fournisseur WHERE entreprise_id=? AND raison_sociale=?').get(W.ent, nom).id;
+    db.prepare("INSERT INTO convention (id,cabinet_id,entreprise_id,fournisseur_id,delai_convenu,statut) VALUES (?,?,?,?,120,'valide')").run(uid('conv'), W.cab, W.ent, f);
+  }
+  const Q = '?annee=2026&trimestre=1';
+  const snap = () => JSON.stringify({
+    f: db.prepare('SELECT ROUND(SUM(montant_amende),2) a, SUM(a_declarer) d, SUM(retard_jours) r, GROUP_CONCAT(delai_applicable) dl FROM facture WHERE entreprise_id=?').get(W.ent),
+    fo: db.prepare('SELECT GROUP_CONCAT(delai_applicable) d FROM fournisseur WHERE entreprise_id=?').get(W.ent),
+    decl: db.prepare('SELECT COUNT(*) n FROM declaration WHERE entreprise_id=?').get(W.ent), audit: db.prepare('SELECT COUNT(*) n FROM audit_log WHERE cabinet_id=?').get(W.cab) });
+  const csv = async () => { const r = await fetch(baseUrl() + `/api/clients/${W.ent}/declaration/export.csv${Q}`, { headers: { Cookie: ck } }); return require('crypto').createHash('md5').update(Buffer.from(await r.arrayBuffer())).digest('hex'); };
+  const visaTxt = async () => JSON.stringify((await reqJson('GET', `/api/clients/${W.ent}/visa${Q}&conclusion=${encodeURIComponent('Avec réserve')}`, { cookie: ck })).body.blocks);
+  const md5a = await csv(), v0 = await visaTxt(), s0 = snap();
+  const en = (await reqJson('GET', `/api/clients/${W.ent}/enjeu-delai-legal${Q}`, { cookie: ck })).body;
+  assert.equal(en.simulation, true);
+  assert.deepEqual(en.total, { factures: 16, amende_appliquee: 152.14, amende_60: 7209.33, ecart: 7057.19 }, 'mêmes chiffres que DECISIONS.md');
+  assert.deepEqual(en.rows.map(r => r.four).slice(0, 2), ['MISTRAL ACIERS SA', 'LYNX BENNES']);
+  assert.match(en.rows[0].source_label, /^Délai de 120 j repris de la colonne « Convention » du fichier client « demo\.xlsx » \(importé le \d{2}\/\d{2}\/\d{4}\) — aucune convention signée enregistrée$/);
+  for (let i = 0; i < 3; i++) await reqJson('GET', `/api/clients/${W.ent}/enjeu-delai-legal${Q}`, { cookie: ck });
+  assert.equal(snap(), s0, 'aucune donnée enregistrée modifiée (factures, délais, déclaration, journal)');
+  assert.equal(await csv(), md5a, 'déclaration CSV identique');
+  const v1 = await visaTxt(); assert.equal(v1, v0, 'texte du visa identique'); assert.ok(!/7[  ]?209|7[  ]?057/.test(v1), 'aucun chiffre simulé dans le visa');
+  const al = (await reqJson('GET', '/api/alerts', { cookie: ck })).body.alerts.filter(a => a.type === 'convention');
+  assert.ok(al.every(a => /repris de la colonne « Convention »/.test(a.message)), 'Alertes : source en clair');
+});

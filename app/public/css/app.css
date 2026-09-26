@@ -416,6 +416,8 @@ td.dim{color:var(--faint)}
 .mb-18{margin-bottom:18px}
 .role-sel{height:32px;width:auto;min-width:150px}
 /* Anomalie levée automatiquement : visible, en retrait, hors compteurs */
+.src-lbl{white-space:normal;max-width:340px;line-height:1.35}
+.card.enjeu .card-h h3{font-size:var(--fs-md)}
 .verif-list{margin:6px 0 0;padding-left:18px}.verif-list li{margin:2px 0}
 .row-focus td{background:var(--brand-50)!important}
 .sev.muted{background:var(--surface-3);color:var(--muted);border-color:var(--line)}

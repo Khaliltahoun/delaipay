@@ -1395,10 +1395,22 @@ const RESEAU_CAT = { telecom: 'Télécommunications', societe_regionale_multiser
 function delaiBadge(d, reseau, conv) {
   return `<span class="badge ${reseau ? 'b30' : (conv || d >= 120 ? 'b120' : 'b60')}">${d} j${reseau ? ' <small>réseau</small>' : (conv ? ' <small>conv.</small>' : (d === 60 ? ' <small>légal</small>' : ''))}</span>`;
 }
+// CONV-1 — enjeu SIMULÉ (lecture seule) : amende au délai appliqué vs au délai légal de 60 j. Jamais repris ailleurs.
+function enjeuBlock(en) {
+  if (!en || !en.rows || !en.rows.length) return '';
+  const T = en.total;
+  return `<div class="card enjeu mt-16"><div class="card-h"><div><h3>Enjeu si le délai légal de 60 j s’appliquait — à confirmer par l’expert-comptable</h3>
+    <div class="sub">Simulation en lecture seule sur T${en.periode.trimestre} ${en.periode.annee} : n’entre ni dans la déclaration, ni dans les exports, ni dans le visa.</div></div>
+    <span class="pill pill-sm pill-warn">Simulation</span></div>
+    <div class="table-wrap flat b-0"><table class="dense rc"><thead><tr><th>Fournisseur</th><th class="num">Factures</th><th class="num">Amende au délai appliqué</th><th class="num">Amende à 60 j</th><th class="num">Écart</th></tr></thead><tbody>
+    ${en.rows.map(r => `<tr><td data-rc="t"><div class="fournisseur"><b>${esc(r.four)}</b><small>${r.delai} j appliqués</small></div></td><td class="num" data-rc="m" data-label="Factures">${r.factures}</td>
+      <td class="num" data-rc="m" data-label="Appliqué">${money(r.amende_appliquee)}</td><td class="num" data-rc="m" data-label="À 60 j">${money(r.amende_60)}</td><td class="num amount" data-rc="a">${r.ecart ? '+' + money(r.ecart) : '0,00'}</td></tr>`).join('')}</tbody>
+    <tfoot><tr><td>Total — ${en.rows.length} fournisseur(s)</td><td class="num" data-label="Factures">${T.factures}</td><td class="num" data-label="Appliqué">${money(T.amende_appliquee)}</td><td class="num" data-label="À 60 j">${money(T.amende_60)}</td><td class="num amount-late" data-label="Écart">+${money(T.ecart)} DH</td></tr></tfoot></table></div></div>`;
+}
 async function renderFournisseurs() {
   if (!state.clientId) return noClient();
   await ensurePeriod();
-  const [fours, data] = await Promise.all([api(`/clients/${state.clientId}/fournisseurs`), api(`/clients/${state.clientId}/delais${perQuery()}`)]);
+  const [fours, data, enjeu] = await Promise.all([api(`/clients/${state.clientId}/fournisseurs`), api(`/clients/${state.clientId}/delais${perQuery()}`), api(`/clients/${state.clientId}/enjeu-delai-legal${perQuery()}`).catch(() => null)]);
   const agg = new Map();
   for (const r of data.rows) {
     const a = agg.get(r.four_id) || { n: 0, ttc: 0, late: 0, amende: 0, delai: r.delai_applicable, reseau: !!r.operateur_reseau, conv: !!r.has_conv };
@@ -1421,11 +1433,12 @@ async function renderFournisseurs() {
   ${rows.length ? `<div class="table-wrap"><table class="dense rc"><thead><tr><th>Fournisseur</th><th data-prio="2">ICE / IF</th><th>Délai appliqué</th><th class="num">Factures</th><th class="num">TTC ${P}</th><th class="num">À déclarer</th><th class="num">Amende</th><th class="col-act"><span class="sr-only">Actions</span></th></tr></thead>
     <tbody id="pgBody"></tbody>
     <tfoot><tr><td>Total — ${rows.length} fournisseur(s)</td><td data-prio="2"></td><td></td><td class="num" data-label="Factures">${data.rows.length}</td><td class="num" data-label="TTC">${money(withInv.reduce((t, r) => t + r.per.ttc, 0))}</td><td class="num" data-label="À déclarer">${late.reduce((t, r) => t + r.per.late, 0)}</td><td class="num amount-late" data-label="Amende">${money(withInv.reduce((t, r) => t + r.per.amende, 0))}</td><td class="col-act"></td></tr></tfoot></table></div><div id="pgMore" class="table-foot"></div>`
-    : emptyBox('Aucun fournisseur', 'Les fournisseurs apparaissent automatiquement à l’import des factures du client.', 'import', 'Importer des factures', 'table')}`;
+    : emptyBox('Aucun fournisseur', 'Les fournisseurs apparaissent automatiquement à l’import des factures du client.', 'import', 'Importer des factures', 'table')}
+  ${enjeuBlock(enjeu)}`;
   if (rows.length) mountPaged(rows, r => `<tr>
       <td data-rc="t"><div class="fournisseur"><b>${esc(r.raison_sociale || '—')}</b>${r.sansJustif ? '<small class="amount-late">Sans convention justificative</small>' : ''}</div></td>
       <td class="mono dh" data-prio="2">${esc(r.ice || '—')}<br><small>IF ${esc(r.if_fiscal || '—')}</small></td>
-      <td data-rc="s">${delaiBadge(r.delai, r.reseau, r.conv)}${r.sansJustif ? `<div class="t-xs dh mt-8" title="${esc(r.sourceLabel)}">Source : délai fournisseur importé, sans convention</div>` : ''}</td>
+      <td data-rc="s">${delaiBadge(r.delai, r.reseau, r.conv)}${r.sansJustif ? `<div class="t-xs dh mt-8 src-lbl">${esc(r.sourceLabel)}</div>` : ''}</td>
       <td class="num" data-rc="m" data-label="Factures">${r.per ? r.per.n : '—'}</td>
       <td class="num" data-rc="a">${r.per ? money(r.per.ttc) : '—'}</td>
       <td class="num ${r.per && r.per.late ? 'amount-late' : 'dim'}" data-rc="s" data-label="À déclarer">${r.per ? r.per.late : '—'}</td>
@@ -1977,7 +1990,7 @@ async function renderVisa() {
   const concl = state._concl && state._concl.key === key ? state._concl.value : '';
   const sign = state._sign || (state.me && state.me.nom) || '';
   const q = `?annee=${state.period.annee}&trimestre=${state.period.trimestre}${concl ? `&conclusion=${encodeURIComponent(concl)}` : ''}${sign ? `&signataire=${encodeURIComponent(sign)}` : ''}`;
-  const v = await api(`/clients/${state.clientId}/visa${q}`, { fresh: true });
+  const [v, enjeu] = await Promise.all([api(`/clients/${state.clientId}/visa${q}`, { fresh: true }), api(`/clients/${state.clientId}/enjeu-delai-legal?annee=${state.period.annee}&trimestre=${state.period.trimestre}`).catch(() => null)]);
   const base = `/api/clients/${state.clientId}/visa`;
   const vf = v.verifications || { total: 0 };
   const preview = v.blocks ? v.blocks.map(b => {
@@ -1991,6 +2004,7 @@ async function renderVisa() {
   <div class="page-head"><div class="eyebrow">${esc(currentClient().name)} · T${v.periode.trimestre} ${v.periode.annee}</div><h1>Visa ${v.type === 'CAC' ? 'du commissaire aux comptes' : "de l'expert-comptable"}</h1><p>Modèle officiel (loi 69-21) · l’aperçu est identique aux fichiers générés. Aucune conclusion n’est proposée par défaut.</p></div>
   ${vf.total ? `<div class="note note-warn">${svgI('warn')}<div><div class="note-t">Points à examiner avant de conclure — ${vf.total}</div>${verifList(vf)}</div></div>`
     : `<div class="note note-ok">${svgI('checkc')}<div><div class="note-t">Aucune vérification en attente sur ce trimestre</div>Anomalies, conventions et périodes de validité : rien à traiter.</div></div>`}
+  ${enjeuBlock(enjeu)}
   <div class="grid-2">
     <div class="card"><div class="card-h"><h3>Paramètres du visa</h3></div><div class="card-b">
       <div class="fld"><label class="fld-lbl">Période visée</label><input class="input-fld" value="Trimestre ${v.periode.trimestre} ${v.periode.annee}${v.debut ? ` · ${v.debut} au ${v.fin}` : ''}" readonly></div>

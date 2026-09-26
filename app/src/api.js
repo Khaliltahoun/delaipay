@@ -712,10 +712,11 @@ router.get('/clients/:id/fournisseurs', (req, res) => {
       (SELECT COUNT(*) FROM convention c WHERE c.fournisseur_id=f.id AND c.statut='valide') has_conv
       FROM fournisseur f WHERE f.entreprise_id=? ORDER BY f.raison_sociale`).all(e.id);
   // Délai appliqué et sa SOURCE (moteur : reseau.resolveDelaiAutorise) + indicateur « sans convention justificative » (CONV-1).
-  const manq = new Set(anomalies.conventionsManquantes({ cabinetId: req.cabinetId, entrepriseId: e.id }).map(x => x.id));
+  const manqL = anomalies.conventionsManquantes({ cabinetId: req.cabinetId, entrepriseId: e.id });
+  const manq = new Set(manqL.map(x => x.id)), manqLabel = new Map(manqL.map(x => [x.id, x.source_label]));
   res.json(rows.map(f => {
     const r = reseau.resolveDelaiAutorise({ fournisseur: f, convention: activeConventionFor(e.id, f.id) });
-    return { ...f, delai_regle: r.delaiAutorise, source_regle: r.sourceRegle, source_label: anomalies.SOURCE_FR[r.sourceRegle] || r.sourceRegle, sans_convention_justificative: manq.has(f.id) };
+    return { ...f, delai_regle: r.delaiAutorise, source_regle: r.sourceRegle, source_label: manqLabel.get(f.id) || anomalies.SOURCE_FR[r.sourceRegle] || r.sourceRegle, sans_convention_justificative: manq.has(f.id) };
   }));
 });
 router.post('/clients/:id/fournisseurs', (req, res) => {
@@ -1153,6 +1154,12 @@ function pendingChecks(cabinetId, e, p) {
   const horsValidite = markHorsValidite(e, p, delaisData(cabinetId, e, p).rows).filter(r => r.conv_hors_validite).length;
   return { ouvertes, aVerifier, convManquantes, horsValidite, total: ouvertes + aVerifier + convManquantes + horsValidite };
 }
+// CONV-1 : enjeu SIMULÉ si le délai légal de 60 j s'appliquait — lecture seule, n'alimente aucun chiffre enregistré.
+router.get('/clients/:id/enjeu-delai-legal', (req, res) => {
+  const e = ownedEntreprise(req, req.params.id); if (!e) return notFound(res, 'client');
+  const p = requirePeriod(req, res); if (!p) return;
+  res.json(anomalies.enjeuDelaiLegal({ cabinetId: req.cabinetId, entrepriseId: e.id }, p));
+});
 router.get('/clients/:id/verifications', (req, res) => {
   const e = ownedEntreprise(req, req.params.id); if (!e) return notFound(res, 'client');
   const p = requirePeriod(req, res); if (!p) return;
@@ -1797,7 +1804,7 @@ router.get('/alerts', (req, res) => {
   const cid = req.cabinetId; const out = [];
   // Conventions manquantes — définition unique (src/anomalies.js), sans limite.
   for (const r of anomalies.conventionsManquantes({ cabinetId: cid }))
-    out.push({ type: 'convention', gravite: 'moyenne', titre: 'Convention manquante', message: `${r.four} — délai de ${r.delai} j appliqué sans convention enregistrée (${r.ent}) : ${r.nb} facture(s).`, date: 'Détecté à l\'import', ent_id: r.ent_id });
+    out.push({ type: 'convention', gravite: 'moyenne', titre: 'Convention manquante', message: `${r.four} (${r.ent}) : ${r.source_label}. ${r.nb} facture(s).`, date: 'Détecté à l\'import', ent_id: r.ent_id });
   // Anomalies À TRAITER (ouvertes + à vérifier) — même source que les compteurs ; aucune troncature.
   for (const a of anomalies.listAnomalies({ cabinetId: cid }).filter(x => x.statut_calc === 'ouverte' || x.statut_calc === 'a_verifier'))
     out.push({ type: a.type, gravite: a.gravite || 'moyenne', statut: a.statut_calc, titre: anomalieLabel(a.type) + (a.statut_calc === 'a_verifier' ? ' — couverte par une convention, à vérifier' : ''),
