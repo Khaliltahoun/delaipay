@@ -3088,3 +3088,22 @@ test('INC2.3/CONV-1 : enjeu à 60 j = 7 057,19 DH sur la référence ; simulatio
   const al = (await reqJson('GET', '/api/alerts', { cookie: ck })).body.alerts.filter(a => a.type === 'convention');
   assert.ok(al.every(a => /repris de la colonne « Convention »/.test(a.message)), 'Alertes : source en clair');
 });
+
+/* ============ Incrément 2.3 — P3-1 : justificatif affiché dans le navigateur, réservé à l'espace ============ */
+test('INC2.3/P3-1 : justificatif PDF / image en ligne (nouvel onglet), autre contenu téléchargé, autre espace refusé', async () => {
+  const A = mkWorkspace('doc-a'), B = mkWorkspace('doc-b');
+  const UPD = path.join(__dirname, '..', 'uploads'); fs.mkdirSync(UPD, { recursive: true });
+  const put = (bytes, nom) => { const f = uid('up') + '.bin'; fs.writeFileSync(path.join(UPD, f), bytes); const id = uid('conv');
+    db.prepare("INSERT INTO convention (id,cabinet_id,entreprise_id,delai_convenu,statut,fichier,fichier_nom) VALUES (?,?,?,120,'valide',?,?)").run(id, A.cab, A.ent, f, nom); return { id, f }; };
+  const pdf = put(Buffer.from('%PDF-1.4\n%%EOF\n'), 'Convention signée.pdf');
+  const png = put(Buffer.from([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0, 0, 0, 0]), 'scan.png');
+  const autre = put(Buffer.from('PK\x03\x04 docx'), 'convention.docx');
+  const get = (id, u) => fetch(baseUrl() + `/api/conventions/${id}/file`, { headers: { Cookie: cookieOf(u) } });
+  let r = await get(pdf.id, A.u);
+  assert.equal(r.status, 200); assert.equal(r.headers.get('content-type'), 'application/pdf');
+  assert.match(r.headers.get('content-disposition'), /^inline; filename\*=UTF-8''Convention%20sign%C3%A9e\.pdf$/, 'affiché, pas téléchargé');
+  r = await get(png.id, A.u); assert.equal(r.headers.get('content-type'), 'image/png'); assert.match(r.headers.get('content-disposition'), /^inline/);
+  r = await get(autre.id, A.u); assert.match(r.headers.get('content-disposition'), /^attachment/, 'contenu non affichable : téléchargement');
+  assert.equal((await get(pdf.id, B.u)).status, 404, 'autre espace : refusé');
+  for (const x of [pdf, png, autre]) fs.rmSync(path.join(UPD, x.f));
+});

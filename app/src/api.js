@@ -874,10 +874,21 @@ router.patch('/clients/:id/conventions/:convId', (req, res) => {
   audit(req.cabinetId, req.user.id, 'update', 'convention', { id: c.id, modifications: changes }, req.ip);
   res.json({ ok: true, changes });
 });
+// Justificatif d'une convention — réservé à l'espace qui le détient. PDF / PNG / JPEG affichés dans le navigateur
+// (nouvel onglet) d'après leurs octets réels ; tout autre contenu est proposé en téléchargement.
 router.get('/conventions/:id/file', (req, res) => {
   const c = db.prepare('SELECT * FROM convention WHERE id=? AND cabinet_id=?').get(req.params.id, req.cabinetId);
   if (!c || !c.fichier) return notFoundText(res, 'fichier');
-  res.download(path.join(UP_DIR, c.fichier), c.fichier_nom || 'convention');
+  const file = path.join(UP_DIR, c.fichier);
+  let head = Buffer.alloc(0); try { const fd = fs.openSync(file, 'r'); head = Buffer.alloc(8); fs.readSync(fd, head, 0, 8, 0); fs.closeSync(fd); } catch (_) { return notFoundText(res, 'fichier'); }
+  const mime = head.slice(0, 4).toString('latin1') === '%PDF' ? 'application/pdf'
+    : (head[0] === 0x89 && head[1] === 0x50 ? 'image/png' : (head[0] === 0xFF && head[1] === 0xD8 ? 'image/jpeg' : null));
+  const nom = (c.fichier_nom || 'convention').replace(/[\r\n"]/g, '');
+  if (!mime || req.query.download) return res.download(file, nom);
+  res.setHeader('Content-Type', mime);
+  res.setHeader('Content-Disposition', `inline; filename*=UTF-8''${encodeURIComponent(nom)}`);
+  res.setHeader('Cache-Control', 'private, no-store');
+  res.sendFile(file);
 });
 
 // Types de fichiers acceptés (validés côté serveur — on ne fait pas confiance au client).
