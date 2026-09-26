@@ -2935,3 +2935,23 @@ test('INC2.1/D : feuille et conventions signalent une convention appliquée hors
   assert.deepEqual(hv, ['ALPHA PIECES AUTO', 'ETOILE CARROSSERIE']);
   assert.ok(cv.filter(c => c.statut === 'Expirée' && c.appliquee).every(c => c.hors_validite), 'jamais « Expirée » + « Appliquée » sans explication');
 });
+
+/* ============ Incrément 2.2 — CONV-1 : sans convention justificative = délai appliqué > 60 j sans convention ============ */
+test('INC2.2/CONV-1 : fournisseurs à 120 j (colonne « Convention » du fichier) sans convention comptés, avec la source du délai', async () => {
+  const W = mkWorkspace('conv1'); const ck = cookieOf(W.u);
+  importer.importWorkbook(demoFixture.demoWorkbookBuffer(), { cabinetId: W.cab, entrepriseId: W.ent, sourceName: 'x', periode: { annee: 2026, trimestre: 1 } });
+  const an = require('../src/anomalies');
+  const noms = () => an.conventionsManquantes({ cabinetId: W.cab }).map(x => x.four).sort();
+  assert.deepEqual(noms(), ['ALPHA PIECES AUTO', 'BETA EXPRESS SARL', 'CEDRE AUTO SARL', 'DUNE BRICOLAGE SARL', 'ETOILE CARROSSERIE', 'FALAISE MATERIAUX',
+    'HORIZON PNEUMATIQUES SARL', 'IRIS AUTO ACCESSOIRES SARL', 'KORAL ENGINS SA', 'LYNX BENNES', 'MISTRAL ACIERS SA'], 'sans aucune convention : 11 fournisseurs à 120 j');
+  const beta = db.prepare("SELECT id FROM fournisseur WHERE entreprise_id=? AND raison_sociale='BETA EXPRESS SARL'").get(W.ent).id;
+  db.prepare("INSERT INTO convention (id,cabinet_id,entreprise_id,fournisseur_id,delai_convenu,statut) VALUES (?,?,?,?,120,'valide')").run(uid('conv'), W.cab, W.ent, beta);
+  assert.ok(!noms().includes('BETA EXPRESS SARL'), 'une convention valide retire le fournisseur');
+  assert.ok(noms().includes('DUNE BRICOLAGE SARL') && noms().includes('LYNX BENNES'), 'fournisseurs jamais en retard à 120 j désormais comptés');
+  const dune = an.conventionsManquantes({ cabinetId: W.cab }).find(x => x.four === 'DUNE BRICOLAGE SARL');
+  assert.equal(dune.delai, 120); assert.equal(dune.source, 'standard'); assert.match(dune.source_label, /importé/);
+  const fs_ = (await reqJson('GET', `/api/clients/${W.ent}/fournisseurs`, { cookie: ck })).body;
+  assert.equal(fs_.filter(f => f.sans_convention_justificative).length, 10, 'page Fournisseurs : même indicateur');
+  assert.equal((await reqJson('GET', '/api/dashboard?annee=2026&trimestre=1', { cookie: ck })).body.kpis.conventionsManquantes, 10);
+  assert.equal(db.prepare('SELECT ROUND(SUM(montant_amende),2) a FROM facture WHERE entreprise_id=?').get(W.ent).a, 7025.33, 'calcul inchangé');
+});

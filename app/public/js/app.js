@@ -1389,9 +1389,9 @@ async function renderFournisseurs() {
     a.n++; a.ttc += r.ttc || 0; if (r.a_declarer) a.late++; a.amende += r.amende || 0; agg.set(r.four_id, a);
   }
   const rows = fours.map(f => { const a = agg.get(f.id); return { ...f, per: a || null,
-    delai: a ? a.delai : f.delai_applicable, reseau: a ? a.reseau : !!(f.operateur_reseau && f.statut_classification === 'confirme'), conv: a ? a.conv : !!f.has_conv }; })
+    delai: f.delai_regle, reseau: f.source_regle === 'operateur_reseau', conv: f.source_regle === 'convention', sansJustif: !!f.sans_convention_justificative, sourceLabel: f.source_label }; })
     .sort((x, y) => ((y.per && y.per.amende) || 0) - ((x.per && x.per.amende) || 0) || ((y.per && y.per.ttc) || 0) - ((x.per && x.per.ttc) || 0) || String(x.raison_sociale || '').localeCompare(String(y.raison_sociale || ''), 'fr'));
-  const withInv = rows.filter(r => r.per), late = rows.filter(r => r.per && r.per.late), sansConv = rows.filter(r => !r.conv && !r.reseau && r.delai >= 120 && r.per && r.per.late); // définition unique (src/anomalies.js conventionsManquantes)
+  const withInv = rows.filter(r => r.per), late = rows.filter(r => r.per && r.per.late), sansConv = rows.filter(r => r.sansJustif); // définition unique côté serveur (src/anomalies.js — CONV-1)
   const P = `T${data.periode.trimestre} ${data.periode.annee}`;
   $('#view').innerHTML = `
   <div class="page-head headrow"><div><div class="eyebrow">${esc(currentClient().name)} · ${P}</div><h1>Fournisseurs</h1>
@@ -1407,9 +1407,9 @@ async function renderFournisseurs() {
     <tfoot><tr><td>Total — ${rows.length} fournisseur(s)</td><td data-prio="2"></td><td></td><td class="num" data-label="Factures">${data.rows.length}</td><td class="num" data-label="TTC">${money(withInv.reduce((t, r) => t + r.per.ttc, 0))}</td><td class="num" data-label="À déclarer">${late.reduce((t, r) => t + r.per.late, 0)}</td><td class="num amount-late" data-label="Amende">${money(withInv.reduce((t, r) => t + r.per.amende, 0))}</td><td class="col-act"></td></tr></tfoot></table></div><div id="pgMore" class="table-foot"></div>`
     : emptyBox('Aucun fournisseur', 'Les fournisseurs apparaissent automatiquement à l’import des factures du client.', 'import', 'Importer des factures', 'table')}`;
   if (rows.length) mountPaged(rows, r => `<tr>
-      <td data-rc="t"><div class="fournisseur"><b>${esc(r.raison_sociale || '—')}</b>${!r.conv && !r.reseau && r.delai >= 120 && r.per && r.per.late ? '<small class="amount-late">Sans convention justificative</small>' : ''}</div></td>
+      <td data-rc="t"><div class="fournisseur"><b>${esc(r.raison_sociale || '—')}</b>${r.sansJustif ? '<small class="amount-late">Sans convention justificative</small>' : ''}</div></td>
       <td class="mono dh" data-prio="2">${esc(r.ice || '—')}<br><small>IF ${esc(r.if_fiscal || '—')}</small></td>
-      <td data-rc="s">${delaiBadge(r.delai, r.reseau, r.conv)}</td>
+      <td data-rc="s">${delaiBadge(r.delai, r.reseau, r.conv)}${r.sansJustif ? `<div class="t-xs dh mt-8" title="${esc(r.sourceLabel)}">Source : délai fournisseur importé, sans convention</div>` : ''}</td>
       <td class="num" data-rc="m" data-label="Factures">${r.per ? r.per.n : '—'}</td>
       <td class="num" data-rc="a">${r.per ? money(r.per.ttc) : '—'}</td>
       <td class="num ${r.per && r.per.late ? 'amount-late' : 'dim'}" data-rc="s" data-label="À déclarer">${r.per ? r.per.late : '—'}</td>

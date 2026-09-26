@@ -705,7 +705,12 @@ router.get('/clients/:id/fournisseurs', (req, res) => {
   const rows = db.prepare(`SELECT f.*,
       (SELECT COUNT(*) FROM convention c WHERE c.fournisseur_id=f.id AND c.statut='valide') has_conv
       FROM fournisseur f WHERE f.entreprise_id=? ORDER BY f.raison_sociale`).all(e.id);
-  res.json(rows);
+  // Délai appliqué et sa SOURCE (moteur : reseau.resolveDelaiAutorise) + indicateur « sans convention justificative » (CONV-1).
+  const manq = new Set(anomalies.conventionsManquantes({ cabinetId: req.cabinetId, entrepriseId: e.id }).map(x => x.id));
+  res.json(rows.map(f => {
+    const r = reseau.resolveDelaiAutorise({ fournisseur: f, convention: activeConventionFor(e.id, f.id) });
+    return { ...f, delai_regle: r.delaiAutorise, source_regle: r.sourceRegle, source_label: anomalies.SOURCE_FR[r.sourceRegle] || r.sourceRegle, sans_convention_justificative: manq.has(f.id) };
+  }));
 });
 router.post('/clients/:id/fournisseurs', (req, res) => {
   const e = ownedEntreprise(req, req.params.id); if (!e) return notFound(res, 'client');
@@ -1760,7 +1765,7 @@ router.get('/alerts', (req, res) => {
   const cid = req.cabinetId; const out = [];
   // Conventions manquantes — définition unique (src/anomalies.js), sans limite.
   for (const r of anomalies.conventionsManquantes({ cabinetId: cid }))
-    out.push({ type: 'convention', gravite: 'moyenne', titre: 'Convention manquante', message: `${r.four} — délai de 120 j appliqué sans convention enregistrée (${r.ent}).`, date: 'Détecté à l\'import', ent_id: r.ent_id });
+    out.push({ type: 'convention', gravite: 'moyenne', titre: 'Convention manquante', message: `${r.four} — délai de ${r.delai} j appliqué sans convention enregistrée (${r.ent}) : ${r.nb} facture(s).`, date: 'Détecté à l\'import', ent_id: r.ent_id });
   // Anomalies À TRAITER (ouvertes + à vérifier) — même source que les compteurs ; aucune troncature.
   for (const a of anomalies.listAnomalies({ cabinetId: cid }).filter(x => x.statut_calc === 'ouverte' || x.statut_calc === 'a_verifier'))
     out.push({ type: a.type, gravite: a.gravite || 'moyenne', statut: a.statut_calc, titre: anomalieLabel(a.type) + (a.statut_calc === 'a_verifier' ? ' — couverte par une convention, à vérifier' : ''),
@@ -1806,16 +1811,8 @@ router.get('/portfolio/retards', (req, res) => {
   res.json(rows);
 });
 router.get('/portfolio/conventions-manquantes', (req, res) => {
-  const rows = db.prepare(`SELECT fo.id four_id, fo.raison_sociale four, fo.ice, fo.if_fiscal, fo.delai_applicable,
-     e.id ent_id, e.raison_sociale ent,
-     (SELECT COUNT(*) FROM facture x WHERE x.fournisseur_id=fo.id AND x.a_declarer=1) nb,
-     (SELECT COALESCE(SUM(x.ttc),0) FROM facture x WHERE x.fournisseur_id=fo.id AND x.a_declarer=1) ttc
-     FROM fournisseur fo JOIN entreprise e ON e.id=fo.entreprise_id
-     WHERE fo.cabinet_id=? AND fo.delai_applicable>=120
-       AND NOT EXISTS (SELECT 1 FROM convention c WHERE c.fournisseur_id=fo.id AND c.statut='valide')
-       AND EXISTS (SELECT 1 FROM facture x WHERE x.fournisseur_id=fo.id AND x.a_declarer=1)
-     ORDER BY nb DESC`).all(req.cabinetId);
-  res.json(rows);
+  // Même définition que tous les compteurs (src/anomalies.js — CONV-1).
+  res.json(anomalies.conventionsManquantes({ cabinetId: req.cabinetId }).map(r => ({ ...r, four_id: r.id })));
 });
 router.get('/portfolio/conventions', (req, res) => {
   const rows = db.prepare(`SELECT c.*, e.raison_sociale ent, e.id ent_id, fo.raison_sociale four, fo.ice four_ice

@@ -87,15 +87,29 @@ function anomalyCounts(scope) {
   return n;
 }
 
-/** Fournisseurs « sans convention justificative » — définition UNIQUE (ANO-9) : délai de 120 j appliqué,
- *  aucune convention valide, au moins une facture à déclarer. */
+/** Fournisseurs « sans convention justificative » — définition UNIQUE (CONV-1, affichage seulement) :
+ *  le délai APPLIQUÉ par le moteur (reseau.resolveDelaiAutorise, inchangé) dépasse le délai légal de 60 j et ne provient
+ *  d'aucune convention valide, QUELLE QUE SOIT sa source. En pratique : branche « standard » avec un délai fournisseur > 60 j,
+ *  typiquement issu de la colonne « Convention » / « Délai convenu » d'un fichier importé (importer.js, format DELAI). */
+const SOURCE_FR = { standard: 'Délai enregistré sur le fournisseur (importé — colonne « Convention » / « Délai convenu »), sans convention',
+  convention: 'Convention', operateur_reseau: 'Opérateur de réseau confirmé' };
 function conventionsManquantes(scope) {
-  return db.prepare(`SELECT fo.id, fo.raison_sociale four, fo.ice, fo.if_fiscal, e.id ent_id, e.raison_sociale ent,
-      COUNT(f.id) nb, ROUND(SUM(f.ttc),2) ttc
-    FROM fournisseur fo JOIN facture f ON f.fournisseur_id=fo.id AND f.a_declarer=1 JOIN entreprise e ON e.id=fo.entreprise_id
-    WHERE fo.cabinet_id=?${scope.entrepriseId ? ' AND fo.entreprise_id=?' : ''} AND fo.delai_applicable>=120
-      AND NOT EXISTS (SELECT 1 FROM convention c WHERE c.fournisseur_id=fo.id AND c.statut='valide')
-    GROUP BY fo.id ORDER BY ttc DESC`).all(...(scope.entrepriseId ? [scope.cabinetId, scope.entrepriseId] : [scope.cabinetId]));
+  const reseau = require('./reseau');
+  const fours = db.prepare(`SELECT fo.*, e.raison_sociale ent, e.id ent_id FROM fournisseur fo JOIN entreprise e ON e.id=fo.entreprise_id
+    WHERE fo.cabinet_id=?${scope.entrepriseId ? ' AND fo.entreprise_id=?' : ''}`).all(...(scope.entrepriseId ? [scope.cabinetId, scope.entrepriseId] : [scope.cabinetId]));
+  const agg = db.prepare(`SELECT COUNT(*) nb, COALESCE(SUM(a_declarer),0) nb_decl, ROUND(COALESCE(SUM(ttc),0),2) ttc,
+    ROUND(COALESCE(SUM(CASE WHEN a_declarer=1 THEN ttc ELSE 0 END),0),2) ttc_decl FROM facture WHERE fournisseur_id=?`);
+  const out = [];
+  for (const fo of fours) {
+    const conv = require('./db').activeConventionFor(fo.entreprise_id, fo.id);
+    const r = reseau.resolveDelaiAutorise({ fournisseur: fo, convention: conv });
+    if (r.sourceRegle === 'convention' || r.delaiAutorise <= 60) continue;
+    const a = agg.get(fo.id);
+    out.push({ id: fo.id, four: fo.raison_sociale, ice: fo.ice, if_fiscal: fo.if_fiscal, ent_id: fo.ent_id, ent: fo.ent,
+      delai: r.delaiAutorise, source: r.sourceRegle, source_label: SOURCE_FR[r.sourceRegle] || r.sourceRegle,
+      nb: a.nb, nb_decl: a.nb_decl, ttc: a.ttc, ttc_decl: a.ttc_decl });
+  }
+  return out.sort((x, y) => y.ttc - x.ttc);
 }
 
-module.exports = { listAnomalies, anomalyCounts, conventionsManquantes, covers, quarterBounds, convStart, LOCKED };
+module.exports = { listAnomalies, anomalyCounts, conventionsManquantes, SOURCE_FR, covers, quarterBounds, convStart, LOCKED };
