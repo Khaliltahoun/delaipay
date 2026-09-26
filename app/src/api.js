@@ -671,6 +671,11 @@ router.post('/clients/:id/periods/:annee/:trimestre/close', (req, res) => {
   const pr = ensurePeriode(req.cabinetId, e.id, p.annee, p.trimestre);
   const statutAvant = pr.statut;
   const statut = (req.body && req.body.statut === 'declaree') ? 'declaree' : 'cloturee';
+  // VISA-1 : vérifications en attente → accusé explicite obligatoire (la clôture reste possible, jamais silencieuse).
+  const verifs = pendingChecks(req.cabinetId, e, p);
+  if (verifs.total > 0 && !(req.body && req.body.ackVerifications === true))
+    return res.status(409).json({ code: 'verifications_en_attente', verifications: verifs,
+      error: `Des vérifications sont en attente sur T${p.trimestre} ${p.annee} : confirmez que vous clôturez en connaissance de cause.` });
   // Fige l'état EXACT au moment du verrouillage (recalcul possible tant que non verrouillée),
   // puis verrouille : les valeurs ne bougeront plus (recomputePeriod devient no-op ensuite).
   recomputePeriod(req.cabinetId, e.id, p.annee, p.trimestre);
@@ -679,7 +684,8 @@ router.post('/clients/:id/periods/:annee/:trimestre/close', (req, res) => {
   buildDeclaration(req.cabinetId, e, p.annee, p.trimestre);
   db.prepare(`UPDATE periode_declaration SET statut=?, date_cloture=datetime('now'), cloturee_par=?, updated_at=datetime('now') WHERE id=?`)
     .run(statut, req.user.id, pr.id);
-  audit(req.cabinetId, req.user.id, 'cloture_periode', 'periode', { entreprise: e.id, annee: p.annee, trimestre: p.trimestre, avant: statutAvant, apres: statut }, req.ip);
+  audit(req.cabinetId, req.user.id, 'cloture_periode', 'periode', { entreprise: e.id, annee: p.annee, trimestre: p.trimestre, avant: statutAvant, apres: statut,
+    verifications_en_attente: verifs, accuse_verifications: verifs.total > 0 }, req.ip);
   res.json({ ok: true, statut });
 });
 
@@ -1125,20 +1131,38 @@ const DELAIS_FILTRES = {
   conv:   { label: 'Convention absente',       test: r => !r.has_conv && r.delai_applicable >= 120 },
 };
 
-router.get('/clients/:id/delais', (req, res) => {
-  const e = ownedEntreprise(req, req.params.id); if (!e) return notFound(res, 'client');
-  const p = req.query.annee ? { annee: +req.query.annee, trimestre: +req.query.trimestre } : latestPeriod(e.id);
-  const data = delaisData(req.cabinetId, e, p);
-  // INC 2.1-D (affichage seulement, calcul inchangé) : convention appliquée par le moteur (statut, LOT 4) dont les
-  // dates ne couvrent pas le trimestre → « appliquée hors de sa période de validité — à confirmer ».
+// INC 2.1-D (affichage seulement, calcul inchangé) : convention appliquée par le moteur (statut, LOT 4) dont les
+// dates ne couvrent pas le trimestre → « appliquée hors de sa période de validité — à confirmer ».
+function markHorsValidite(e, p, rows) {
   const cache = new Map();
-  for (const r of data.rows || []) {
+  for (const r of rows || []) {
     if (r.source_regle !== 'convention' || !r.four_id) continue;
     if (!cache.has(r.four_id)) cache.set(r.four_id, activeConventionFor(e.id, r.four_id));
     const c = cache.get(r.four_id);
     if (c && anomalies.covers(c, p.annee, p.trimestre) === false)
       r.conv_hors_validite = { id: c.id, debut: anomalies.convStart(c), fin: c.date_fin || null };
   }
+  return rows;
+}
+// VISA-1 : vérifications en attente d'un dossier pour un trimestre (anomalies du trimestre ou sans trimestre connu).
+function pendingChecks(cabinetId, e, p) {
+  const anos = anomalies.listAnomalies({ cabinetId, entrepriseId: e.id })
+    .filter(a => a.annee == null || (+a.annee === +p.annee && +a.trimestre === +p.trimestre));
+  const ouvertes = anos.filter(a => a.statut_calc === 'ouverte').length, aVerifier = anos.filter(a => a.statut_calc === 'a_verifier').length;
+  const convManquantes = anomalies.conventionsManquantes({ cabinetId, entrepriseId: e.id }).length;
+  const horsValidite = markHorsValidite(e, p, delaisData(cabinetId, e, p).rows).filter(r => r.conv_hors_validite).length;
+  return { ouvertes, aVerifier, convManquantes, horsValidite, total: ouvertes + aVerifier + convManquantes + horsValidite };
+}
+router.get('/clients/:id/verifications', (req, res) => {
+  const e = ownedEntreprise(req, req.params.id); if (!e) return notFound(res, 'client');
+  const p = requirePeriod(req, res); if (!p) return;
+  res.json(pendingChecks(req.cabinetId, e, p));
+});
+router.get('/clients/:id/delais', (req, res) => {
+  const e = ownedEntreprise(req, req.params.id); if (!e) return notFound(res, 'client');
+  const p = req.query.annee ? { annee: +req.query.annee, trimestre: +req.query.trimestre } : latestPeriod(e.id);
+  const data = delaisData(req.cabinetId, e, p);
+  markHorsValidite(e, p, data.rows);
   res.json(data);
 });
 
@@ -1719,18 +1743,24 @@ router.get('/clients/:id/declaration/export.xml', (req, res) => {
 });
 
 /* ============================================================ VISA */
+const VISA_CONCLUSIONS = ['Sans observation', 'Avec observation', 'Avec réserve', 'Refus de visa'];
 function visaData(req, e) {
   const p = req.query.annee ? { annee: +req.query.annee, trimestre: +req.query.trimestre } : latestPeriod(e.id);
   const { declaration } = buildDeclaration(req.cabinetId, e, p.annee, p.trimestre);
-  const conclusion = req.query.conclusion || 'Sans observation';
+  // VISA-1 : aucune conclusion par défaut — choix explicite parmi les quatre conclusions du modèle.
+  const conclusion = VISA_CONCLUSIONS.includes(req.query.conclusion) ? req.query.conclusion : null;
   const signataire = req.query.signataire || (db.prepare('SELECT nom FROM utilisateur WHERE id=?').get(req.user.id) || {}).nom || 'Le professionnel';
-  const data = visa.buildData({ e, annee: p.annee, trimestre: p.trimestre, montant: declaration.montant_total_ttc, conclusion, signataire, type: visaOf(e.ca_ht) });
-  return { p, declaration, data };
+  const data = conclusion ? visa.buildData({ e, annee: p.annee, trimestre: p.trimestre, montant: declaration.montant_total_ttc, conclusion, signataire, type: visaOf(e.ca_ht) }) : null;
+  return { p, declaration, data, conclusion, signataire };
 }
 router.get('/clients/:id/visa', (req, res) => {
   const e = ownedEntreprise(req, req.params.id); if (!e) return notFound(res, 'client');
-  const { p, declaration, data } = visaData(req, e);
+  const { p, declaration, data, signataire } = visaData(req, e);
+  const verifications = pendingChecks(req.cabinetId, e, p);
+  if (!data) return res.json({ choix_requis: true, conclusions: VISA_CONCLUSIONS, verifications, periode: p, signataire, type: visaOf(e.ca_ht),
+    montant_vise: declaration.montant_total_ttc, montant_amende: declaration.montant_total_amende });
   res.json({
+    verifications, conclusions: VISA_CONCLUSIONS,
     type: data.type, typeLabel: data.typeLabel, periode: p,
     montant_vise: declaration.montant_total_ttc, montant_amende: declaration.montant_total_amende,
     conclusion: data.conclusion, signataire: data.signataire, reference: 'Article 2.78 · Directive OEC du 06/10/2024',
@@ -1741,6 +1771,7 @@ router.get('/clients/:id/visa/export.docx', asyncHandler(async (req, res) => {
   const e = ownedEntreprise(req, req.params.id); if (!e) return notFoundText(res, 'client');
   if (!requireExportPeriod(req, res)) return;
   const { p, declaration, data } = visaData(req, e);
+  if (!data) return res.status(400).type('text/plain; charset=utf-8').send('Choisissez explicitement la conclusion du visa (sans observation, avec observation, avec réserve ou refus) avant de l’exporter.');
   const buf = await visa.toDocx(data.blocks);
   res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document');
   res.setHeader('Content-Disposition', `attachment; filename="Visa_${slugify(e.raison_sociale)}_T${p.trimestre}_${p.annee}.docx"`);
@@ -1751,6 +1782,7 @@ router.get('/clients/:id/visa/export.pdf', (req, res, next) => {
   const e = ownedEntreprise(req, req.params.id); if (!e) return notFoundText(res, 'client');
   if (!requireExportPeriod(req, res)) return;
   const { p, declaration, data } = visaData(req, e);
+  if (!data) return res.status(400).type('text/plain; charset=utf-8').send('Choisissez explicitement la conclusion du visa (sans observation, avec observation, avec réserve ou refus) avant de l’exporter.');
   res.setHeader('Content-Type', 'application/pdf');
   res.setHeader('Content-Disposition', `attachment; filename="Visa_${slugify(e.raison_sociale)}_T${p.trimestre}_${p.annee}.pdf"`);
   auditExport(req, 'visa', 'pdf', e, p, { type: data.type, montant_vise: declaration.montant_total_ttc, conclusion: data.conclusion });

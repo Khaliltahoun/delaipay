@@ -2151,7 +2151,9 @@ test('lot7/vide : une période sans données produit un fichier valide, jamais u
   assert.equal(rows.find(r => r[0] === 'TOTAL')[5], 0, 'total à zéro');
   assert.match(String(rows[1][0]), /0 facture\(s\) de la période/, 'sous-titre explicite');
   for (const f of ['visa/export.docx', 'visa/export.pdf']) {
-    const v = await getXlsx(`/api/clients/${t.ent}/${f}${per}`, cookieOf(t.u));
+    // VISA-1 (INC 2.2) : sans conclusion explicite, aucun visa n'est produit.
+    assert.equal((await getXlsx(`/api/clients/${t.ent}/${f}${per}`, cookieOf(t.u))).status, 400, `${f} : conclusion obligatoire`);
+    const v = await getXlsx(`/api/clients/${t.ent}/${f}${per}&conclusion=${encodeURIComponent('Sans observation')}`, cookieOf(t.u));
     assert.equal(v.status, 200, `${f} : document généré même sans données`);
     assert.ok(v.buf.length > 500, `${f} : document non vide`);
   }
@@ -2181,8 +2183,9 @@ test('lot7/audit : chaque export est journalisé (utilisateur, date, cabinet, p�
   await getXlsx(`/api/clients/${t.ent}/delais/export.xlsx${per}&filter=all`, cookieOf(t.u));
   await getText(`/api/clients/${t.ent}/declaration/export.csv${per}`, cookieOf(t.u));
   await getText(`/api/clients/${t.ent}/declaration/export.xml${per}`, cookieOf(t.u));
-  await getXlsx(`/api/clients/${t.ent}/visa/export.docx${per}`, cookieOf(t.u));
-  await getXlsx(`/api/clients/${t.ent}/visa/export.pdf${per}`, cookieOf(t.u));
+  const vc = `&conclusion=${encodeURIComponent('Avec réserve')}`; // VISA-1 : conclusion explicite
+  await getXlsx(`/api/clients/${t.ent}/visa/export.docx${per}${vc}`, cookieOf(t.u));
+  await getXlsx(`/api/clients/${t.ent}/visa/export.pdf${per}${vc}`, cookieOf(t.u));
   const logs = db.prepare("SELECT action, entite, details, user_id, cabinet_id, created_at FROM audit_log WHERE cabinet_id=? AND action='export' ORDER BY rowid").all(t.cab);
   assert.equal(logs.length, 5, 'les 5 exports sont tracés');
   const formats = logs.map(l => JSON.parse(l.details).format);
@@ -2862,7 +2865,9 @@ test('INC2.1/A : un seul compteur pour tous les écrans, y compris après clôtu
     return [dash.kpis.anomalies, list.counts.aTraiter, counts.aTraiter, alerts.alerts.filter(a => !ANO_TYPES.has(a.type)).length, summary.kpis.anomalies];
   };
   const v0 = await all(); assert.ok(v0[0] > 30, 'plus de 30 anomalies (l’ancienne troncature)'); assert.ok(v0.every(x => x === v0[0]), `écrans alignés : ${v0}`);
-  assert.equal((await reqJson('POST', `/api/clients/${W.ent}/periods/2026/1/close`, { cookie: ck, body: {} })).status, 200);
+  const c0 = await reqJson('POST', `/api/clients/${W.ent}/periods/2026/1/close`, { cookie: ck, body: {} });
+  assert.equal(c0.status, 409, 'VISA-1 : clôture silencieuse refusée'); assert.equal(c0.body.code, 'verifications_en_attente');
+  assert.equal((await reqJson('POST', `/api/clients/${W.ent}/periods/2026/1/close`, { cookie: ck, body: { ackVerifications: true } })).status, 200);
   const v1 = await all(); assert.ok(v1.every(x => x === v1[0]), `après clôture : ${v1}`);
   assert.equal((await reqJson('POST', `/api/clients/${W.ent}/periods/2026/1/reopen`, { cookie: ck, body: { motif: 'test' } })).status, 200);
   const v2 = await all(); assert.ok(v2.every(x => x === v2[0]), `après réouverture : ${v2}`);
@@ -2996,4 +3001,25 @@ test('INC2.2/VER-2 + signature rétroactive : entrées de levée et d’annulati
   const an = JSON.parse(db.prepare("SELECT details FROM audit_log WHERE cabinet_id=? AND action='annulation_levee'").get(W.cab).details);
   assert.equal(an.motif, 'Signature à revérifier'); assert.equal(an.facture, 'D7'); assert.equal(an.fournisseur, 'DELTA SARL'); assert.equal(an.convention.id, c);
   assert.equal(an.levee_initiale.commentaire, 'Vu');
+});
+
+/* ============ Incrément 2.2 — VISA-1 : jamais de « Sans observation » silencieux ============ */
+test('INC2.2/VISA-1 : aucune conclusion par défaut, vérifications listées, clôture avec accusé consigné', async () => {
+  const W = mkWorkspace('visa1'); const ck = cookieOf(W.u);
+  importer.importWorkbook(demoFixture.demoWorkbookBuffer(), { cabinetId: W.cab, entrepriseId: W.ent, sourceName: 'x', periode: { annee: 2026, trimestre: 1 } });
+  const Q = '?annee=2026&trimestre=1';
+  const v0 = (await reqJson('GET', `/api/clients/${W.ent}/visa${Q}`, { cookie: ck })).body;
+  assert.equal(v0.choix_requis, true, 'aucune conclusion présélectionnée'); assert.equal(v0.blocks, undefined, 'aucun aperçu sans choix');
+  assert.deepEqual(v0.conclusions, ['Sans observation', 'Avec observation', 'Avec réserve', 'Refus de visa']);
+  assert.ok(v0.verifications.ouvertes > 0 && v0.verifications.convManquantes > 0, 'points en attente listés avant le choix');
+  assert.equal(v0.verifications.total, v0.verifications.ouvertes + v0.verifications.aVerifier + v0.verifications.convManquantes + v0.verifications.horsValidite);
+  assert.equal((await reqJson('GET', `/api/clients/${W.ent}/visa${Q}&conclusion=Autre`, { cookie: ck })).body.choix_requis, true, 'valeur inconnue = pas de choix');
+  const v1 = (await reqJson('GET', `/api/clients/${W.ent}/visa${Q}&conclusion=${encodeURIComponent('Avec réserve')}`, { cookie: ck })).body;
+  assert.equal(v1.conclusion, 'Avec réserve'); assert.ok(v1.blocks.length > 5);
+  const c0 = await reqJson('POST', `/api/clients/${W.ent}/periods/2026/1/close${Q}`, { cookie: ck, body: {} });
+  assert.equal(c0.status, 409); assert.deepEqual(c0.body.verifications, v0.verifications);
+  assert.equal(db.prepare("SELECT COUNT(*) n FROM periode_declaration WHERE entreprise_id=? AND statut='cloturee'").get(W.ent).n, 0, 'rien de clôturé sans accusé');
+  assert.equal((await reqJson('POST', `/api/clients/${W.ent}/periods/2026/1/close${Q}`, { cookie: ck, body: { ackVerifications: true } })).status, 200);
+  const au = JSON.parse(db.prepare("SELECT details FROM audit_log WHERE cabinet_id=? AND action='cloture_periode'").get(W.cab).details);
+  assert.equal(au.accuse_verifications, true); assert.deepEqual(au.verifications_en_attente, v0.verifications);
 });

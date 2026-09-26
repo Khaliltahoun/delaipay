@@ -579,21 +579,36 @@ function periodDetail(p = state.period) {
   return api(`/clients/${state.clientId}/periods/${p.annee}/${p.trimestre}/summary`, { fresh: true });
 }
 function dateTimeFr(s) { if (!s) return '—'; const m = String(s).match(/^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2})/); return m ? `${m[3]}/${m[2]}/${m[1]} à ${m[4]}:${m[5]}` : dateFr(s); }
+// VISA-1 : vérifications en attente lues avant la clôture ; la case d'accusé vit dans le dialogue (retiré à sa
+// fermeture), son état est donc mémorisé à chaque changement.
+async function closeVerifPrep() {
+  let vf = { total: 0 }; try { vf = await api(`/clients/${state.clientId}/verifications${perQuery()}`, { fresh: true }); } catch (_) {}
+  window._lastAckVerif = false;
+  const onAck = ev => { if (ev.target && ev.target.id === 'ackVerif') window._lastAckVerif = ev.target.checked; };
+  document.addEventListener('change', onAck);
+  return { vf, onAck };
+}
 async function closePeriodAction() {
   const p = state.period; if (!p) return;
   closePeriodPanel();
   let d = null; try { d = await periodDetail(p); } catch (_) {}
   const k = (d && d.kpis) || {};
+  const { vf, onAck } = await closeVerifPrep();
   const ok = await ui.confirm({
     tone: 'locked', icon: 'lock', title: `Clôturer ${TRI_LABEL(p.trimestre)} ${p.annee} — ${currentClient() ? currentClient().name : ''}`,
     html: `<p>La clôture <b>fige définitivement</b> la déclaration, les montants, les pénalités et tous les exports de cette période.</p>
-      <p>La période passe en <b>lecture seule</b> : aucune saisie, modification ni import. Une réouverture ultérieure exigera un administrateur et un motif, inscrits au journal d'audit.</p>`,
+      <p>La période passe en <b>lecture seule</b> : aucune saisie, modification ni import. Une réouverture ultérieure exigera un administrateur et un motif, inscrits au journal d'audit.</p>
+      ${vf.total ? `<div class="note note-warn mt-12">${svgI('warn')}<div><div class="note-t">Vérifications en attente — ${vf.total}</div>${verifList(vf)}
+        <label class="check mt-8"><input type="checkbox" id="ackVerif"> Je clôture en connaissance de ces points en attente (consigné au journal d’audit).</label></div></div>` : ''}`,
     facts: d ? [['Factures', String(k.factures ?? '—')], ['En retard (à déclarer)', String(k.aDeclarer ?? '—')], ['Montant TTC concerné', money(k.ttcRetard) + ' DH'], ['Amende du trimestre', money(k.amende) + ' DH']] : [],
     confirmLabel: `Clôturer ${TRI_LABEL(p.trimestre)} ${p.annee}`,
   });
+  document.removeEventListener('change', onAck);
+  state._ackVerif = !!window._lastAckVerif;
   if (!ok) return;
+  if (vf.total && !state._ackVerif) { toast('Cochez la case confirmant que vous clôturez en connaissance des vérifications en attente.', 'warn', 'Clôture non effectuée'); return; }
   try {
-    await api(`/clients/${state.clientId}/periods/${p.annee}/${p.trimestre}/close${perQuery()}`, { method: 'POST', body: {} });
+    await api(`/clients/${state.clientId}/periods/${p.annee}/${p.trimestre}/close${perQuery()}`, { method: 'POST', body: { ackVerifications: !!state._ackVerif } });
     toast(`Période ${p.annee} ${TRI_LABEL(p.trimestre)} clôturée (lecture seule).`, 'ok', 'Clôture');
     closePeriodPanel(); await loadPeriods(); renderView(state.view);
   } catch (e) { toast(e.message, 'err', 'Clôture impossible'); }
@@ -1947,35 +1962,47 @@ async function renderDecl() {
 }
 
 /* ============================== VISA ============================== */
+// Vérifications en attente d'un trimestre (VISA-1) — affichées avant le choix de conclusion et avant une clôture.
+function verifList(v) {
+  const it = [['ouvertes', 'anomalie(s) ouverte(s)', 'anomalies'], ['aVerifier', 'anomalie(s) couverte(s) par une convention, à vérifier', 'anomalies'],
+    ['convManquantes', 'fournisseur(s) sans convention justificative', 'fournisseurs'], ['horsValidite', 'facture(s) avec une convention appliquée hors de sa période de validité', 'delais']];
+  return `<ul class="verif-list">${it.filter(([k]) => v[k] > 0).map(([k, l, go]) => `<li><b>${v[k]}</b> ${l} <button class="btn-link" onclick="setView('${go}')">Voir</button></li>`).join('')}</ul>`;
+}
 async function renderVisa() {
   if (!state.clientId) return noClient();
   const periods = await ensurePeriod();
-  const concl = state._concl || 'Sans observation';
+  // VISA-1 : aucune conclusion présélectionnée ; le choix vaut pour CE dossier et CE trimestre uniquement.
+  const key = `${state.clientId}|${state.period.annee}|${state.period.trimestre}`;
+  const concl = state._concl && state._concl.key === key ? state._concl.value : '';
   const sign = state._sign || (state.me && state.me.nom) || '';
-  const q = `?annee=${state.period.annee}&trimestre=${state.period.trimestre}&conclusion=${encodeURIComponent(concl)}${sign ? `&signataire=${encodeURIComponent(sign)}` : ''}`;
-  const v = await api(`/clients/${state.clientId}/visa${q}`);
+  const q = `?annee=${state.period.annee}&trimestre=${state.period.trimestre}${concl ? `&conclusion=${encodeURIComponent(concl)}` : ''}${sign ? `&signataire=${encodeURIComponent(sign)}` : ''}`;
+  const v = await api(`/clients/${state.clientId}/visa${q}`, { fresh: true });
   const base = `/api/clients/${state.clientId}/visa`;
-  const preview = v.blocks.map(b => {
+  const vf = v.verifications || { total: 0 };
+  const preview = v.blocks ? v.blocks.map(b => {
     const runs = (b.runs || []).map(r => { let t = esc(r.t); if (r.u) t = `<u>${t}</u>`; if (r.b) t = `<b>${t}</b>`; return t; }).join('');
     if (!runs) return '<div style="height:9px"></div>';
     return `<p style="text-align:${b.align === 'right' ? 'right' : (b.align === 'left' ? 'left' : 'justify')};margin:0 0 11px">${runs}</p>`;
-  }).join('');
+  }).join('') : `<div class="empty"><div class="ic">${svgI('seal', '')}</div><h4>Choisissez la conclusion</h4><p>L’aperçu et les fichiers Word / PDF sont produits après votre choix explicite de conclusion.</p></div>`;
   $('#view').innerHTML = `
   ${clientPeriodBar(periods)}
   ${lockBanner()}
-  <div class="page-head"><div class="eyebrow">${esc(currentClient().name)} · T${v.periode.trimestre} ${v.periode.annee}</div><h1>Visa ${v.type === 'CAC' ? 'du commissaire aux comptes' : "de l'expert-comptable"}</h1><p>Modèle officiel (loi 69-21) · l'aperçu est identique aux fichiers <b>Word</b> et <b>PDF</b> générés.</p></div>
+  <div class="page-head"><div class="eyebrow">${esc(currentClient().name)} · T${v.periode.trimestre} ${v.periode.annee}</div><h1>Visa ${v.type === 'CAC' ? 'du commissaire aux comptes' : "de l'expert-comptable"}</h1><p>Modèle officiel (loi 69-21) · l’aperçu est identique aux fichiers générés. Aucune conclusion n’est proposée par défaut.</p></div>
+  ${vf.total ? `<div class="note note-warn">${svgI('warn')}<div><div class="note-t">Points à examiner avant de conclure — ${vf.total}</div>${verifList(vf)}</div></div>`
+    : `<div class="note note-ok">${svgI('checkc')}<div><div class="note-t">Aucune vérification en attente sur ce trimestre</div>Anomalies, conventions et périodes de validité : rien à traiter.</div></div>`}
   <div class="grid-2">
     <div class="card"><div class="card-h"><h3>Paramètres du visa</h3></div><div class="card-b">
-      <div class="fld"><label class="fld-lbl">Type de professionnel</label><input class="input-fld" value="${esc(v.typeLabel)}" readonly></div>
-      <div class="fld"><label class="fld-lbl">Période visée</label><input class="input-fld" value="Trimestre ${v.periode.trimestre} ${v.periode.annee} · ${v.debut} au ${v.fin}" readonly></div>
+      <div class="fld"><label class="fld-lbl">Période visée</label><input class="input-fld" value="Trimestre ${v.periode.trimestre} ${v.periode.annee}${v.debut ? ` · ${v.debut} au ${v.fin}` : ''}" readonly></div>
       <div class="fld"><label class="fld-lbl">Montant visé (factures non payées dans les délais)</label><input class="input-fld mono" value="${money(v.montant_vise)} DH" readonly></div>
-      <div class="fld"><label class="fld-lbl">Type de conclusion</label><select class="input-fld" id="conclSel">
-        ${['Sans observation', 'Avec observation', 'Avec réserve', 'Refus de visa'].map(o => `<option ${o === concl ? 'selected' : ''}>${o}</option>`).join('')}</select></div>
-      <div class="fld"><label class="fld-lbl">Signataire</label><input class="input-fld" id="signInp" value="${esc(sign || v.signataire)}"></div>
-      <div class="fld"><label class="fld-lbl">Référence</label><input class="input-fld" value="${esc(v.reference)}" readonly></div>
+      <div class="fld"><label class="fld-lbl" for="conclSel">Type de conclusion <span class="c-late">*</span></label><select class="input-fld" id="conclSel" ${concl ? '' : 'aria-invalid="true"'}>
+        <option value="" ${concl ? '' : 'selected'} disabled>— Choisissez une conclusion —</option>
+        ${(v.conclusions || []).map(o => `<option ${o === concl ? 'selected' : ''}>${o}</option>`).join('')}</select>
+        ${vf.total && concl === 'Sans observation' ? `<span class="fld-help c-late">${vf.total} point(s) restent à examiner sur ce trimestre : confirmez que « Sans observation » est bien votre conclusion.</span>` : ''}</div>
+      <div class="fld"><label class="fld-lbl">Signataire</label><input class="input-fld" id="signInp" value="${esc(sign || v.signataire || '')}"></div>
+      ${v.reference ? `<div class="fld"><label class="fld-lbl">Référence</label><input class="input-fld" value="${esc(v.reference)}" readonly></div>` : ''}
       <div class="actions" style="margin-top:4px">
-        <a class="btn btn-primary" href="${base}/export.docx${q}">${svgI('dl')}Word (.docx)</a>
-        <a class="btn btn-ghost" href="${base}/export.pdf${q}">${svgI('dl')}PDF</a>
+        ${concl ? `<a class="btn btn-primary" href="${base}/export.docx${q}">${svgI('dl')}Word (.docx)</a><a class="btn btn-ghost" href="${base}/export.pdf${q}">${svgI('dl')}PDF</a>`
+          : `<button class="btn btn-primary" disabled title="Choisissez d’abord la conclusion">${svgI('dl')}Word (.docx)</button><button class="btn btn-ghost" disabled>${svgI('dl')}PDF</button>`}
       </div>
     </div></div>
     <div class="card"><div class="card-h"><div><h3>Aperçu — modèle officiel</h3><div class="sub">identique au fichier Word / PDF généré</div></div></div><div class="card-b">
@@ -1983,7 +2010,7 @@ async function renderVisa() {
     </div></div>
   </div>`;
   wireClientBar(renderVisa);
-  $('#conclSel').onchange = e => { state._concl = e.target.value; renderVisa(); };
+  $('#conclSel').onchange = e => { state._concl = { key, value: e.target.value }; renderVisa(); };
   const si = $('#signInp'); si.onchange = () => { state._sign = si.value; renderVisa(); };
 }
 
@@ -2404,7 +2431,7 @@ async function renderExports() {
     ${item('XLSX', 'xls', 'Factures en retard', 'Uniquement les factures à déclarer.', `<button class="btn btn-ghost btn-sm xls-export" data-x="retard">${svgI('dl')}Télécharger</button>`)}
     ${item('XLSX', 'xls', 'Conventions absentes', 'Délai de 120 j appliqué sans convention.', `<button class="btn btn-ghost btn-sm xls-export" data-x="conv">${svgI('dl')}Télécharger</button>`)}
   </div>
-  <div class="section-title"><h2>Visa</h2><span class="sub">modèle officiel — conclusion « Sans observation » par défaut</span></div>
+  <div class="section-title"><h2>Visa</h2><span class="sub">modèle officiel — conclusion à choisir explicitement</span></div>
   <div class="exp-grid">
     ${item('DOCX', 'doc', 'Visa — Word', 'Modifiable avant signature.', `<a class="btn btn-ghost btn-sm" href="/api/clients/${state.clientId}/visa/export.docx${vq}">${svgI('dl')}Télécharger</a>`)}
     ${item('PDF', 'pdf', 'Visa — PDF', 'Une page A4, prête à signer.', `<a class="btn btn-ghost btn-sm" href="/api/clients/${state.clientId}/visa/export.pdf${vq}">${svgI('dl')}Télécharger</a>`)}
