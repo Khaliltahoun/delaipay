@@ -97,6 +97,7 @@ test('demo:reset --prepare verification — scénario de vérification prêt san
   assert.ok(byFour('BETA EXPRESS SARL').some(a => a.convention.signature_retroactive), 'BETA : au moins une signature rétroactive');
   assert.ok(byFour('KORAL ENGINS SA').every(a => a.statut_calc === 'a_verifier' && !a.convention.justificatif), 'KORAL : à vérifier, sans justificatif');
   assert.ok(byFour('ALPHA PIECES AUTO').every(a => a.statut_calc === 'ouverte' && a.situation === 'hors_periode'), 'ALPHA : hors période');
+  assert.equal(an.listAnomalies({ cabinetId: cab }).filter(a => a.sans_justification).length, 1, 'une résolution « sans justification » à montrer');
   const f = db.prepare("SELECT fichier FROM convention WHERE cabinet_id=? AND fichier IS NOT NULL").get(cab).fichier;
   assert.match(fs.readFileSync(path.join(__dirname, '..', 'uploads', f), 'latin1'), /^%PDF-1\.4/);
   fs.rmSync(path.join(__dirname, '..', 'uploads', f));

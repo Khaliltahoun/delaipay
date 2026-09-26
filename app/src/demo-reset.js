@@ -84,6 +84,7 @@ function resetDemoWorkspace({ slug, confirm, env = process.env, now = new Date()
  * Données fictives : client STE ATLAS VERIF SARL, 36 factures T1 2026 importées par le chemin de l'assistant (anomalies
  * rattachées au trimestre), conventions : BETA (avec justificatif, signée le 15/12/2025 → signature rétroactive pour
  * les factures antérieures), KORAL (sans justificatif), ALPHA (effet après T1 → « hors période de validité »).
+ * Un doublon (177/2025) « résolu sans justification », comme une résolution antérieure à l'incrément 2.2.
  * Utilisateurs supplémentaires (mot de passe DEMO_PASSWORD) : comptable@<slug>.demo (Comptable), lecture@<slug>.demo (Lecture seule).
  */
 function prepareVerificationScenario({ slug, env = process.env }) {
@@ -112,6 +113,9 @@ function prepareVerificationScenario({ slug, env = process.env }) {
   conv('BETA EXPRESS SARL', { sig: '2025-12-15', deb: '2026-01-01', file: pdf('BETA') });
   conv('KORAL ENGINS SA', { sig: '2025-11-02', deb: '2026-01-01' });
   conv('ALPHA PIECES AUTO', { sig: '2026-04-20', deb: '2026-05-01' });
+  // Une résolution « historique » sans motif (comme avant l'incrément 2.2) : l'écran doit la signaler « résolue sans justification ».
+  const oldRes = db.prepare(`SELECT a.id FROM anomalie a JOIN facture f ON f.id=a.entite_id WHERE a.entreprise_id=? AND a.type='doublon_potentiel' AND f.numero='177/2025' LIMIT 1`).get(ent);
+  if (oldRes) db.prepare(`UPDATE anomalie SET statut='resolue', resolue_le=datetime('now'), motif_resolution=NULL WHERE id=?`).run(oldRes.id);
   const users = [];
   if (env.DEMO_PASSWORD) for (const [role, nom, loc] of [['collaborateur', 'Nadia Comptable', 'comptable'], ['lecture', 'Omar Lecture', 'lecture']]) {
     const email = `${loc}@${slug}.demo`;
