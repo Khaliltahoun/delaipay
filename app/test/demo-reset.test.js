@@ -79,3 +79,25 @@ test('demo:reset — espace remis à blanc, sauvegarde préalable, comptes conse
   assert.equal(db.prepare("SELECT COUNT(*) n FROM audit_log WHERE cabinet_id=? AND action='reinitialisation_demo'").get(A.cabinetId).n, 1, 'remise à blanc tracée');
   assert.ok(Object.values(r.counts).reduce((a, b) => a + b, 0) >= 36);
 });
+
+test('demo:reset --prepare verification — scénario de vérification prêt sans sélecteur de fichiers', () => {
+  const { prepareVerificationScenario } = require('../src/demo-reset');
+  const an = require('../src/anomalies');
+  demoWorkspace('prep-v');
+  assert.throws(() => prepareVerificationScenario({ slug: 'prep-v', env: ENV }), /pas vierge/, 'refus si l’espace n’est pas remis à blanc');
+  assert.throws(() => prepareVerificationScenario({ slug: 'hlz', env: ENV }), /référence/);
+  resetDemoWorkspace({ slug: 'prep-v', confirm: 'prep-v', env: ENV });
+  const r = prepareVerificationScenario({ slug: 'prep-v', env: { ...ENV, DEMO_PASSWORD: 'ResetTestOnly-7q' } });
+  assert.equal(r.factures, 36); assert.deepEqual(r.users, ['comptable@prep-v.demo', 'lecture@prep-v.demo']);
+  const cab = db.prepare("SELECT id FROM cabinet WHERE slug='prep-v'").get().id;
+  const rows = an.listAnomalies({ cabinetId: cab }).filter(a => a.type === 'convention_absente');
+  assert.ok(rows.length > 0 && rows.every(a => a.annee === 2026 && a.trimestre === 1), 'anomalies rattachées à T1 2026');
+  const byFour = f => rows.filter(a => a.fournisseur_nom === f);
+  assert.ok(byFour('BETA EXPRESS SARL').every(a => a.statut_calc === 'a_verifier' && a.convention.justificatif), 'BETA : à vérifier, justificatif présent');
+  assert.ok(byFour('BETA EXPRESS SARL').some(a => a.convention.signature_retroactive), 'BETA : au moins une signature rétroactive');
+  assert.ok(byFour('KORAL ENGINS SA').every(a => a.statut_calc === 'a_verifier' && !a.convention.justificatif), 'KORAL : à vérifier, sans justificatif');
+  assert.ok(byFour('ALPHA PIECES AUTO').every(a => a.statut_calc === 'ouverte' && a.situation === 'hors_periode'), 'ALPHA : hors période');
+  const f = db.prepare("SELECT fichier FROM convention WHERE cabinet_id=? AND fichier IS NOT NULL").get(cab).fichier;
+  assert.match(fs.readFileSync(path.join(__dirname, '..', 'uploads', f), 'latin1'), /^%PDF-1\.4/);
+  fs.rmSync(path.join(__dirname, '..', 'uploads', f));
+});

@@ -36,6 +36,7 @@ Au **premier démarrage**, la base est créée et pré-alimentée :
 ```bash
 DB_PATH=data/demo.db DEMO_PASSWORD='…' npm run demo:tenant          # crée « premium » et « client2 » (comptes …@….demo)
 DB_PATH=data/demo.db npm run demo:reset -- --slug client2 --confirm client2   # remet « client2 » à blanc
+DB_PATH=data/demo.db DEMO_PASSWORD='…' npm run demo:reset -- --slug client2 --confirm client2 --prepare verification   # + scénario de vérification
 ```
 `demo:reset` supprime les données métier, fichiers, invitations, identité et progression d'onboarding de l'espace choisi, conserve
 ses comptes (même connexion) et écrit d'abord une sauvegarde complète dans `data/backups/`. Il refuse : la production, une base
