@@ -101,7 +101,7 @@ function prepareVerificationScenario({ slug, env = process.env }) {
   db.prepare(`INSERT INTO entreprise (id,cabinet_id,raison_sociale,ice,if_fiscal,forme_juridique,ville,ca_ht,exercice_ref,expert_responsable)
     VALUES (?,?,?,?,?,?,?,?,?,?)`).run(ent, cab.id, 'STE ATLAS VERIF SARL', '009970000000088', '99700088', 'SARL', 'Rabat', 60457607.22, 2026, admin ? admin.nom : null);
   const r = importer.confirmImport(fx.demoWorkbookBuffer(), { sheetName: 'Feuil1', headerRow: 0,
-    mapping: { numero: 0, designation: 1, mht: 2, tva: 3, ttc: 4, four_if: 5, four_nom: 6, four_ice: 7, taux_tva: 8, date_paiement: 10, date_facture: 11 },
+    mapping: { numero: 0, designation: 1, mht: 2, tva: 3, ttc: 4, four_if: 5, four_nom: 6, four_ice: 7, taux_tva: 8, date_paiement: 10, date_facture: 11, delai_conv: 13 }, // correspondance proposée par l'assistant
     cabinetId: cab.id, entrepriseId: ent, annee: 2026, trimestre: 1, sourceName: 'scenario-verification-t1-2026.xlsx', userId: admin ? admin.id : null });
   const four = nom => db.prepare('SELECT id FROM fournisseur WHERE entreprise_id=? AND raison_sociale=?').get(ent, nom).id;
   const UP = path.join(__dirname, '..', 'uploads'); fs.mkdirSync(UP, { recursive: true });
