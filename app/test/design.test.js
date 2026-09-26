@@ -83,7 +83,7 @@ function fromApp(names) {
   return new Function(parts.join('\n') + `\nreturn { ${names.join(', ')} };`)();
 }
 test('journal d’audit : détails lisibles — ni JSON brut, ni rôle technique (P3-9)', () => {
-  const { auditDetails } = fromApp(['ROLE_FR', 'DET_KEY', 'HIDDEN_DET', 'detVal', 'auditDetails']);
+  const { auditDetails } = fromApp(['money', 'dateFr', 'ROLE_FR', 'DET_KEY', 'HIDDEN_DET', 'INTERNAL_ID', 'facLine', 'detVal', 'auditDetails']);
   assert.equal(auditDetails('{"email":"admin@hlz.demo"}'), 'E-mail : admin@hlz.demo');
   assert.equal(auditDetails('{"avant":"lecture","apres":"collaborateur","id":"usr_x"}'), 'Avant : Lecture seule · Après : Comptable');
   assert.equal(auditDetails('{"annee":2026,"trimestre":1,"figee":false}'), 'Année : 2026 · Trimestre : T1 · Période figée : Non');
@@ -116,4 +116,22 @@ test('P3/NEW-1 : dossier supprimé ou identifiant périmé → sélection oubli�
   assert.match(js, /catch \(e\) \{ if \(e\.code === 'client_introuvable'\) \{ forgetClient\(\);/, 'le chargement des périodes ne bloque pas le démarrage');
   assert.match(js, /localStorage\.removeItem\('dp-client'\)/, 'la sélection mémorisée est effacée');
   assert.match(js, /Aucun dossier sélectionné/, 'EMPTY-1 : « aucun sélectionné » distinct de « aucun client »');
+});
+
+test('VER-2b : le journal AFFICHE le(s) numéro(s) de facture des levées, annulations et résolutions (rendu, pas seulement stocké)', () => {
+  const { auditDetails } = fromApp(['money', 'dateFr', 'ROLE_FR', 'DET_KEY', 'HIDDEN_DET', 'INTERNAL_ID', 'facLine', 'detVal', 'auditDetails']);
+  const lev = auditDetails(JSON.stringify({ anomalie: 'ano_4gBW0ccu2-7k', type: 'convention_absente', facture: '1299/2025',
+    factures: [{ numero: '1299/2025', date_facture: '2025-11-30', ttc: 1385 }], fournisseur: 'BETA EXPRESS SARL', periode: 'T1 2026',
+    convention: { id: 'conv_6etmfzT0InpC', delai: 120, date_signature: '2025-12-15', date_effet: '2026-01-01', date_fin: null },
+    utilisateur: { id: 'usr_x', nom: 'Admin' }, horodatage: '2026-09-26T14:00:12.000Z', accuse_signature_retroactive: true }));
+  assert.match(lev, /Factures : 1299\/2025 du 30\/11\/2025 1 385,00 DH TTC/);
+  assert.match(lev, /Fournisseur : BETA EXPRESS SARL/); assert.match(lev, /Signature : 15\/12\/2025/);
+  assert.ok(!/ano_|conv_|usr_|2026-09-26T/.test(lev), 'aucun identifiant interne ni horodatage ISO');
+  const dup = auditDetails(JSON.stringify({ anomalie: 'ano_oOSS0vj3a9Wt', type: 'doublon_potentiel', facture: 'FA25-5256, FA25-5256',
+    factures: [{ numero: 'FA25-5256', date_facture: '2025-12-19', ttc: 76111 }, { numero: 'FA25-5256', date_facture: '2025-12-19', ttc: 76111 }], motif: 'Deux règlements partiels' }));
+  assert.equal((dup.match(/FA25-5256 du 19\/12\/2025 76 111,00 DH TTC/g) || []).length, 2, 'doublon : toutes les factures concernées');
+  assert.ok(!/Facture : /.test(dup), 'pas de doublon de libellé');
+  assert.equal(auditDetails(JSON.stringify({ facture: 'fac_AbCdEf123456', avant: 'potentiel', apres: 'confirme' })), 'Avant : potentiel · Après : confirme', 'identifiant interne masqué');
+  const clo = auditDetails(JSON.stringify({ verifications_en_attente: { ouvertes: 26, aVerifier: 12, convManquantes: 8, horsValidite: 1, total: 47 }, accuse_verifications: true }));
+  assert.match(clo, /anomalies ouvertes : 26, à vérifier : 12, sans convention justificative : 8/); assert.ok(!/aVerifier|convManquantes/.test(clo));
 });

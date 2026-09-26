@@ -3040,3 +3040,22 @@ test('INC2.2/ONB-3 : « Terminer plus tard » ne masque pas la reprise ; entrée
   assert.match(js, /onclick="resumeOnboarding\(null\)">\$\{svgI\('bolt'\)\}Configuration de l’espace/, 'entrée permanente dans Paramètres');
 });
 function fromAppSrc(src, name) { const m = src.match(new RegExp(`^function ${name}\\([\\s\\S]*?\\n}\\n`, 'm')); assert.ok(m, name); return m[0]; }
+
+/* ============ Incrément 2.3 — VER-2b : numéro(s) de facture rendus dans le journal ============ */
+function auditRenderer() {
+  const src = fs.readFileSync(path.join(__dirname, '..', 'public', 'js', 'app.js'), 'utf8');
+  const parts = ['money', 'dateFr', 'ROLE_FR', 'DET_KEY', 'HIDDEN_DET', 'INTERNAL_ID', 'facLine', 'detVal', 'auditDetails'].map(n => {
+    const m = src.match(new RegExp(`^(?:const ${n} = [\\s\\S]*?;\\n(?=const |function |\\/\\/|$)|function ${n}\\([\\s\\S]*?\\n}\\n)`, 'm')); assert.ok(m, n); return m[0]; });
+  return new Function(parts.join('\n') + '\nreturn auditDetails;')();
+}
+test('INC2.3/VER-2b : résolution d’un doublon réel → toutes les factures dans l’entrée affichée', async () => {
+  const W = mkWorkspace('ver2b'); const ck = cookieOf(W.u);
+  importer.importWorkbook(demoFixture.demoWorkbookBuffer(), { cabinetId: W.cab, entrepriseId: W.ent, sourceName: 'x', periode: { annee: 2026, trimestre: 1 } });
+  const dup = db.prepare("SELECT a.id FROM anomalie a JOIN facture f ON f.id=a.entite_id WHERE a.entreprise_id=? AND a.type='doublon_potentiel' AND f.numero='FA25-5256'").get(W.ent);
+  assert.ok(dup, 'anomalie de doublon FA25-5256');
+  assert.equal((await reqJson('POST', `/api/anomalies/${dup.id}/resolve`, { cookie: ck, body: { motif: 'Deux règlements partiels' } })).status, 200);
+  const raw = db.prepare("SELECT details FROM audit_log WHERE cabinet_id=? AND action='resolution_anomalie'").get(W.cab).details;
+  const shown = auditRenderer()(raw);
+  assert.equal((shown.match(/FA25-5256 du \d{2}\/\d{2}\/\d{4} 76 111,00 DH TTC/g) || []).length, 2, `les deux factures affichées : ${shown}`);
+  assert.match(shown, /Fournisseur : MISTRAL ACIERS SA/); assert.ok(!/ano_/.test(shown));
+});

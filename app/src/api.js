@@ -1862,7 +1862,9 @@ router.get('/anomalies/counts', (req, res) => res.json(anomalies.anomalyCounts({
 // Contexte d'audit COMPLET d'une anomalie (VER-2) : facture, fournisseur, type, période, convention, justificatif, auteur, horodatage.
 function anoAuditCtx(req, a, extra = {}) {
   const c = a.convention || {};
-  return { anomalie: a.id, type: a.type, facture: (a.facture && a.facture.numero) || a.facture_numero_directe || null, fournisseur: a.fournisseur_nom || null,
+  const facs = a.factures_concernees || [];
+  return { anomalie: a.id, type: a.type, facture: facs.map(f => f.numero).filter(Boolean).join(', ') || (a.facture && a.facture.numero) || a.facture_numero_directe || null,
+    factures: facs, fournisseur: a.fournisseur_nom || null,
     client: a.ent || null, periode: a.annee != null ? `T${a.trimestre} ${a.annee}` : null,
     convention: c.id ? { id: c.id, delai: c.delai, date_signature: c.date_signature || null, date_effet: c.date_debut || null, date_fin: c.date_fin || null } : null,
     justificatif: c.id ? (c.justificatif ? (c.justificatif_nom || 'document joint') : null) : null,

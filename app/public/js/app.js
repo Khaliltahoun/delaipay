@@ -2449,27 +2449,42 @@ const ROLE_FR = { admin: 'Administrateur', collaborateur: 'Comptable', lecture: 
 const ENTITE_LBL = { utilisateur: 'Utilisateur', entreprise: 'Client', facture: 'Facture', convention: 'Convention', fournisseur: 'Fournisseur', declaration: 'Déclaration',
   periode: 'Période', import_lot: 'Import', document: 'Fichier', espace_travail: 'Espace de travail', invitation: 'Invitation', taux_bam: 'Taux BAM', visa: 'Visa', export: 'Export', anomalie: 'Anomalie' };
 const DET_KEY = { email: 'E-mail', role: 'Rôle', avant: 'Avant', apres: 'Après', nom: 'Nom', actif: 'Actif', annee: 'Année', trimestre: 'Trimestre', statut: 'Statut',
-  factures: 'Factures', imported: 'Factures importées', file: 'Fichier', taille: 'Taille', taux: 'Taux', motif: 'Motif', nb: 'Lignes', exclues: 'Exclues', figee: 'Période figée',
-  format: 'Format', slug: 'Adresse', admin: 'Administrateur', raison: 'Motif', operateur_reseau: 'Opérateur de réseau', date_debut: 'Début', delai: 'Délai (j)', entreprise: 'Client' };
-const HIDDEN_DET = new Set(['id', 'importId', 'utilisateur', 'facture', 'token', 'hash']);
+  factures: 'Factures', facture: 'Facture', imported: 'Factures importées', file: 'Fichier', taille: 'Taille', taux: 'Taux', motif: 'Motif', nb: 'Lignes', exclues: 'Exclues', figee: 'Période figée',
+  format: 'Format', slug: 'Adresse', admin: 'Administrateur', raison: 'Motif', operateur_reseau: 'Opérateur de réseau', date_debut: 'Début', delai: 'Délai (j)', entreprise: 'Client',
+  type: 'Type', fournisseur: 'Fournisseur', client: 'Client', periode: 'Période', convention: 'Convention', justificatif: 'Justificatif', commentaire: 'Commentaire',
+  date_signature: 'Signature', date_effet: 'Effet', date_fin: 'Fin', signature_retroactive: 'Signature rétroactive', accuse_signature_retroactive: 'Accusé de signature rétroactive',
+  avertissements: 'Avertissements', levee_initiale: 'Levée initiale', le: 'Le', par: 'Par', modifications: 'Modifications',
+  verifications_en_attente: 'Vérifications en attente', accuse_verifications: 'Accusé des vérifications', ouvertes: 'anomalies ouvertes', aVerifier: 'à vérifier',
+  convManquantes: 'sans convention justificative', horsValidite: 'hors période de validité', total: 'total', scenario: 'Scénario', sauvegarde: 'Sauvegarde' };
+// Clés internes jamais affichées (identifiants techniques, horodatage déjà présent dans la colonne Date).
+const HIDDEN_DET = new Set(['id', 'importId', 'utilisateur', 'token', 'hash', 'anomalie', 'horodatage']);
+const INTERNAL_ID = /^[a-z]{2,6}_[A-Za-z0-9_-]{8,}$/;
+function facLine(f) { return [f.numero || '—', f.date_facture ? 'du ' + dateFr(f.date_facture) : '', f.ttc != null ? money(f.ttc) + ' DH TTC' : ''].filter(Boolean).join(' '); }
 function detVal(k, v) {
   if (v == null || v === '') return '—';
   if (typeof v === 'boolean') return v ? 'Oui' : 'Non';
   if ((k === 'role' || k === 'avant' || k === 'apres') && ROLE_FR[v]) return ROLE_FR[v];
   if (k === 'trimestre') return 'T' + v;
-  if (typeof v === 'object') return Object.entries(v).filter(([kk]) => !HIDDEN_DET.has(kk)).map(([kk, vv]) => `${DET_KEY[kk] || kk.replace(/_/g, ' ')} : ${detVal(kk, vv)}`).join(', ');
+  if (k === 'type' && typeof ANO_LBL !== 'undefined' && ANO_LBL[v]) return ANO_LBL[v];
+  if (k === 'factures' && Array.isArray(v)) return v.map(facLine).join(' ; ') || '—';
+  if (Array.isArray(v)) return v.join(' ; ');
+  if (/^date_|^le$/.test(k) && /^\d{4}-\d{2}-\d{2}/.test(String(v))) return dateFr(String(v));
+  if (typeof v === 'object') return Object.entries(v).filter(([kk, vv]) => !HIDDEN_DET.has(kk) && !(typeof vv === 'string' && INTERNAL_ID.test(vv))).map(([kk, vv]) => `${DET_KEY[kk] || kk.replace(/_/g, ' ')} : ${detVal(kk, vv)}`).join(', ');
   return String(v);
 }
 function auditDetails(raw) {
   if (!raw) return '';
   let o; try { o = JSON.parse(raw); } catch (_) { return String(raw); }
   if (o == null || typeof o !== 'object') return String(o);
-  return Object.entries(o).filter(([k]) => !HIDDEN_DET.has(k)).map(([k, v]) => `${DET_KEY[k] || k.replace(/_/g, ' ')} : ${detVal(k, v)}`).join(' · ');
+  // « facture » : numéro affiché ; identifiant interne (anciennes entrées) masqué. Si « factures » détaille, « facture » est redondant.
+  return Object.entries(o).filter(([k, v]) => !HIDDEN_DET.has(k) && !(typeof v === 'string' && INTERNAL_ID.test(v)) && !(k === 'facture' && Array.isArray(o.factures) && o.factures.length))
+    .map(([k, v]) => `${DET_KEY[k] || k.replace(/_/g, ' ')} : ${detVal(k, v)}`).join(' · ');
 }
 const AUDIT_LBL = { login: 'Connexion', import: 'Import de factures', import_confirme: 'Import confirmé', import_analyse: 'Fichier analysé', annulation_import: 'Import annulé',
   create: 'Création', update: 'Modification', delete: 'Suppression', cloture_periode: 'Clôture de période', reouverture_periode: 'Réouverture de période', recalcul: 'Recalcul',
   revue_doublon: 'Revue de doublon', classification_fournisseur: 'Classification réseau', import_conventions: 'Import de conventions', export: 'Export',
-  connexion_refusee: 'Connexion refusée', verrouillage_connexion: 'Connexion verrouillée' };
+  connexion_refusee: 'Connexion refusée', verrouillage_connexion: 'Connexion verrouillée', levee_anomalie: 'Levée d’anomalie validée', annulation_levee: 'Levée annulée',
+  resolution_anomalie: 'Anomalie résolue', reinitialisation_demo: 'Remise à blanc (démo)', preparation_demo: 'Préparation (démo)', onboarding_termine: 'Configuration terminée' };
 async function renderAudit() {
   const rows = await api('/audit');
   const tone = a => /cloture/.test(a) ? 'pill-locked' : /reouverture|connexion_refusee/.test(a) ? 'pill-warn' : /delete|annulation|verrouillage/.test(a) ? 'pill-late' : a === 'login' ? '' : 'pill-brand';

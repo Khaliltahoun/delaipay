@@ -49,8 +49,13 @@ function listAnomalies(scope) {
   const locked = new Set(db.prepare(`SELECT entreprise_id, annee, trimestre, statut FROM periode_declaration WHERE cabinet_id=?`).all(scope.cabinetId)
     .filter(p => LOCKED.has(p.statut)).map(p => `${p.entreprise_id}|${p.annee}|${p.trimestre}`));
   const convById = db.prepare('SELECT * FROM convention WHERE id=?');
-  const facQ = db.prepare(`SELECT id, numero, date_facture, date_paiement, a_declarer, montant_amende, retard_jours FROM facture
+  const facQ = db.prepare(`SELECT id, numero, date_facture, date_paiement, ttc, a_declarer, montant_amende, retard_jours FROM facture
     WHERE entreprise_id=? AND fournisseur_id=? AND numero=? ORDER BY (annee=? AND trimestre=?) DESC, rowid LIMIT 1`);
+  // Factures concernées par une anomalie (VER-2b) : la facture visée, et pour un doublon TOUTES les lignes identiques.
+  const facById = db.prepare('SELECT id, numero, date_facture, date_paiement, ttc, fournisseur_id, entreprise_id FROM facture WHERE id=?');
+  const dupGroup = db.prepare(`SELECT id, numero, date_facture, date_paiement, ttc FROM facture WHERE entreprise_id=? AND fournisseur_id IS ? AND numero IS ?
+    AND ttc=? AND date_facture IS ? ORDER BY rowid`);
+  const pick = f => ({ numero: f.numero, date_facture: f.date_facture, date_paiement: f.date_paiement, ttc: f.ttc });
   return rows.map(a => {
     const out = { ...a, sans_justification: a.statut !== 'ouverte' && !String(a.motif_resolution || '').trim(), periode_verrouillee: a.annee != null && locked.has(`${a.entreprise_id}|${a.annee}|${a.trimestre}`) };
     if (a.type === 'convention_absente') {
@@ -65,6 +70,12 @@ function listAnomalies(scope) {
       out.situation = !list.length ? 'aucune'
         : (a.annee == null ? 'trimestre_inconnu' : (cov.length ? 'couverte' : (list.every(c => !convStart(c)) ? 'non_datee' : 'hors_periode')));
     }
+    if (!out.facture && a.entite === 'facture' && a.entite_id) {
+      const fx = facById.get(a.entite_id);
+      if (fx) out.factures_concernees = (a.type === 'doublon_potentiel' || a.type === 'doublon')
+        ? dupGroup.all(fx.entreprise_id, fx.fournisseur_id, fx.numero, fx.ttc, fx.date_facture).map(pick) : [pick(fx)];
+    }
+    if (out.facture) out.factures_concernees = [pick(out.facture)];
     out.statut_calc = a.statut !== 'ouverte' ? 'resolue' : (a.levee_validee_le ? 'levee' : (out.situation === 'couverte' ? 'a_verifier' : 'ouverte'));
     return out;
   });
