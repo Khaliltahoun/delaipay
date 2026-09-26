@@ -584,7 +584,9 @@ function dateTimeFr(s) { if (!s) return '—'; const m = String(s).match(/^(\d{4
 async function closeVerifPrep() {
   let vf = { total: 0 }; try { vf = await api(`/clients/${state.clientId}/verifications${perQuery()}`, { fresh: true }); } catch (_) {}
   window._lastAckVerif = false;
-  const onAck = ev => { if (ev.target && ev.target.id === 'ackVerif') window._lastAckVerif = ev.target.checked; };
+  const onAck = ev => { if (ev.target && ev.target.id === 'ackVerif') { window._lastAckVerif = ev.target.checked; const ok = document.getElementById('dlgOk'); if (ok) ok.disabled = !ev.target.checked; } };
+  // Dès l'ouverture : « Clôturer » inactif tant que la case d'accusé n'est pas cochée (le dialogue ne se ferme pas sur un refus).
+  if (vf.total) setTimeout(() => { const ok = document.getElementById('dlgOk'); if (ok && document.getElementById('ackVerif')) { ok.disabled = true; ok.title = 'Cochez d’abord la case d’accusé'; } }, 50);
   document.addEventListener('change', onAck);
   return { vf, onAck };
 }
@@ -1033,7 +1035,7 @@ async function renderClientOverview() {
       <div class="big">${money(k.ttcRetard)}<small>DH</small></div>
       <div class="expl"><b>${k.aDeclarer}</b> facture(s) en retard sur <b>${k.factures}</b>, à déclarer à la DGI.</div>
       <div class="hero-sub"><span class="k">Amende du trimestre</span><span class="v penalty">${money(k.amende)} <small>DH</small></span></div>
-      <div class="hero-foot"><span>Fournisseurs <b>${k.fournisseurs}</b></span><span>Conventions valides <b>${k.conventions}</b></span>
+      <div class="hero-foot"><span>Fournisseurs <b>${k.fournisseurs}</b></span><span>Conventions valides <b>${k.conventions}</b>${k.convHorsValidite ? ` <span class="pill pill-sm pill-warn">dont ${k.convHorsValidite} hors période de validité</span>` : ''}</span>
         <span>Conventions manquantes <b style="color:${k.convManq ? 'var(--severe)' : 'var(--ok)'}">${k.convManq}</b></span>
         <button class="btn-link" data-goto="anomalies">Anomalies à traiter <b style="color:${k.anomalies ? 'var(--warn)' : 'var(--ok)'}">${k.anomalies}</b>${k.anomaliesDetail && k.anomaliesDetail.aVerifier ? ` (dont ${k.anomaliesDetail.aVerifier} à vérifier)` : ''}</button></div>
     </div>
@@ -1247,7 +1249,7 @@ async function renderDelais() {
     <div class="stat severe"><div class="l">Amende du trimestre</div><div class="v">${money(t.amende)}<small>DH</small></div></div>
   </div>
   <div class="toolbar">
-    <div class="filters">${[['all', 'Toutes', data.rows.length], ['retard', 'Retard &gt; 0', t.aDeclarer], ['conv', 'Convention absente', t.sansConvention]].map(([k, label, count]) => `<button class="fpill" data-f="${k}" aria-pressed="${filt === k}">${label}<span class="c">${count}</span></button>`).join('')}</div>
+    <div class="filters">${[['all', 'Toutes', data.rows.length], ['retard', 'Retard &gt; 0', t.aDeclarer], ['conv', 'Factures &gt; 60 j sans convention', t.sansConvention]].map(([k, label, count]) => `<button class="fpill" data-f="${k}" aria-pressed="${filt === k}">${label}<span class="c">${count}</span></button>`).join('')}</div>
     <div class="actions"><span class="dh t-sm">Exporter en Excel :</span>${['all', 'retard', 'conv'].map(k => `<button class="btn btn-ghost btn-sm xls-export" data-x="${k}" title="Exporter « ${FL[k]} » en Excel">${svgI('dl')}${FL[k]}</button>`).join('')}</div>
   </div>
   ${(() => { const hv = data.rows.filter(r => r.conv_hors_validite).length; return hv ? `<div class="note note-warn">${svgI('warn')}<div><div class="note-t">Convention appliquée hors de sa période de validité — à confirmer</div>${hv} facture(s) : le calcul applique la convention en vigueur (règle actuelle, selon son statut) alors que ses dates ne couvrent pas ce trimestre. Question ouverte pour l’expert-comptable ; montants inchangés.</div></div>` : ''; })()}
@@ -1413,7 +1415,8 @@ async function renderFournisseurs() {
   const [fours, data, enjeu] = await Promise.all([api(`/clients/${state.clientId}/fournisseurs`), api(`/clients/${state.clientId}/delais${perQuery()}`), api(`/clients/${state.clientId}/enjeu-delai-legal${perQuery()}`).catch(() => null)]);
   const agg = new Map();
   for (const r of data.rows) {
-    const a = agg.get(r.four_id) || { n: 0, ttc: 0, late: 0, amende: 0, delai: r.delai_applicable, reseau: !!r.operateur_reseau, conv: !!r.has_conv };
+    const a = agg.get(r.four_id) || { n: 0, ttc: 0, late: 0, amende: 0, delai: r.delai_applicable, reseau: !!r.operateur_reseau, conv: !!r.has_conv, horsValidite: false };
+    if (r.conv_hors_validite) a.horsValidite = true;
     a.n++; a.ttc += r.ttc || 0; if (r.a_declarer) a.late++; a.amende += r.amende || 0; agg.set(r.four_id, a);
   }
   const rows = fours.map(f => { const a = agg.get(f.id); return { ...f, per: a || null,
@@ -1438,7 +1441,7 @@ async function renderFournisseurs() {
   if (rows.length) mountPaged(rows, r => `<tr>
       <td data-rc="t"><div class="fournisseur"><b>${esc(r.raison_sociale || '—')}</b>${r.sansJustif ? '<small class="amount-late">Sans convention justificative</small>' : ''}</div></td>
       <td class="mono dh" data-prio="2">${esc(r.ice || '—')}<br><small>IF ${esc(r.if_fiscal || '—')}</small></td>
-      <td data-rc="s">${delaiBadge(r.delai, r.reseau, r.conv)}${r.sansJustif ? `<div class="t-xs dh mt-8 src-lbl">${esc(r.sourceLabel)}</div>` : ''}</td>
+      <td data-rc="s">${delaiBadge(r.delai, r.reseau, r.conv)}${r.per && r.per.horsValidite ? ' <span class="pill pill-sm pill-warn" title="Convention appliquée hors de sa période de validité — à confirmer">hors validité</span>' : ''}${r.sansJustif ? `<div class="t-xs dh mt-8 src-lbl">${esc(r.sourceLabel)}</div>` : ''}</td>
       <td class="num" data-rc="m" data-label="Factures">${r.per ? r.per.n : '—'}</td>
       <td class="num" data-rc="a">${r.per ? money(r.per.ttc) : '—'}</td>
       <td class="num ${r.per && r.per.late ? 'amount-late' : 'dim'}" data-rc="s" data-label="À déclarer">${r.per ? r.per.late : '—'}</td>
@@ -2184,7 +2187,7 @@ async function renderAnomalies() {
   $$('#view [data-res]').forEach(b => b.onclick = async () => {
     const a = rows.find(x => x.id === b.dataset.res);
     const motif = await ui.prompt({ tone: 'warn', title: `Marquer résolue : ${ANO_LBL[a.type] || 'anomalie'} ?`, html: `<p>${esc(anoMessage(a))}</p>`,
-      facts: [['Client', a.ent || '—'], ['Période', a.annee ? `T${a.trimestre} ${a.annee}` : 'non renseignée']], label: 'Motif de la résolution', required: true,
+      facts: [['Factures', (a.factures_concernees || []).map(f => f.numero).join(', ') || '—'], ['Fournisseur', a.fournisseur_nom || '—'], ['Client', a.ent || '—'], ['Période', a.annee ? `T${a.trimestre} ${a.annee}` : 'non renseignée']], label: 'Motif de la résolution', required: true,
       placeholder: 'Ex. paiement partiel confirmé par le relevé bancaire', confirmLabel: 'Marquer résolue' });
     if (!motif) return;
     try { await api(`/anomalies/${a.id}/resolve`, { method: 'POST', body: { motif } }); toast('Anomalie résolue — motif inscrit au journal d’audit.', 'ok'); refreshAlertsBadge(); renderAnomalies(); }
@@ -2193,7 +2196,9 @@ async function renderAnomalies() {
   $$('#view [data-conv-ent]').forEach(b => b.onclick = () => { state._convFocus = b.dataset.convId; goClient(b.dataset.convEnt, 'conv'); });
   $$('#view [data-lever]').forEach(b => b.onclick = () => leverModal(rows.find(x => x.id === b.dataset.lever)));
   $$('#view [data-unlever]').forEach(b => b.onclick = async () => {
-    const motif = await ui.prompt({ tone: 'warn', title: 'Annuler la levée de cette anomalie ?', message: 'L’anomalie redeviendra « à vérifier » et sera de nouveau comptée.', label: 'Motif de l’annulation', required: true, confirmLabel: 'Annuler la levée' });
+    const a = rows.find(x => x.id === b.dataset.unlever);
+    const motif = await ui.prompt({ tone: 'warn', title: `Annuler la levée — facture ${a.facture ? a.facture.numero : ''} (${a.fournisseur_nom || ''}) ?`, message: 'L’anomalie redeviendra « à vérifier » et sera de nouveau comptée.',
+      facts: [['Facture', a.facture ? a.facture.numero : '—'], ['Fournisseur', a.fournisseur_nom || '—'], ['Période', a.annee ? `T${a.trimestre} ${a.annee}` : '—']], label: 'Motif de l’annulation', required: true, confirmLabel: 'Annuler la levée' });
     if (!motif) return;
     try { await api(`/anomalies/${b.dataset.unlever}/levee`, { method: 'DELETE', body: { motif } }); toast('Levée annulée — motif inscrit au journal d’audit.', 'ok', 'Anomalie'); refreshAlertsBadge(); renderAnomalies(); }
     catch (e) { toast(e.message, 'err', 'Annulation refusée'); }

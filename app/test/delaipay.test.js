@@ -3107,3 +3107,19 @@ test('INC2.3/P3-1 : justificatif PDF / image en ligne (nouvel onglet), autre con
   assert.equal((await get(pdf.id, B.u)).status, 404, 'autre espace : refusé');
   for (const x of [pdf, png, autre]) fs.rmSync(path.join(UPD, x.f));
 });
+
+test('INC2.3/P3-4 + P3-7 : Alertes sans « sans convention » sur une ligne couverte, doublon libellé ; conventions hors validité comptées', async () => {
+  const W = mkWorkspace('p3-47'); const ck = cookieOf(W.u);
+  importer.confirmImport(demoFixture.demoWorkbookBuffer(), { sheetName: 'Feuil1', headerRow: 0,
+    mapping: { numero: 0, designation: 1, mht: 2, tva: 3, ttc: 4, four_if: 5, four_nom: 6, four_ice: 7, taux_tva: 8, date_paiement: 10, date_facture: 11, delai_conv: 13 },
+    cabinetId: W.cab, entrepriseId: W.ent, annee: 2026, trimestre: 1, sourceName: 'x.xlsx', userId: W.u });
+  const fid = nom => db.prepare('SELECT id FROM fournisseur WHERE entreprise_id=? AND raison_sociale=?').get(W.ent, nom).id;
+  db.prepare("INSERT INTO convention (id,cabinet_id,entreprise_id,fournisseur_id,delai_convenu,statut,date_debut) VALUES (?,?,?,?,120,'valide','2026-01-01')").run(uid('conv'), W.cab, W.ent, fid('BETA EXPRESS SARL'));
+  db.prepare("INSERT INTO convention (id,cabinet_id,entreprise_id,fournisseur_id,delai_convenu,statut,date_debut) VALUES (?,?,?,?,120,'valide','2026-05-01')").run(uid('conv'), W.cab, W.ent, fid('ALPHA PIECES AUTO'));
+  const al = (await reqJson('GET', '/api/alerts', { cookie: ck })).body.alerts;
+  const verif = al.filter(a => a.statut === 'a_verifier');
+  assert.ok(verif.length && verif.every(a => !/sans convention/i.test(a.message)), 'lignes à vérifier sans « sans convention »');
+  assert.ok(al.some(a => a.titre === 'Doublon potentiel'), 'doublon libellé « Doublon potentiel »');
+  const sum = (await reqJson('GET', `/api/clients/${W.ent}/summary?annee=2026&trimestre=1`, { cookie: ck })).body;
+  assert.equal(sum.kpis.convHorsValidite, 1, 'ALPHA : convention appliquée hors validité signalée dans la synthèse');
+});

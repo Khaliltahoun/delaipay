@@ -611,7 +611,8 @@ router.get('/clients/:id/summary', (req, res) => {
   res.json({
     entreprise: { ...e, assujettie: assujettie(e.ca_ht), regime: regimeOf(e.ca_ht, e.exercice_ref || 2026), type_visa: visaOf(e.ca_ht) },
     periode: p, periods,
-    kpis: { fournisseurs, conventions, convManq, anomalies: anoCounts.aTraiter, anomaliesDetail: anoCounts, factures: agg.nb, aDeclarer: agg.aDecl, ttcRetard: agg.ttcRetard, amende: agg.amende },
+    kpis: { fournisseurs, conventions, convManq, convHorsValidite: new Set(markHorsValidite(e, p, delaisData(req.cabinetId, e, p).rows).filter(r => r.conv_hors_validite).map(r => r.conv_hors_validite.id)).size,
+      anomalies: anoCounts.aTraiter, anomaliesDetail: anoCounts, factures: agg.nb, aDeclarer: agg.aDecl, ttcRetard: agg.ttcRetard, amende: agg.amende },
   });
 });
 
@@ -1819,13 +1820,19 @@ router.get('/alerts', (req, res) => {
   // Anomalies À TRAITER (ouvertes + à vérifier) — même source que les compteurs ; aucune troncature.
   for (const a of anomalies.listAnomalies({ cabinetId: cid }).filter(x => x.statut_calc === 'ouverte' || x.statut_calc === 'a_verifier'))
     out.push({ type: a.type, gravite: a.gravite || 'moyenne', statut: a.statut_calc, titre: anomalieLabel(a.type) + (a.statut_calc === 'a_verifier' ? ' — couverte par une convention, à vérifier' : ''),
-      message: a.details, date: a.created_at, ent_id: a.ent_id });
+      message: a.statut_calc === 'a_verifier' ? anoMessageSrv(a) + ' — convention du ' + (a.convention && a.convention.date_debut ? a.convention.date_debut.split('-').reverse().join('/') : '—') + ' à vérifier.' : a.details,
+      date: a.created_at, ent_id: a.ent_id });
   // P3-10 : aucune échéance déclarative à annoncer tant que l'espace n'a aucun dossier client.
   const hasClients = !!db.prepare('SELECT 1 FROM entreprise WHERE cabinet_id=? LIMIT 1').get(cid);
   if (hasClients) for (const d of nextDeadlines().slice(0, 2)) out.push({ type: 'echeance', gravite: d.days <= 15 ? 'haute' : 'moyenne', titre: 'Échéance de déclaration', message: `${d.label} — dépôt SIMPL le ${d.day}/${monNum(d.mon)}.`, date: `J-${d.days}` });
   res.json({ count: out.length, alerts: out });
 });
-function anomalieLabel(t) { return ({ date_incoherente: 'Date incohérente', date_future: 'Date dans le futur', date_manquante: 'Date manquante', montant_incoherent: 'Montant incohérent', doublon: 'Doublon détecté', convention_absente: 'Convention absente (délai > 60 j)' })[t] || 'Anomalie'; }
+// Même reformulation que l'écran Anomalies : jamais « sans convention » sur une ligne couverte (P3-4).
+function anoMessageSrv(a) {
+  const m = String(a.details || '').match(/^(Facture [^:]+:\s*délai (?:de )?\d+ j \(> 60 j\))\s*(?:SANS|sans) convention(?: enregistrée)? pour (?:le fournisseur )?(.+?)\.?$/);
+  return m ? `${m[1]} — ${m[2]}` : (a.details || '');
+}
+function anomalieLabel(t) { return ({ doublon_potentiel: 'Doublon potentiel', date_incoherente: 'Date incohérente', date_future: 'Date dans le futur', date_manquante: 'Date manquante', montant_incoherent: 'Montant incohérent', doublon: 'Doublon détecté', convention_absente: 'Convention absente (délai > 60 j)' })[t] || 'Anomalie'; }
 function monNum(m) { return ({ Avr: '04', Jul: '07', Oct: '10', Jan: '01' })[m] || m; }
 
 /* ============================================================ TAUX BAM */
