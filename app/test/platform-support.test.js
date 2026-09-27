@@ -100,3 +100,20 @@ test('assistance : fin manuelle et fin automatique (sessions fermées, journal d
   assert.ok(wa.some(x => /durée écoulée/.test(x.details)), 'fin automatique tracée');
   assert.equal((await t.c.get('/api/platform/support/active')).body.rows.filter(a => a.espace.id === t.w.id).length, 0);
 });
+
+test('tableau de bord : indicateurs de la plateforme et état du système', async () => {
+  const t = await setup();
+  const today = require('../src/lifecycle').today();
+  await t.c.put(`/api/platform/workspaces/${t.w.id}/subscription`, { plan: 'pro', date_debut: today, date_fin: require('../src/lifecycle').addDays(today, 10), montant: 1500, statut_paiement: 'paye' });
+  await openSupport(t);
+  const d = (await t.c.get('/api/platform/dashboard')).body;
+  assert.ok(d.espaces.total >= 1 && d.espaces.actif >= 1);
+  assert.ok(d.abonnements.expirent30j >= 1 && d.abonnements.renouvellements.some(r => r.id === t.w.id));
+  assert.ok(d.abonnements.revenuMois.encaisse >= 1500);
+  assert.ok(d.utilisateurs >= 1 && d.connexions24h >= 1);
+  assert.ok(d.accesSupportActifs >= 1);
+  assert.equal(typeof d.appareilsEnAttente, 'number'); assert.equal(typeof d.echecs24h, 'number');
+  assert.ok(d.systeme.version && d.systeme.uptimeSec >= 0 && d.systeme.base.taille > 0 && typeof d.systeme.errors === 'number');
+  assert.equal(d.systeme.sauvegarde.message, 'Aucune sauvegarde configurée');
+  assert.ok(!JSON.stringify(d).includes('CLIENT VISIBLE'), 'aucune donnée métier');
+});

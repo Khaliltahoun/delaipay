@@ -295,7 +295,6 @@ C.views.account = async (el) => {
     catch (e) { C.toast(e.message, 'err'); }
   });
 };
-C.views.dash = async (el) => { el.innerHTML = C.pageHead('Tableau de bord', 'Vue d’ensemble de la plateforme.'); };
 
 document.addEventListener('DOMContentLoaded', () => { for (const f of (window.DPC_EXT || [])) f(C); boot(); });
 if (document.readyState !== 'loading') { for (const f of (window.DPC_EXT || [])) f(C); boot(); }

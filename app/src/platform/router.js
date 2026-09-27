@@ -59,7 +59,7 @@ function csrfGate(req, res, next) {
   next();
 }
 
-function createConsoleApp({ mountStatic, sendPage }) {
+function createConsoleApp({ mountStatic, sendPage, version }) {
   const app = express.Router();
   app.use(consoleHeaders);
   app.use(ipGate);
@@ -146,7 +146,7 @@ function createConsoleApp({ mountStatic, sendPage }) {
     const cli = (store.getSetting('console_allowlist', []) || []).map(e => ({ cidr: e.cidr, label: e.label, source: 'ligne de commande' }));
     res.json({ rows: [...env, ...cli], ip: netu.clientIp(req) });
   });
-  for (const mod of require('./routes')) mod(api);
+  for (const mod of require('./routes')) mod(api, { version });
 
   api.use((req, res) => res.status(404).json({ error: 'Action inconnue.', code: 'route_inconnue' }));
   api.use((err, req, res, next) => {

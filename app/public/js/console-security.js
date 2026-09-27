@@ -49,7 +49,8 @@ function wireRows(el, reload) {
 
 /* ------------------------------------------------------------------ vue globale */
 let gState = { tab: 'sessions', toutes: false, statut: '' };
-C.views.sessions = async (el) => {
+C.views.sessions = async (el, params = []) => {
+  if (params[0]) { gState.tab = params[0] === 'devices' ? 'devices' : 'sessions'; gState.statut = params[1] || ''; }
   const [ses, dev] = await Promise.all([C.api('GET', `/sessions?limit=500${gState.toutes ? '&toutes=1' : ''}`), C.api('GET', `/devices?limit=500${gState.statut ? '&statut=' + gState.statut : ''}`)]);
   const pending = dev.rows.filter(d => d.statut === 'en_attente').length;
   el.innerHTML = C.pageHead('Sessions et appareils', `Tous les espaces. Modèle d’appareil : uniquement s’il est transmis par le navigateur (indice client), jamais deviné. Pays : ${ses.geoip ? 'base GeoIP locale' : '« — » (aucune base GeoIP locale configurée)'}.`)
