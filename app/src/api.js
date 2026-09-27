@@ -12,6 +12,8 @@ const reseau = require('./reseau');
 const periodCheck = require('./period-check');
 const anomalies = require('./anomalies');
 const lifecycle = require('./lifecycle');
+const accessPolicy = require('./access-policy');
+const loginActivity = require('./login-activity');
 const auth = require('./auth');
 const visa = require('./visa');
 const tenant = require('./tenant');
@@ -43,6 +45,13 @@ function auditLogin(req, action, motif, cabinetIds) {
       : db.prepare('SELECT DISTINCT cabinet_id FROM utilisateur WHERE email=?').all(email).map(r => r.cabinet_id);
   }
   for (const c of (cabs.length ? cabs : [null])) audit(c, null, action, 'utilisateur', { email: email || null, motif }, req.ip);
+  if (action === 'connexion_refusee' || action === 'verrouillage_connexion') {
+    const users = email ? db.prepare('SELECT id, cabinet_id FROM utilisateur WHERE email=?').all(email) : [];
+    for (const c of (cabs.length ? cabs : [null])) {
+      const uu = users.find(x => x.cabinet_id === c);
+      require('./login-activity').record(req, { cabinetId: c, userId: uu ? uu.id : null, email, resultat: action === 'verrouillage_connexion' ? 'verrouillage' : 'echec', motif });
+    }
+  }
 }
 
 // Limiteur pour les routes coûteuses (import de gros classeurs, exports) :
@@ -256,9 +265,18 @@ router.post('/auth/login', loginIpCeiling, loginLimiter, (req, res) => {
     auditLogin(req, 'connexion_refusee', 'espace de travail suspendu', [u.cabinet_id]);
     return res.status(403).json({ error: 'Cet espace de travail est suspendu. Contactez DelaiPay pour le réactiver.', code: 'workspace_inactive' });
   }
+  // Politique d'accès de l'espace : IP (autorisées / bloquées) puis appareil (approbation) — src/access-policy.js.
+  const pol = accessPolicy.evaluateLogin(req, res, u, db.prepare('SELECT * FROM cabinet WHERE id=?').get(u.cabinet_id));
+  if (!pol.ok) {
+    const pending = pol.code === 'appareil_en_attente';
+    auditLogin(req, pending ? 'appareil_en_attente' : 'connexion_bloquee', pol.error, [u.cabinet_id]);
+    loginActivity.record(req, { cabinetId: u.cabinet_id, userId: u.id, email: u.email, resultat: pending ? 'appareil_en_attente' : 'bloque_politique', motif: pol.code, deviceId: pol.device ? pol.device.id : null });
+    return res.status(403).json({ error: pol.error, code: pol.code });
+  }
   try { db.prepare(`UPDATE utilisateur SET derniere_connexion=datetime('now') WHERE id=?`).run(u.id); } catch (_) {}
   loginLimiter.reset(req);   // connexion réussie : le compteur de CETTE identité repart de zéro
-  auth.issueSession(res, u, req);
+  auth.issueSession(res, u, req, { deviceId: pol.device.id });
+  loginActivity.record(req, { cabinetId: u.cabinet_id, userId: u.id, email: u.email, resultat: 'succes', deviceId: pol.device.id });
   audit(u.cabinet_id, u.id, 'login', 'utilisateur', { email: u.email }, req.ip);
   res.json({ ok: true, user: publicUser(u) });
 });
@@ -308,10 +326,18 @@ router.post('/invitations/accept', inviteLimiter, (req, res) => {
   const b = req.body || {};
   try {
     const u = workspace.acceptInvitation(String(b.token || ''), hostCabinetId(req), { nom: b.nom, password: b.password });
+    // La politique d'accès s'applique dès le premier accès : compte créé, mais connexion différée si l'appareil
+    // doit être approuvé ou si le réseau n'est pas autorisé.
+    const pol = accessPolicy.evaluateLogin(req, res, u, db.prepare('SELECT * FROM cabinet WHERE id=?').get(u.cabinet_id));
+    if (!pol.ok) {
+      loginActivity.record(req, { cabinetId: u.cabinet_id, userId: u.id, email: u.email, resultat: pol.code === 'appareil_en_attente' ? 'appareil_en_attente' : 'bloque_politique', motif: pol.code, deviceId: pol.device ? pol.device.id : null });
+      return res.json({ ok: true, loginRequired: true, message: pol.error, code: pol.code });
+    }
     // Connexion automatique après acceptation : c'est une vraie première connexion (P3-15).
     try { db.prepare(`UPDATE utilisateur SET derniere_connexion=datetime('now') WHERE id=?`).run(u.id); } catch (_) {}
     audit(u.cabinet_id, u.id, 'login', 'utilisateur', { email: u.email, motif: 'invitation acceptée' }, req.ip);
-    auth.issueSession(res, u, req);
+    auth.issueSession(res, u, req, { deviceId: pol.device.id });
+    loginActivity.record(req, { cabinetId: u.cabinet_id, userId: u.id, email: u.email, resultat: 'succes', motif: 'invitation acceptée', deviceId: pol.device.id });
     res.json({ ok: true, user: publicUser(u) });
   } catch (e) { res.status(e.status || 400).json({ error: e.message }); }
 });
@@ -440,6 +466,69 @@ router.delete('/invitations/:iid', (req, res) => {
   if (!permissions.guard(req, res, 'manage_users', 'Seul un administrateur peut révoquer une invitation.')) return;
   try { workspace.revokeInvitation(req.cabinetId, req.user.id, req.params.iid); res.json({ ok: true }); }
   catch (e) { res.status(e.status || 400).json({ error: e.message }); }
+});
+
+/* ============================================================ SÉCURITÉ DE L'ESPACE (administrateur) — INC 3A
+ * Politique d'accès (ouvert / appareils approuvés / liste d'IP + IP bloquées), appareils, sessions actives.
+ * Chaque modification : journal de l'espace ET journal de la plateforme. */
+const devices = require('./devices');
+const sessionsMod = require('./sessions');
+function securityView(req) {
+  const cab = db.prepare('SELECT * FROM cabinet WHERE id=?').get(req.cabinetId);
+  const p = accessPolicy.policyOf(cab);
+  const sess = db.prepare(`SELECT s.*, u.nom user_nom, u.email user_email FROM user_session s JOIN utilisateur u ON u.id=s.user_id
+      WHERE s.cabinet_id=? AND ${sessionsMod.ACTIVE_SQL} ORDER BY s.last_seen_at DESC LIMIT 300`).all(req.cabinetId);
+  return { politique: p, mode: accessPolicy.modeLabel(p), ipCourante: require('./net').clientIp(req),
+    appareilCourant: req.session ? req.session.device_id : null, sessionCourante: req.session ? req.session.id : null,
+    appareils: devices.listForCabinet(req.cabinetId).map(devices.publicDevice),
+    sessions: sess.map(x => ({ id: x.id, type: x.type, utilisateur: { nom: x.user_nom, email: x.user_email }, ip: x.ip, ipDerniere: x.ip_derniere, pays: x.pays,
+      navigateur: x.navigateur, os: x.os, typeAppareil: x.type_appareil, modele: x.modele, debut: x.created_at, vu: x.last_seen_at, appareil: x.device_id })),
+    supports: (() => { try { return require('./support-access').listForCabinet(req.cabinetId); } catch (_) { return []; } })() };
+}
+const secActor = req => `${req.user.nom || req.user.email} (administrateur de l’espace)`;
+function secPlatformAudit(req, action, extra) {
+  const cab = db.prepare('SELECT slug FROM cabinet WHERE id=?').get(req.cabinetId);
+  require('./platform/store').paudit({ id: null, email: `${req.user.email} · espace ${cab && cab.slug}` }, action, { type: 'espace', id: req.cabinetId, libelle: cab && cab.slug, ...extra }, req);
+}
+router.get('/security', (req, res) => {
+  if (!permissions.guard(req, res, 'manage_users', 'Seul un administrateur peut consulter la sécurité de l’espace.')) return;
+  res.json(securityView(req));
+});
+router.put('/security/policy', (req, res) => {
+  if (!permissions.guard(req, res, 'manage_users', 'Seul un administrateur peut modifier la politique d’accès.')) return;
+  try {
+    const r = accessPolicy.savePolicy(req.cabinetId, req.body || {}, { actorLabel: secActor(req), currentIp: require('./net').clientIp(req),
+      currentDeviceId: req.session && req.session.device_id, requireCurrentIp: true });
+    audit(req.cabinetId, req.user.id, 'politique_acces', 'espace_travail', { avant: r.avant, apres: r.apres, appareils_approuves: r.approuves }, req.ip);
+    secPlatformAudit(req, 'politique_acces', { avant: r.avant, apres: r.apres, details: { appareils_approuves: r.approuves, depuis: 'espace' } });
+    res.json({ ok: true, avertissements: r.avertissements, approuves: r.approuves, ...securityView(req) });
+  } catch (e) { res.status(e.status || 400).json({ error: e.message, code: e.code }); }
+});
+router.post('/security/devices/:did/:action', (req, res) => {
+  if (!permissions.guard(req, res, 'manage_users', 'Seul un administrateur peut approuver ou révoquer un appareil.')) return;
+  const d = devices.get(req.params.did);
+  if (!d || d.cabinet_id !== req.cabinetId) return res.status(404).json({ error: 'Appareil introuvable.', code: 'appareil_introuvable' });
+  const map = { approve: 'approuve', refuse: 'refuse', revoke: 'revoque' };
+  const statut = map[req.params.action]; if (!statut) return res.status(404).json({ error: 'Action inconnue.' });
+  if (statut !== 'approuve' && req.session && req.session.device_id === d.id) return res.status(400).json({ error: 'Vous ne pouvez pas révoquer ou refuser l’appareil que vous utilisez actuellement.', code: 'auto_blocage' });
+  const pol = accessPolicy.policyOf(db.prepare('SELECT acces_json FROM cabinet WHERE id=?').get(req.cabinetId));
+  const r = devices.decide(d.id, statut, secActor(req), { dureeJours: pol.dureeApprobationJours });
+  const owner = db.prepare('SELECT email FROM utilisateur WHERE id=?').get(d.user_id);
+  const det = { appareil: `${d.navigateur || '?'} · ${d.os || '?'}`, utilisateur: owner && owner.email, avant: d.statut, apres: statut, sessions_fermees: r.sessions };
+  audit(req.cabinetId, req.user.id, 'appareil_' + statut, 'appareil', det, req.ip);
+  secPlatformAudit(req, 'appareil_' + statut, { avant: { statut: d.statut }, apres: { statut }, details: det });
+  res.json({ ok: true, ...r });
+});
+router.post('/security/sessions/:sid/revoke', (req, res) => {
+  if (!permissions.guard(req, res, 'manage_users', 'Seul un administrateur peut fermer une session.')) return;
+  const x = sessionsMod.get(req.params.sid);
+  if (!x || x.cabinet_id !== req.cabinetId) return res.status(404).json({ error: 'Session introuvable.', code: 'session_introuvable' });
+  if (req.session && x.id === req.session.id) return res.status(400).json({ error: 'Pour fermer votre propre session, utilisez « Se déconnecter ».', code: 'auto_blocage' });
+  const n = sessionsMod.end(x.id, 'deconnexion_forcee');
+  const owner = db.prepare('SELECT email FROM utilisateur WHERE id=?').get(x.user_id);
+  audit(req.cabinetId, req.user.id, 'deconnexion_forcee', 'utilisateur', { utilisateur: owner && owner.email, sessions_fermees: n }, req.ip);
+  secPlatformAudit(req, 'deconnexion_forcee', { details: { utilisateur: owner && owner.email, depuis: 'espace' } });
+  res.json({ ok: true });
 });
 
 /* ============================================================ ONBOARDING (progression par espace) */

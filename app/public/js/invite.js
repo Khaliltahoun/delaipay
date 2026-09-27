@@ -38,6 +38,10 @@ $('#inviteForm').addEventListener('submit', async e => {
   if (pw !== pw2) return show('Les deux mots de passe ne correspondent pas.');
   const b = $('#submitBtn'); b.disabled = true; b.textContent = 'Création de votre accès…';
   const r = await post('/api/invitations/accept', { token, nom, password: pw }).catch(() => null);
+  if (r && r.ok && r.data.loginRequired) {
+    $('#formBox').innerHTML = `<h1>Accès créé</h1><div class="note note-info mb-14"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="9"/><path d="M12 11v5M12 8h.01"/></svg><div>${esc(r.data.message)}</div></div><p class="lead">Votre compte est prêt. Connectez-vous dès que l’accès est autorisé.</p><a class="btn btn-primary login-submit" href="/login">Aller à la connexion</a>`;
+    return;
+  }
   if (r && r.ok) { b.textContent = 'Ouverture de l’espace…'; window.location.replace('/'); return; }
   show((r && r.data && r.data.error) || 'La création de l’accès a échoué. Aucun compte n’a été créé ; réessayez.');
   b.disabled = false; b.textContent = 'Créer mon accès';

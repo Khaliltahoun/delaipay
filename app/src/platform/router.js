@@ -141,6 +141,11 @@ function createConsoleApp({ mountStatic, sendPage }) {
     res.json({ rows: store.listAudit({ limit: q.limit, before: q.before || null, cibleType: q.type || null, cibleId: q.cible || null, action: q.action || null }) });
   });
 
+  api.get('/console-allowlist', (req, res) => {
+    const env = String(process.env.PLATFORM_ALLOWED_IPS || '').split(',').map(x => x.trim()).filter(Boolean).map(cidr => ({ cidr, label: null, source: 'variable PLATFORM_ALLOWED_IPS' }));
+    const cli = (store.getSetting('console_allowlist', []) || []).map(e => ({ cidr: e.cidr, label: e.label, source: 'ligne de commande' }));
+    res.json({ rows: [...env, ...cli], ip: netu.clientIp(req) });
+  });
   for (const mod of require('./routes')) mod(api);
 
   api.use((req, res) => res.status(404).json({ error: 'Action inconnue.', code: 'route_inconnue' }));

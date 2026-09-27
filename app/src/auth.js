@@ -103,11 +103,14 @@ function checkSession(req) {
   // Espace revérifié à CHAQUE requête (rôle, statut et espace relus en base, jamais depuis le jeton) :
   //  - espace désactivé → plus aucun accès, même avec une session encore valide ;
   //  - hôte désignant un AUTRE espace que celui de la session → refus (défense en profondeur).
-  const cab = db.prepare('SELECT id, slug, actif FROM cabinet WHERE id=?').get(dbUser.cabinet_id);
-  if (!cab || cab.actif === 0) return { ok: false, code: 'workspace_inactive', error: 'Cet espace de travail est désactivé.' };
+  const cab = db.prepare('SELECT id, slug, actif, supprime_le, acces_json FROM cabinet WHERE id=?').get(dbUser.cabinet_id);
+  if (!cab || cab.actif === 0 || cab.supprime_le) return { ok: false, code: 'workspace_inactive', error: 'Cet espace de travail est désactivé.' };
   const hostSlug = require('./tenant').slugFromHost((req.hostname || (req.headers && req.headers.host)) || '');
   if (hostSlug && String(cab.slug || '').toLowerCase() !== hostSlug)
     return { ok: false, code: 'wrong_workspace', error: 'Cette session appartient à un autre espace de travail.' };
+  // Politique d'accès de l'espace (IP autorisées / bloquées, appareil approuvé) revérifiée à CHAQUE requête.
+  const deny = require('./access-policy').checkRequest(req, sess, cab);
+  if (deny) { sessions.end(sess.id, deny.reason); return { ok: false, code: 'session_ended', reason: deny.reason, error: deny.error }; }
   sessions.touch(sess, req);
   return { ok: true, user: dbUser, session: sess, cabinet: cab };
 }

@@ -80,3 +80,15 @@ test('réseau : X-Forwarded-For forgé ignoré sans proxy de confiance (IP de co
   assert.equal(s.ip, '127.0.0.1');
   assert.ok(!db.prepare(`SELECT 1 FROM audit_log WHERE ip LIKE '%203.0.113.66%'`).get(), 'jamais dans le journal');
 });
+
+test('réseau : X-Forwarded-For forgé ne contourne ni la liste d’IP autorisées ni les IP bloquées', async () => {
+  const w = ws();
+  db.prepare('UPDATE cabinet SET acces_json=? WHERE id=?').run(JSON.stringify({ ipAutorisees: true, listeIp: [{ cidr: '203.0.113.0/24', label: 'Bureau' }] }), w.cabinetId);
+  const spoof = H.browser(w.host, { headers: { 'X-Forwarded-For': '203.0.113.5' } });
+  const r = await spoof.post('/api/auth/login', { email: w.email, password: PW });
+  assert.equal(r.status, 403); assert.equal(r.body.code, 'ip_non_autorisee', 'l’IP réelle (127.0.0.1) est hors liste');
+  db.prepare('UPDATE cabinet SET acces_json=? WHERE id=?').run(JSON.stringify({ ipBloquees: [{ cidr: '127.0.0.1', label: 'test' }] }), w.cabinetId);
+  const spoof2 = H.browser(w.host, { headers: { 'X-Forwarded-For': '198.51.100.1' } });
+  assert.equal((await spoof2.post('/api/auth/login', { email: w.email, password: PW })).body.code, 'ip_bloquee', 'le XFF ne masque pas l’IP bloquée');
+  db.prepare('UPDATE cabinet SET acces_json=NULL WHERE id=?').run(w.cabinetId);
+});

@@ -91,6 +91,10 @@ function createApp() {
   });
 
   // Pages
+  // Indices clients (Sec-CH-UA-Model…) : demandés sur les pages, pour enregistrer le modèle d'appareil SANS le deviner.
+  const ACCEPT_CH = require('./useragent').ACCEPT_CH;
+  const CH_PAGES = new Set(['/login', '/', '/app', '/invite', '/reset']);
+  app.use((req, res, next) => { if (req.method === 'GET' && CH_PAGES.has(req.path)) res.setHeader('Accept-CH', ACCEPT_CH); next(); });
   app.get('/login', (req, res) => {
     // Redirection vers l'application UNIQUEMENT si la session est valide en base (sinon boucle login ↔ app).
     const s = checkSession(req);
