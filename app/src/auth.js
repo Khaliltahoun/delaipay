@@ -40,9 +40,15 @@ const DUMMY_HASH = bcrypt.hashSync('dp_dummy_password_for_timing', 10);
 function hashPassword(pw) { return bcrypt.hashSync(pw, 10); }
 function verifyPassword(pw, hash) { try { return bcrypt.compareSync(pw, hash); } catch { return false; } }
 
-function signToken(user) {
+/**
+ * Jeton d'espace. Chaque jeton porte l'identifiant d'une session ENREGISTRÉE en base (`sid`) : sans session
+ * active correspondante, le jeton est refusé (déconnexion forcée, suspension, révocation d'appareil — INC 3A).
+ * Sans `sid` fourni, une session est ouverte ici (outils, tests).
+ */
+function signToken(user, opts = {}) {
+  const sid = opts.sid || require('./sessions').open({ cabinetId: user.cabinet_id, userId: user.id }, opts.req);
   return jwt.sign(
-    { uid: user.id, cid: user.cabinet_id, role: user.role, email: user.email, nom: user.nom, ini: user.initiales },
+    { uid: user.id, cid: user.cabinet_id, sid, role: user.role, email: user.email, nom: user.nom, ini: user.initiales },
     SECRET, { expiresIn: '12h' });
 }
 const COOKIE_OPTS = {
@@ -53,6 +59,15 @@ function setAuthCookie(res, token) {
   res.cookie(COOKIE, token, { ...COOKIE_OPTS, maxAge: MAXAGE });
 }
 function clearAuthCookie(res) { res.clearCookie(COOKIE, COOKIE_OPTS); }
+/** Connexion réussie : ouvre une session serveur (IP, navigateur, appareil) et pose le cookie. @returns sid */
+function issueSession(res, user, req, opts = {}) {
+  const sid = require('./sessions').open({ cabinetId: user.cabinet_id, userId: user.id, deviceId: opts.deviceId || null,
+    type: opts.type, supportAccessId: opts.supportAccessId, ttlMs: opts.ttlMs }, req);
+  const token = jwt.sign({ uid: user.id, cid: user.cabinet_id, sid, role: user.role, email: user.email, nom: user.nom, ini: user.initiales },
+    SECRET, { expiresIn: opts.ttlMs ? Math.max(60, Math.round(opts.ttlMs / 1000)) : '12h' });
+  res.cookie(COOKIE, token, { ...COOKIE_OPTS, maxAge: opts.ttlMs || MAXAGE });
+  return sid;
+}
 
 function readUser(req) {
   const token = req.cookies && req.cookies[COOKIE];
@@ -68,6 +83,18 @@ function readUser(req) {
 function checkSession(req) {
   const u = readUser(req);
   if (!u) return { ok: false, code: 'expired', error: 'Non authentifié' };
+  // Session serveur (INC 3A) : révoquée, expirée ou inconnue → session terminée (jamais « compte désactivé »).
+  const sessions = require('./sessions');
+  const sess = sessions.get(u.sid);
+  if (!sess || sess.user_id !== u.uid) return { ok: false, code: 'expired_stale', error: 'Votre session a expiré. Reconnectez-vous.' };
+  if (!sessions.isActive(sess)) {
+    const msg = { espace_suspendu: 'Cet espace de travail est suspendu. Contactez DelaiPay pour le réactiver.',
+      espace_supprime: 'Cet espace de travail n’est plus disponible.',
+      deconnexion_forcee: 'Votre session a été fermée par un administrateur. Reconnectez-vous.',
+      appareil_revoque: 'L’accès depuis cet appareil a été retiré par un administrateur.',
+      compte_desactive: 'Votre compte a été désactivé par l’administrateur de votre espace.' }[sess.end_reason];
+    return { ok: false, code: 'session_ended', reason: sess.end_reason, error: msg || 'Votre session a expiré. Reconnectez-vous.' };
+  }
   const dbUser = db.prepare('SELECT id, cabinet_id, nom, email, role, initiales, titre, actif FROM utilisateur WHERE id=?').get(u.uid);
   // Jeton valide mais utilisateur absent (base de démonstration réinitialisée, compte supprimé) : session expirée,
   // pas « compte désactivé » (NEW-3).
@@ -81,7 +108,8 @@ function checkSession(req) {
   const hostSlug = require('./tenant').slugFromHost((req.hostname || (req.headers && req.headers.host)) || '');
   if (hostSlug && String(cab.slug || '').toLowerCase() !== hostSlug)
     return { ok: false, code: 'wrong_workspace', error: 'Cette session appartient à un autre espace de travail.' };
-  return { ok: true, user: dbUser };
+  sessions.touch(sess, req);
+  return { ok: true, user: dbUser, session: sess, cabinet: cab };
 }
 
 /** Middleware API : exige une session valide, attache req.user + req.cabinetId. */
@@ -89,9 +117,9 @@ function requireAuth(req, res, next) {
   const s = checkSession(req);
   if (!s.ok) {
     if (s.code !== 'expired') clearAuthCookie(res);   // session devenue invalide : on la retire (évite toute boucle)
-    return res.status(401).json({ error: s.code === 'expired' ? 'Non authentifié' : s.error, code: s.code });
+    return res.status(401).json({ error: s.code === 'expired' ? 'Non authentifié' : s.error, code: s.code, ...(s.reason ? { reason: s.reason } : {}) });
   }
-  req.user = s.user; req.cabinetId = s.user.cabinet_id;
+  req.user = s.user; req.cabinetId = s.user.cabinet_id; req.session = s.session;
   next();
 }
 
@@ -100,9 +128,9 @@ function pageGuard(req, res, next) {
   const s = checkSession(req);
   if (!s.ok) {
     if (s.code !== 'expired' || readUser(req)) clearAuthCookie(res);
-    return res.redirect(s.code === 'expired' && !req.cookies[COOKIE] ? '/login' : '/login?reason=' + encodeURIComponent(s.code));
+    return res.redirect(s.code === 'expired' && !req.cookies[COOKIE] ? '/login' : '/login?reason=' + encodeURIComponent(s.reason || s.code));
   }
   next();
 }
 
-module.exports = { hashPassword, verifyPassword, signToken, setAuthCookie, clearAuthCookie, requireAuth, pageGuard, readUser, checkSession, COOKIE, DUMMY_HASH };
+module.exports = { hashPassword, verifyPassword, signToken, issueSession, setAuthCookie, clearAuthCookie, requireAuth, pageGuard, readUser, checkSession, COOKIE, DUMMY_HASH };

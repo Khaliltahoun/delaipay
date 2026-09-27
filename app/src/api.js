@@ -253,12 +253,15 @@ router.post('/auth/login', loginIpCeiling, loginLimiter, (req, res) => {
   }
   try { db.prepare(`UPDATE utilisateur SET derniere_connexion=datetime('now') WHERE id=?`).run(u.id); } catch (_) {}
   loginLimiter.reset(req);   // connexion réussie : le compteur de CETTE identité repart de zéro
-  const token = auth.signToken(u);
-  auth.setAuthCookie(res, token);
+  auth.issueSession(res, u, req);
   audit(u.cabinet_id, u.id, 'login', 'utilisateur', { email: u.email }, req.ip);
   res.json({ ok: true, user: publicUser(u) });
 });
-router.post('/auth/logout', (req, res) => { auth.clearAuthCookie(res); res.json({ ok: true }); });
+router.post('/auth/logout', (req, res) => {
+  const u = auth.readUser(req);
+  if (u && u.sid) require('./sessions').end(u.sid, 'deconnexion');   // la session serveur est close : le jeton ne vaut plus rien
+  auth.clearAuthCookie(res); res.json({ ok: true });
+});
 
 router.get('/me', auth.requireAuth, (req, res) => {
   res.setHeader('X-DP-Session', `${req.user.id}:${req.user.role}`);
@@ -303,7 +306,7 @@ router.post('/invitations/accept', inviteLimiter, (req, res) => {
     // Connexion automatique après acceptation : c'est une vraie première connexion (P3-15).
     try { db.prepare(`UPDATE utilisateur SET derniere_connexion=datetime('now') WHERE id=?`).run(u.id); } catch (_) {}
     audit(u.cabinet_id, u.id, 'login', 'utilisateur', { email: u.email, motif: 'invitation acceptée' }, req.ip);
-    auth.setAuthCookie(res, auth.signToken(u));
+    auth.issueSession(res, u, req);
     res.json({ ok: true, user: publicUser(u) });
   } catch (e) { res.status(e.status || 400).json({ error: e.message }); }
 });

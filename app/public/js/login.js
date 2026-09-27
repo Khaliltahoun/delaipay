@@ -52,6 +52,12 @@ const REASONS = {
   workspace_inactive: ['warn', 'Espace désactivé', 'Cet espace de travail est suspendu. Contactez DelaiPay pour le réactiver.'],
   wrong_workspace: ['info', 'Autre espace de travail', 'Vous étiez connecté·e à un autre espace. Connectez-vous avec un compte de cet espace.'],
   logout: ['info', 'Déconnexion effectuée', 'À bientôt sur DelaiPay.'],
+  session_ended: ['info', 'Session terminée', 'Votre session a pris fin. Reconnectez-vous.'],
+  deconnexion_forcee: ['info', 'Session fermée', 'Votre session a été fermée par un administrateur. Reconnectez-vous.'],
+  appareil_revoque: ['warn', 'Appareil retiré', 'L’accès depuis cet appareil a été retiré par un administrateur. Contactez l’administrateur de votre espace.'],
+  espace_suspendu: ['warn', 'Espace suspendu', 'Cet espace de travail est suspendu. Contactez DelaiPay pour le réactiver.'],
+  espace_supprime: ['warn', 'Espace indisponible', 'Cet espace de travail n’est plus disponible.'],
+  compte_desactive: ['warn', 'Compte désactivé', 'Votre accès a été désactivé par l’administrateur de votre espace.'],
 };
 const reason = new URLSearchParams(location.search).get('reason');
 if (REASONS[reason]) showNotice(...REASONS[reason]);
