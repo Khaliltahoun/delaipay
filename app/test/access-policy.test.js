@@ -212,3 +212,31 @@ test('invitation acceptée sous « appareils approuvés » : compte créé, conn
   assert.equal(r.status, 200); assert.equal(r.body.loginRequired, true); assert.equal(r.body.message, MSG_PENDING);
   assert.ok(!b.jar.dp_token, 'aucune session ouverte');
 });
+
+test('activité de connexion : succès, échecs, verrouillage, refus, attente — et signaux (échecs répétés, nouvel appareil admin, nouveau pays)', async () => {
+  const t = await team();
+  const b = nav(t.host, '198.51.100.90');
+  for (let i = 0; i < 6; i++) await b.post('/api/auth/login', { email: t.comptaEmail, password: 'mauvais-' + i });
+  let d = (await t.c.get(`/api/platform/login-activity?cabinet=${t.w.id}`)).body;
+  assert.ok(d.rows.filter(r => r.resultat === 'echec' && r.email === t.comptaEmail).length >= 5);
+  assert.ok(d.compteurs24h.echec >= 5 && d.compteurs24h.succes >= 2);
+  assert.ok(d.signaux.some(s => s.type === 'echecs_repetes' && s.email === t.comptaEmail), 'signal échecs répétés');
+  assert.ok(d.rows.every(r => !('password' in r)), 'jamais de mot de passe');
+  // Nouvel appareil sur un compte administrateur.
+  const adminEmail = `admin@${t.slug}.ma`;
+  db.prepare(`UPDATE device SET first_seen=datetime('now','-3 days') WHERE user_id=(SELECT id FROM utilisateur WHERE email=?)`).run(adminEmail);
+  await nav(t.host, '203.0.113.11').post('/api/auth/login', { email: adminEmail, password: PW });
+  d = (await t.c.get(`/api/platform/login-activity?cabinet=${t.w.id}`)).body;
+  assert.ok(d.signaux.some(s => s.type === 'nouvel_appareil_admin' && s.email === adminEmail));
+  // Nouveau pays (base GeoIP locale de test).
+  const csv = path.join(os.tmpdir(), `geo_${process.pid}.csv`);
+  fs.writeFileSync(csv, '203.0.113.0,203.0.113.255,MA\n192.0.2.0,192.0.2.255,FR\n');
+  process.env.GEOIP_DB = csv;
+  try {
+    await nav(t.host, '203.0.113.12').post('/api/auth/login', { email: adminEmail, password: PW });
+    await nav(t.host, '192.0.2.12').post('/api/auth/login', { email: adminEmail, password: PW });
+    d = (await t.c.get(`/api/platform/login-activity?cabinet=${t.w.id}`)).body;
+    assert.ok(d.signaux.some(s => s.type === 'nouveau_pays' && /FR/.test(s.message)), 'signal nouveau pays');
+    assert.ok(d.rows.some(r => r.pays === 'MA'));
+  } finally { delete process.env.GEOIP_DB; fs.rmSync(csv, { force: true }); }
+});
