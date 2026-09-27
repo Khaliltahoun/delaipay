@@ -14,6 +14,7 @@ const anomalies = require('./anomalies');
 const lifecycle = require('./lifecycle');
 const accessPolicy = require('./access-policy');
 const loginActivity = require('./login-activity');
+require('./support-access'); // schéma des accès d'assistance (sessions « support » en lecture seule)
 const auth = require('./auth');
 const visa = require('./visa');
 const tenant = require('./tenant');
@@ -355,6 +356,14 @@ router.post('/password-reset/complete', inviteLimiter, (req, res) => {
   catch (e) { res.status(e.status || 400).json({ error: e.message }); }
 });
 
+// Ouverture d'un accès d'assistance (lien à usage unique créé par la console) — src/support-access.js.
+router.post('/support/exchange', inviteLimiter, (req, res) => {
+  res.setHeader('Cache-Control', 'no-store');
+  const a = require('./support-access').exchange(String((req.body && req.body.token) || ''), hostCabinetId(req), req, res);
+  if (!a) return res.status(410).json({ error: 'Ce lien d’assistance est invalide, expiré ou déjà utilisé. Créez-en un nouveau depuis la console.', code: 'support_invalid' });
+  res.json({ ok: true, fin: a.fin });
+});
+
 router.get('/tenant', (req, res) => {
   const ws = tenant.resolve(req);
   res.setHeader('Cache-Control', 'no-store');
@@ -366,7 +375,12 @@ router.get('/tenant', (req, res) => {
 function platformNotices(req, cab) {
   const s = lifecycle.subscriptionState(req.cabinetId);
   const abo = s.configured && s.date_fin ? { etat: s.etat, date_fin: s.date_fin, fin_grace: s.fin_grace, jours_restants: s.jours_restants } : null;
-  return { maintenance: lifecycle.maintenanceFor(cab), abonnement: abo, acces: lifecycle.accessMode(req.cabinetId).mode };
+  let support = null;
+  if (req.session && req.session.type === 'support') {
+    const a = require('./support-access').get(req.session.support_access_id);
+    if (a) support = { fin: new Date(Date.parse(a.fin.replace(' ', 'T') + 'Z')).toISOString(), motif: a.motif, par: a.admin_email };
+  }
+  return { maintenance: lifecycle.maintenanceFor(cab), abonnement: abo, acces: lifecycle.accessMode(req.cabinetId).mode, support };
 }
 function publicUser(u) {
   return { id: u.id, nom: u.nom, email: u.email, role: u.role,
@@ -476,7 +490,8 @@ const sessionsMod = require('./sessions');
 function securityView(req) {
   const cab = db.prepare('SELECT * FROM cabinet WHERE id=?').get(req.cabinetId);
   const p = accessPolicy.policyOf(cab);
-  const sess = db.prepare(`SELECT s.*, u.nom user_nom, u.email user_email FROM user_session s JOIN utilisateur u ON u.id=s.user_id
+  const sess = db.prepare(`SELECT s.*, COALESCE(u.nom, CASE WHEN s.type='support' THEN 'Assistance DelaiPay' END) user_nom,
+      COALESCE(u.email, (SELECT admin_email FROM support_access a WHERE a.id=s.support_access_id)) user_email FROM user_session s LEFT JOIN utilisateur u ON u.id=s.user_id
       WHERE s.cabinet_id=? AND ${sessionsMod.ACTIVE_SQL} ORDER BY s.last_seen_at DESC LIMIT 300`).all(req.cabinetId);
   return { politique: p, mode: accessPolicy.modeLabel(p), ipCourante: require('./net').clientIp(req),
     appareilCourant: req.session ? req.session.device_id : null, sessionCourante: req.session ? req.session.id : null,
@@ -1975,7 +1990,8 @@ router.post('/taux', (req, res) => {
 /* ============================================================ AUDIT */
 router.get('/audit', (req, res) => {
   // Actions de la console (user_id NULL, details.par) : attribuées à l'équipe DelaiPay, jamais anonymes.
-  const rows = db.prepare(`SELECT a.*, COALESCE(u.nom, json_extract(CASE WHEN json_valid(a.details) THEN a.details END, '$.par')) user_nom
+  const rows = db.prepare(`SELECT a.*, COALESCE(u.nom, json_extract(CASE WHEN json_valid(a.details) THEN a.details END, '$.par'),
+       CASE WHEN a.user_id LIKE 'support:%' THEN 'Assistance DelaiPay' END) user_nom
      FROM audit_log a LEFT JOIN utilisateur u ON u.id=a.user_id
      WHERE a.cabinet_id=? ORDER BY a.created_at DESC LIMIT 100`).all(req.cabinetId);
   res.json(rows);

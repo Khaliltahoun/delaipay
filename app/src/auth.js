@@ -92,10 +92,21 @@ function checkSession(req) {
       espace_supprime: 'Cet espace de travail n’est plus disponible.',
       deconnexion_forcee: 'Votre session a été fermée par un administrateur. Reconnectez-vous.',
       appareil_revoque: 'L’accès depuis cet appareil a été retiré par un administrateur.',
-      compte_desactive: 'Votre compte a été désactivé par l’administrateur de votre espace.' }[sess.end_reason];
+      compte_desactive: 'Votre compte a été désactivé par l’administrateur de votre espace.',
+      fin_support: 'L’accès d’assistance DelaiPay est terminé.' }[sess.end_reason];
     return { ok: false, code: 'session_ended', reason: sess.end_reason, error: msg || 'Votre session a expiré. Reconnectez-vous.' };
   }
-  const dbUser = db.prepare('SELECT id, cabinet_id, nom, email, role, initiales, titre, actif FROM utilisateur WHERE id=?').get(u.uid);
+  let dbUser;
+  if (sess.type === 'support') {
+    // Session d'assistance DelaiPay : utilisateur SYNTHÉTIQUE en lecture seule, valable tant que l'accès est ouvert.
+    const support = require('./support-access');
+    const acc = support.get(sess.support_access_id);
+    if (!support.isActive(acc) || acc.cabinet_id !== sess.cabinet_id) {
+      sessions.end(sess.id, 'fin_support');
+      return { ok: false, code: 'session_ended', reason: 'fin_support', error: 'L’accès d’assistance DelaiPay est terminé.' };
+    }
+    dbUser = support.syntheticUser(acc);
+  } else dbUser = db.prepare('SELECT id, cabinet_id, nom, email, role, initiales, titre, actif FROM utilisateur WHERE id=?').get(u.uid);
   // Jeton valide mais utilisateur absent (base de démonstration réinitialisée, compte supprimé) : session expirée,
   // pas « compte désactivé » (NEW-3).
   if (!dbUser) return { ok: false, code: 'expired_stale', error: 'Votre session a expiré. Reconnectez-vous.' };

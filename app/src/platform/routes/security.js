@@ -21,7 +21,8 @@ function sessionRows({ cabinetId, userId, actives = true, limit = 300 }) {
   if (cabinetId) { w.push('s.cabinet_id=?'); a.push(cabinetId); }
   if (userId) { w.push('s.user_id=?'); a.push(userId); }
   if (actives) w.push(`s.ended_at IS NULL AND s.expires_at > datetime('now')`);
-  return db.prepare(`SELECT s.*, u.nom user_nom, u.email user_email, c.slug, c.nom cab_nom FROM user_session s
+  return db.prepare(`SELECT s.*, COALESCE(u.nom, CASE WHEN s.type='support' THEN 'Assistance DelaiPay' END) user_nom,
+      COALESCE(u.email, (SELECT admin_email FROM support_access a WHERE a.id=s.support_access_id)) user_email, c.slug, c.nom cab_nom FROM user_session s
       LEFT JOIN utilisateur u ON u.id=s.user_id LEFT JOIN cabinet c ON c.id=s.cabinet_id
       WHERE ${w.join(' AND ')} ORDER BY s.last_seen_at DESC LIMIT ?`).all(...a, limit)
     .map(x => ({ id: x.id, type: x.type, espace: { id: x.cabinet_id, slug: x.slug, nom: x.cab_nom }, utilisateur: { id: x.user_id, nom: x.user_nom, email: x.user_email },

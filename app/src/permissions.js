@@ -52,6 +52,9 @@ function guard(req, res, action, message) {
  * (Filet de sécurité indépendant des contrôles par route.)
  */
 function readOnlyGuard(req, res, next) {
+  // Session d'assistance DelaiPay : strictement aucune écriture, pas même le changement de mot de passe.
+  if (req.session && req.session.type === 'support' && !['GET', 'HEAD', 'OPTIONS'].includes(req.method))
+    return res.status(403).json({ error: 'Accès d’assistance DelaiPay : lecture seule, aucune modification possible.', code: 'read_only' });
   // Exception unique : changer SON PROPRE mot de passe (ne touche aucune donnée de l'espace).
   if (req.user && req.user.role === 'lecture' && !['GET', 'HEAD', 'OPTIONS'].includes(req.method) && req.path !== '/me/password')
     return res.status(403).json({ error: 'Votre accès est en lecture seule : aucune donnée ne peut être modifiée.', code: 'read_only' });
