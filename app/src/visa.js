@@ -11,6 +11,22 @@ const { fmtMoney } = require('./util');
 /* Conclusions du modèle officiel — liste FERMÉE (modification autorisée par le fondateur, 2026-09-27 : voir DECISIONS.md).
  * Une conclusion vide ou non reconnue est REFUSÉE : jamais de formulation « pas d'observations » par défaut. */
 const CONCLUSIONS = ['Sans observation', 'Avec observation', 'Avec réserve', 'Refus de visa'];
+// « Avec observation » et « Avec réserve » : le texte renvoie aux observations / réserves « mentionnées ci-dessus »
+// → au moins UNE est exigée et elles sont imprimées juste avant la conclusion (VISA-2).
+const NEEDS_OBS = { 'Avec observation': { titre: 'Observations :', mot: 'observation' }, 'Avec réserve': { titre: 'Réserves :', mot: 'réserve' } };
+const OBS_MAX = 20, OBS_LEN = 1000;
+/** Normalise la liste (tableau ou texte, une par ligne) ; lève une erreur si requise et vide. */
+function normalizeObservations(conclusion, observations) {
+  const list = (Array.isArray(observations) ? observations : String(observations || '').split(/\r?\n/))
+    .map(o => String(o == null ? '' : o).replace(/^\s*(?:[-•*]|\d+[.)])\s*/, '').trim()).filter(Boolean);
+  const need = NEEDS_OBS[conclusion];
+  if (!need) return [];
+  if (!list.length) throw new VisaError(`La conclusion « ${conclusion} » exige au moins une ${need.mot} : le texte du visa renvoie aux ${need.mot}s « mentionnées ci-dessus ».`, 'observations_requises');
+  if (list.length > OBS_MAX) throw new VisaError(`${OBS_MAX} ${need.mot}s au maximum.`, 'observations_trop_nombreuses');
+  const long = list.find(o => o.length > OBS_LEN);
+  if (long) throw new VisaError(`Chaque ${need.mot} est limitée à ${OBS_LEN} caractères.`, 'observation_trop_longue');
+  return list;
+}
 class VisaError extends Error { constructor(msg, code) { super(msg); this.status = 400; this.code = code; } }
 
 function frDate(d) { return `${String(d.getDate()).padStart(2, '0')}/${String(d.getMonth() + 1).padStart(2, '0')}/${d.getFullYear()}`; }
@@ -21,9 +37,10 @@ function periodeDates(annee, trimestre) {
 }
 
 /** Construit les blocs du visa à partir des données de la déclaration. */
-function buildData({ e, annee, trimestre, montant, conclusion, signataire, type }) {
+function buildData({ e, annee, trimestre, montant, conclusion, signataire, type, observations }) {
   if (!CONCLUSIONS.includes(conclusion))
     throw new VisaError(`Conclusion du visa ${conclusion ? `« ${conclusion} » non reconnue` : 'manquante'} : choisissez « Sans observation », « Avec observation », « Avec réserve » ou « Refus de visa ».`, 'conclusion_invalide');
+  const obs = normalizeObservations(conclusion, observations);
   const rs = e.raison_sociale;
   const siege = e.adresse || e.ville || '—';
   const { debut, fin } = periodeDates(annee, trimestre);
@@ -57,6 +74,9 @@ function buildData({ e, annee, trimestre, montant, conclusion, signataire, type 
     ] },
     { align: 'justify', runs: [{ t: `Notre intervention qui porte sur le contrôle de concordance, par sondages, d'informations documentaires et de gestion, ne constitue ni un audit, ni un examen limité. Elle a été effectuée selon la Directive de l'Ordre des Experts Comptables, approuvée le 06 octobre 2024.` }] },
     { align: 'justify', runs: [{ t: `Nos travaux ne sont pas destinés à remplacer les diligences qu'il appartient à l'Administration, ayant eu communication de ce visa, de mettre en œuvre au regard de ses propres besoins en application de la loi 69-21.` }] },
+    // Observations / réserves auxquelles renvoie la conclusion (« mentionnées ci-dessus »).
+    ...(obs.length ? [{ align: 'left', runs: [{ t: NEEDS_OBS[conclusion].titre, b: true, u: true }] },
+      ...obs.map((o, i) => ({ align: 'justify', runs: [{ t: `${i + 1}. `, b: true }, { t: o }] }))] : []),
     { align: 'left', runs: [{ t: 'Conclusion :', b: true, u: true }] },
     conclusionBlock(conclusion, periodeSuffix),
     { align: 'justify', runs: [{ t: `Notre visa n'a pour seul objectif que celui indiqué dans le premier paragraphe ci-dessus et est réservé à votre propre usage dans le cadre de la loi 69-21. Il ne peut être utilisé à d'autres fins, ni être communiqué à d'autres parties.` }] },
@@ -68,7 +88,7 @@ function buildData({ e, annee, trimestre, montant, conclusion, signataire, type 
   ];
 
   return { type, typeLabel: isCAC ? 'Commissaire aux comptes (CAC)' : 'Expert-comptable / comptable agréé',
-    role, conclusion, signataire, lieu: 'Marrakech', date: today, debut, fin, montant, blocks };
+    role, conclusion, signataire, observations: obs, lieu: 'Marrakech', date: today, debut, fin, montant, blocks };
 }
 
 function conclusionBlock(conclusion, suffix) {
@@ -124,4 +144,4 @@ function toPdf(blocks, stream) {
   return doc;
 }
 
-module.exports = { buildData, toDocx, toPdf, periodeDates, CONCLUSIONS, VisaError };
+module.exports = { buildData, toDocx, toPdf, periodeDates, CONCLUSIONS, VisaError, NEEDS_OBS, normalizeObservations };

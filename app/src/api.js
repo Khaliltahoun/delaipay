@@ -1905,42 +1905,48 @@ function visaData(req, e) {
   // VISA-1 : aucune conclusion par défaut — choix explicite parmi les quatre conclusions du modèle.
   const conclusion = VISA_CONCLUSIONS.includes(req.query.conclusion) ? req.query.conclusion : null;
   const signataire = req.query.signataire || (db.prepare('SELECT nom FROM utilisateur WHERE id=?').get(req.user.id) || {}).nom || 'Le professionnel';
-  const data = conclusion ? visa.buildData({ e, annee: p.annee, trimestre: p.trimestre, montant: declaration.montant_total_ttc, conclusion, signataire, type: visaOf(e.ca_ht) }) : null;
-  return { p, declaration, data, conclusion, signataire };
+  // VISA-2 : observations / réserves (une par ligne) — exigées par visa.js pour « Avec observation » et « Avec réserve ».
+  const observations = String(req.query.observations || '').slice(0, 25000);
+  let data = null, erreur = null;
+  if (conclusion) {
+    try { data = visa.buildData({ e, annee: p.annee, trimestre: p.trimestre, montant: declaration.montant_total_ttc, conclusion, signataire, type: visaOf(e.ca_ht), observations }); }
+    catch (err) { if (!(err instanceof visa.VisaError)) throw err; erreur = { error: err.message, code: err.code }; }
+  }
+  return { p, declaration, data, conclusion, signataire, erreur };
 }
 router.get('/clients/:id/visa', (req, res) => {
   const e = ownedEntreprise(req, req.params.id); if (!e) return notFound(res, 'client');
-  const { p, declaration, data, signataire } = visaData(req, e);
+  const { p, declaration, data, signataire, conclusion, erreur } = visaData(req, e);
   const verifications = pendingChecks(req.cabinetId, e, p);
-  if (!data) return res.json({ choix_requis: true, conclusions: VISA_CONCLUSIONS, verifications, periode: p, signataire, type: visaOf(e.ca_ht),
-    montant_vise: declaration.montant_total_ttc, montant_amende: declaration.montant_total_amende });
+  if (!data) return res.json({ choix_requis: !conclusion, conclusion: conclusion || null, erreur, conclusions: VISA_CONCLUSIONS, verifications, periode: p, signataire, type: visaOf(e.ca_ht),
+    observations_requises: Object.keys(visa.NEEDS_OBS), montant_vise: declaration.montant_total_ttc, montant_amende: declaration.montant_total_amende });
   res.json({
     verifications, conclusions: VISA_CONCLUSIONS,
     type: data.type, typeLabel: data.typeLabel, periode: p,
     montant_vise: declaration.montant_total_ttc, montant_amende: declaration.montant_total_amende,
-    conclusion: data.conclusion, signataire: data.signataire, reference: 'Article 2.78 · Directive OEC du 06/10/2024',
+    conclusion: data.conclusion, observations: data.observations, observations_requises: Object.keys(visa.NEEDS_OBS), signataire: data.signataire, reference: 'Article 2.78 · Directive OEC du 06/10/2024',
     lieu: data.lieu, date: data.date, debut: data.debut, fin: data.fin, blocks: data.blocks,
   });
 });
 router.get('/clients/:id/visa/export.docx', asyncHandler(async (req, res) => {
   const e = ownedEntreprise(req, req.params.id); if (!e) return notFoundText(res, 'client');
   if (!requireExportPeriod(req, res)) return;
-  const { p, declaration, data } = visaData(req, e);
-  if (!data) return res.status(400).type('text/plain; charset=utf-8').send('Choisissez explicitement la conclusion du visa (sans observation, avec observation, avec réserve ou refus) avant de l’exporter.');
+  const { p, declaration, data, erreur } = visaData(req, e);
+  if (!data) return res.status(400).type('text/plain; charset=utf-8').send(erreur ? erreur.error : 'Choisissez explicitement la conclusion du visa (sans observation, avec observation, avec réserve ou refus) avant de l’exporter.');
   const buf = await visa.toDocx(data.blocks);
   res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document');
   res.setHeader('Content-Disposition', `attachment; filename="Visa_${slugify(e.raison_sociale)}_T${p.trimestre}_${p.annee}.docx"`);
-  auditExport(req, 'visa', 'docx', e, p, { type: data.type, montant_vise: declaration.montant_total_ttc, conclusion: data.conclusion });
+  auditExport(req, 'visa', 'docx', e, p, { type: data.type, montant_vise: declaration.montant_total_ttc, conclusion: data.conclusion, observations: data.observations });
   res.send(buf);
 }));
 router.get('/clients/:id/visa/export.pdf', (req, res, next) => {
   const e = ownedEntreprise(req, req.params.id); if (!e) return notFoundText(res, 'client');
   if (!requireExportPeriod(req, res)) return;
-  const { p, declaration, data } = visaData(req, e);
-  if (!data) return res.status(400).type('text/plain; charset=utf-8').send('Choisissez explicitement la conclusion du visa (sans observation, avec observation, avec réserve ou refus) avant de l’exporter.');
+  const { p, declaration, data, erreur } = visaData(req, e);
+  if (!data) return res.status(400).type('text/plain; charset=utf-8').send(erreur ? erreur.error : 'Choisissez explicitement la conclusion du visa (sans observation, avec observation, avec réserve ou refus) avant de l’exporter.');
   res.setHeader('Content-Type', 'application/pdf');
   res.setHeader('Content-Disposition', `attachment; filename="Visa_${slugify(e.raison_sociale)}_T${p.trimestre}_${p.annee}.pdf"`);
-  auditExport(req, 'visa', 'pdf', e, p, { type: data.type, montant_vise: declaration.montant_total_ttc, conclusion: data.conclusion });
+  auditExport(req, 'visa', 'pdf', e, p, { type: data.type, montant_vise: declaration.montant_total_ttc, conclusion: data.conclusion, observations: data.observations });
   try {
     const doc = visa.toPdf(data.blocks, res);
     if (doc && doc.on) doc.on('error', next);

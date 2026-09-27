@@ -2012,7 +2012,10 @@ async function renderVisa() {
   const key = `${state.clientId}|${state.period.annee}|${state.period.trimestre}`;
   const concl = state._concl && state._concl.key === key ? state._concl.value : '';
   const sign = state._sign || (state.me && state.me.nom) || '';
-  const q = `?annee=${state.period.annee}&trimestre=${state.period.trimestre}${concl ? `&conclusion=${encodeURIComponent(concl)}` : ''}${sign ? `&signataire=${encodeURIComponent(sign)}` : ''}`;
+  // VISA-2 : observations / réserves (une par ligne), propres à ce dossier et ce trimestre.
+  const obsTxt = state._obs && state._obs.key === key ? state._obs.value : '';
+  const needObs = ['Avec observation', 'Avec réserve'].includes(concl);
+  const q = `?annee=${state.period.annee}&trimestre=${state.period.trimestre}${concl ? `&conclusion=${encodeURIComponent(concl)}` : ''}${sign ? `&signataire=${encodeURIComponent(sign)}` : ''}${needObs && obsTxt.trim() ? `&observations=${encodeURIComponent(obsTxt)}` : ''}`;
   const [v, enjeu] = await Promise.all([api(`/clients/${state.clientId}/visa${q}`, { fresh: true }), api(`/clients/${state.clientId}/enjeu-delai-legal?annee=${state.period.annee}&trimestre=${state.period.trimestre}`).catch(() => null)]);
   const base = `/api/clients/${state.clientId}/visa`;
   const vf = v.verifications || { total: 0 };
@@ -2020,7 +2023,8 @@ async function renderVisa() {
     const runs = (b.runs || []).map(r => { let t = esc(r.t); if (r.u) t = `<u>${t}</u>`; if (r.b) t = `<b>${t}</b>`; return t; }).join('');
     if (!runs) return '<div style="height:9px"></div>';
     return `<p style="text-align:${b.align === 'right' ? 'right' : (b.align === 'left' ? 'left' : 'justify')};margin:0 0 11px">${runs}</p>`;
-  }).join('') : `<div class="empty"><div class="ic">${svgI('seal', '')}</div><h4>Choisissez la conclusion</h4><p>L’aperçu et les fichiers Word / PDF sont produits après votre choix explicite de conclusion.</p></div>`;
+  }).join('') : v.erreur ? `<div class="empty"><div class="ic">${svgI('warn', '')}</div><h4>${needObs ? (concl === 'Avec réserve' ? 'Saisissez au moins une réserve' : 'Saisissez au moins une observation') : 'Conclusion à préciser'}</h4><p>${esc(v.erreur.error)}</p></div>`
+    : `<div class="empty"><div class="ic">${svgI('seal', '')}</div><h4>Choisissez la conclusion</h4><p>L’aperçu et les fichiers Word / PDF sont produits après votre choix explicite de conclusion.</p></div>`;
   $('#view').innerHTML = `
   ${clientPeriodBar(periods)}
   ${lockBanner()}
@@ -2036,10 +2040,13 @@ async function renderVisa() {
         <option value="" ${concl ? '' : 'selected'} disabled>— Choisissez une conclusion —</option>
         ${(v.conclusions || []).map(o => `<option ${o === concl ? 'selected' : ''}>${o}</option>`).join('')}</select>
         ${vf.total && concl === 'Sans observation' ? `<span class="fld-help c-late">${vf.total} point(s) restent à examiner sur ce trimestre : confirmez que « Sans observation » est bien votre conclusion.</span>` : ''}</div>
+      ${needObs ? `<div class="fld"><label class="fld-lbl" for="obsInp">${concl === 'Avec réserve' ? 'Réserves' : 'Observations'} <span class="c-late">*</span></label>
+        <textarea class="input-fld" id="obsInp" rows="4" style="height:auto;padding:8px 12px" ${v.erreur ? 'aria-invalid="true"' : ''} placeholder="Une ${concl === 'Avec réserve' ? 'réserve' : 'observation'} par ligne">${esc(obsTxt)}</textarea>
+        <span class="fld-help">Une par ligne ; elles sont imprimées, numérotées, juste avant la conclusion (« mentionnées ci-dessus »).</span>${v.erreur ? `<span class="fld-err">${esc(v.erreur.error)}</span>` : ''}</div>` : ''}
       <div class="fld"><label class="fld-lbl">Signataire</label><input class="input-fld" id="signInp" value="${esc(sign || v.signataire || '')}"></div>
       ${v.reference ? `<div class="fld"><label class="fld-lbl">Référence</label><input class="input-fld" value="${esc(v.reference)}" readonly></div>` : ''}
       <div class="actions" style="margin-top:4px">
-        ${concl ? `<a class="btn btn-primary" href="${base}/export.docx${q}">${svgI('dl')}Word (.docx)</a><a class="btn btn-ghost" href="${base}/export.pdf${q}">${svgI('dl')}PDF</a>`
+        ${concl && v.blocks ? `<a class="btn btn-primary" href="${base}/export.docx${q}">${svgI('dl')}Word (.docx)</a><a class="btn btn-ghost" href="${base}/export.pdf${q}">${svgI('dl')}PDF</a>`
           : `<button class="btn btn-primary" disabled title="Choisissez d’abord la conclusion">${svgI('dl')}Word (.docx)</button><button class="btn btn-ghost" disabled>${svgI('dl')}PDF</button>`}
       </div>
     </div></div>
@@ -2050,6 +2057,7 @@ async function renderVisa() {
   wireClientBar(renderVisa);
   $('#conclSel').onchange = e => { state._concl = { key, value: e.target.value }; renderVisa(); };
   const si = $('#signInp'); si.onchange = () => { state._sign = si.value; renderVisa(); };
+  const oi = $('#obsInp'); if (oi) oi.onchange = () => { state._obs = { key, value: oi.value }; renderVisa(); };
 }
 
 /* ============================== ALERTES ============================== */

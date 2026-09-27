@@ -2183,7 +2183,7 @@ test('lot7/audit : chaque export est journalisé (utilisateur, date, cabinet, p�
   await getXlsx(`/api/clients/${t.ent}/delais/export.xlsx${per}&filter=all`, cookieOf(t.u));
   await getText(`/api/clients/${t.ent}/declaration/export.csv${per}`, cookieOf(t.u));
   await getText(`/api/clients/${t.ent}/declaration/export.xml${per}`, cookieOf(t.u));
-  const vc = `&conclusion=${encodeURIComponent('Avec réserve')}`; // VISA-1 : conclusion explicite
+  const vc = `&conclusion=${encodeURIComponent('Avec réserve')}&observations=${encodeURIComponent('Justificatifs manquants pour deux factures.')}`; // VISA-1 : conclusion explicite ; VISA-2 : réserve saisie
   await getXlsx(`/api/clients/${t.ent}/visa/export.docx${per}${vc}`, cookieOf(t.u));
   await getXlsx(`/api/clients/${t.ent}/visa/export.pdf${per}${vc}`, cookieOf(t.u));
   const logs = db.prepare("SELECT action, entite, details, user_id, cabinet_id, created_at FROM audit_log WHERE cabinet_id=? AND action='export' ORDER BY rowid").all(t.cab);
@@ -3014,7 +3014,14 @@ test('INC2.2/VISA-1 : aucune conclusion par défaut, vérifications listées, cl
   assert.ok(v0.verifications.ouvertes > 0 && v0.verifications.convManquantes > 0, 'points en attente listés avant le choix');
   assert.equal(v0.verifications.total, v0.verifications.ouvertes + v0.verifications.aVerifier + v0.verifications.convManquantes + v0.verifications.horsValidite);
   assert.equal((await reqJson('GET', `/api/clients/${W.ent}/visa${Q}&conclusion=Autre`, { cookie: ck })).body.choix_requis, true, 'valeur inconnue = pas de choix');
-  const v1 = (await reqJson('GET', `/api/clients/${W.ent}/visa${Q}&conclusion=${encodeURIComponent('Avec réserve')}`, { cookie: ck })).body;
+  const vNo = (await reqJson('GET', `/api/clients/${W.ent}/visa${Q}&conclusion=${encodeURIComponent('Avec réserve')}`, { cookie: ck })).body;
+  assert.equal(vNo.blocks, undefined, 'VISA-2 : « Avec réserve » sans réserve → aucun aperçu');
+  assert.equal(vNo.erreur.code, 'observations_requises'); assert.equal(vNo.choix_requis, false);
+  const exNo = await fetch(baseUrl() + `/api/clients/${W.ent}/visa/export.pdf${Q}&conclusion=${encodeURIComponent('Avec réserve')}`, { headers: { Cookie: ck } });
+  assert.equal(exNo.status, 400); assert.match(await exNo.text(), /exige au moins une réserve/);
+  const v1 = (await reqJson('GET', `/api/clients/${W.ent}/visa${Q}&conclusion=${encodeURIComponent('Avec réserve')}&observations=${encodeURIComponent('Justificatifs manquants pour deux factures.')}`, { cookie: ck })).body;
+  assert.deepEqual(v1.observations, ['Justificatifs manquants pour deux factures.']);
+  assert.ok(JSON.stringify(v1.blocks).includes('Justificatifs manquants pour deux factures.'), 'réserve imprimée dans la lettre');
   assert.equal(v1.conclusion, 'Avec réserve'); assert.ok(v1.blocks.length > 5);
   const c0 = await reqJson('POST', `/api/clients/${W.ent}/periods/2026/1/close${Q}`, { cookie: ck, body: {} });
   assert.equal(c0.status, 409); assert.deepEqual(c0.body.verifications, v0.verifications);
@@ -3074,7 +3081,7 @@ test('INC2.3/CONV-1 : enjeu à 60 j = 7 057,19 DH sur la référence ; simulatio
     fo: db.prepare('SELECT GROUP_CONCAT(delai_applicable) d FROM fournisseur WHERE entreprise_id=?').get(W.ent),
     decl: db.prepare('SELECT COUNT(*) n FROM declaration WHERE entreprise_id=?').get(W.ent), audit: db.prepare('SELECT COUNT(*) n FROM audit_log WHERE cabinet_id=?').get(W.cab) });
   const csv = async () => { const r = await fetch(baseUrl() + `/api/clients/${W.ent}/declaration/export.csv${Q}`, { headers: { Cookie: ck } }); return require('crypto').createHash('md5').update(Buffer.from(await r.arrayBuffer())).digest('hex'); };
-  const visaTxt = async () => JSON.stringify((await reqJson('GET', `/api/clients/${W.ent}/visa${Q}&conclusion=${encodeURIComponent('Avec réserve')}`, { cookie: ck })).body.blocks);
+  const visaTxt = async () => JSON.stringify((await reqJson('GET', `/api/clients/${W.ent}/visa${Q}&conclusion=${encodeURIComponent('Avec réserve')}&observations=${encodeURIComponent('Justificatifs manquants pour deux factures.')}`, { cookie: ck })).body.blocks);
   const md5a = await csv(), v0 = await visaTxt(), s0 = snap();
   const en = (await reqJson('GET', `/api/clients/${W.ent}/enjeu-delai-legal${Q}`, { cookie: ck })).body;
   assert.equal(en.simulation, true);
