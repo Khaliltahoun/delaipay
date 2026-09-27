@@ -17,7 +17,7 @@ const LOGO_MAX = 1024 * 1024; // 1 Mo
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const PASSWORD_MIN = 10;
 const INVITE_TTL_DAYS = 7;
-const RESERVED = new Set(['www', 'app', 'api', 'admin', 'static', 'assets', 'mail', 'status', 'demo', 'login', 'support']);
+const RESERVED = tenant.RESERVED; // liste unique (tenant.js) : admin, www, api, app, mail, status, support, static…
 
 class WorkspaceError extends Error { constructor(msg, status = 400) { super(msg); this.status = status; } }
 

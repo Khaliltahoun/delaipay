@@ -16,8 +16,10 @@ const { tenantPalette } = require('./brand-color');
 const { db } = require('./db');
 
 const DEFAULT_BASE_DOMAINS = ['localhost', 'delaipay.local'];
-// Sous-domaines techniques qui ne désignent jamais un espace client.
-const RESERVED = new Set(['www', 'app', 'api', 'admin', 'static', 'assets', 'mail', 'status']);
+// Sous-domaines techniques qui ne désignent jamais un espace client (liste UNIQUE, partagée avec workspace.js).
+// « admin » est l'hôte de la console plateforme (admin.delaipay.com) ; les autres sont réservés à l'infrastructure.
+const RESERVED = new Set(['admin', 'www', 'api', 'app', 'mail', 'status', 'support', 'static',
+  'assets', 'demo', 'login', 'console', 'platform']);
 const SLUG_RE = /^[a-z0-9](?:[a-z0-9-]{0,38}[a-z0-9])?$/;
 
 const LOCALES = ['fr-MA', 'fr-FR', 'ar-MA', 'en-US'];
@@ -44,6 +46,18 @@ function slugFromHost(host, domains = baseDomains()) {
     return sub;
   }
   return null;
+}
+
+/** Hôtes de la console plateforme : PLATFORM_HOSTS (liste) sinon « admin.<domaine> » pour chaque domaine de base. */
+function consoleHosts() {
+  const raw = process.env.PLATFORM_HOSTS;
+  if (raw != null && raw.trim() !== '') return raw.split(',').map(s => s.trim().toLowerCase()).filter(Boolean);
+  return baseDomains().map(d => 'admin.' + d);
+}
+function isConsoleHost(host) {
+  if (!host) return false;
+  const h = String(host).toLowerCase().trim().replace(/:\d+$/, '').replace(/\.$/, '');
+  return consoleHosts().includes(h);
 }
 
 function hostOf(req) {
@@ -147,5 +161,5 @@ function validateWorkspacePatch(b, opts = {}) {
 
 module.exports = {
   slugFromHost, resolve, cabinetBySlug, publicBranding, workspaceOf, validateWorkspacePatch,
-  baseDomains, initialsOf, LOCALES, DEVISES, FUSEAUX, SLUG_RE,
+  baseDomains, initialsOf, LOCALES, DEVISES, FUSEAUX, SLUG_RE, RESERVED, consoleHosts, isConsoleHost,
 };

@@ -1,0 +1,83 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<title>Console plateforme — DelaiPay</title>
+<meta name="theme-color" content="#0E3544">
+<link rel="icon" href="/favicon.ico" sizes="16x16 32x32">
+<link rel="icon" type="image/png" sizes="32x32" href="/assets/brand/favicon-32.png">
+<link rel="preload" href="/assets/fonts/inter-latin-var.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="stylesheet" href="/css/app.css">
+<link rel="stylesheet" href="/css/console.css">
+</head>
+<body class="console">
+<a class="skip" href="#view">Aller au contenu</a>
+
+<!-- Connexion (mot de passe → code 2FA ou enrôlement → codes de secours) -->
+<div class="login-wrap hidden" id="loginScreen">
+  <aside class="login-aside">
+    <div class="brand2"><img src="/assets/brand/delaipay-logo-dark-bg.svg" alt="DelaiPay" width="117" height="34"></div>
+    <h2>Console <em>plateforme</em>.</h2>
+    <p>Réservée à l'équipe DelaiPay : espaces de travail, abonnements, sécurité des accès. Aucune donnée comptable n'y est affichée.</p>
+    <div class="login-feats">
+      <div class="f"><span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V7a4 4 0 018 0v4"/></svg></span>
+        <div><b>Double authentification obligatoire</b><small>Mot de passe + code à usage unique (TOTP) à chaque connexion.</small></div></div>
+      <div class="f"><span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 5h16M4 12h16M4 19h10"/></svg></span>
+        <div><b>Tout est journalisé</b><small>Chaque action : qui, quoi, quelle cible, avant → après, adresse IP, heure.</small></div></div>
+    </div>
+    <div class="foot"><span>© 2026 DelaiPay</span><span>Accès opérateur</span></div>
+  </aside>
+  <main class="login-main">
+    <div class="login-card" id="loginCard">
+      <div class="login-mobile-brand"><img class="on-light" src="/assets/brand/delaipay-logo-light-bg.svg" alt="DelaiPay" width="104" height="30"><img class="on-dark" src="/assets/brand/delaipay-logo-dark-bg.svg" alt="DelaiPay" width="104" height="30"></div>
+      <div class="cons-tag"><span class="pill pill-brand pill-sm">Console plateforme</span></div>
+      <div id="loginStep"></div>
+      <div class="login-legal">DelaiPay · Accès réservé à l'équipe opérateur. Toute tentative est journalisée.</div>
+    </div>
+  </main>
+</div>
+
+<!-- Coquille de la console -->
+<div class="app cons-app hidden" id="app">
+  <aside class="side cons-side" id="side" aria-label="Navigation de la console">
+    <div class="cons-brand">
+      <img src="/assets/brand/delaipay-symbol-dark-bg.svg" alt="" width="22" height="22">
+      <div><b>DelaiPay</b><small>Console plateforme</small></div>
+    </div>
+    <div class="nav-lbl">Pilotage</div>
+    <button class="nav-item" data-view="dash"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><rect x="3" y="3" width="7" height="9" rx="1.5"/><rect x="14" y="3" width="7" height="5" rx="1.5"/><rect x="14" y="12" width="7" height="9" rx="1.5"/><rect x="3" y="16" width="7" height="5" rx="1.5"/></svg>Tableau de bord</button>
+    <button class="nav-item" data-view="workspaces"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M3 21h18M5 21V7l7-4 7 4v14M10 21v-4h4v4"/></svg>Espaces de travail</button>
+    <div class="nav-lbl">Sécurité</div>
+    <button class="nav-item" data-view="sessions"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><rect x="3" y="4" width="18" height="12" rx="2"/><path d="M8 20h8M12 16v4"/></svg>Sessions et appareils</button>
+    <button class="nav-item" data-view="activity"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M3 12h4l3-8 4 16 3-8h4"/></svg>Activité de connexion<span class="badge hidden" id="sigBadge">0</span></button>
+    <button class="nav-item" data-view="audit"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M4 5h16M4 12h16M4 19h10"/></svg>Journal plateforme</button>
+    <div class="nav-lbl">Plateforme</div>
+    <button class="nav-item" data-view="settings"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M4.2 4.2l2.1 2.1M17.7 17.7l2.1 2.1M2 12h3M19 12h3M4.2 19.8l2.1-2.1M17.7 6.3l2.1-2.1"/></svg>Réglages</button>
+    <button class="nav-item" data-view="account"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0116 0"/></svg>Mon compte</button>
+    <div class="side-foot">
+      <div class="av" id="sideAv">··</div>
+      <div style="min-width:0"><b class="side-name" id="sideName">—</b><span>Administrateur plateforme</span></div>
+    </div>
+  </aside>
+  <div class="main">
+    <header class="topbar cons-top">
+      <button class="iconbtn menu-btn" id="menuBtn" aria-label="Ouvrir la navigation" aria-expanded="false" aria-controls="side">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 6h16M4 12h16M4 18h16"/></svg></button>
+      <nav class="crumb" aria-label="Fil d'Ariane"><b>Console</b>
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 6l6 6-6 6"/></svg>
+        <span id="crumbView">Tableau de bord</span></nav>
+      <div class="tb-spacer"></div>
+      <span class="cons-env" id="consEnv" title="Hôte de la console">admin</span>
+      <span class="cons-timer" id="idleTimer" title="Déconnexion automatique après inactivité"></span>
+      <button class="btn btn-ghost btn-sm" id="logoutBtn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M15 12H3m0 0l4-4m-4 4l4 4M11 4h6a2 2 0 012 2v12a2 2 0 01-2 2h-6"/></svg><span>Se déconnecter</span></button>
+    </header>
+    <div id="bannerZone"></div>
+    <main class="content cons-content" id="view" tabindex="-1"></main>
+  </div>
+</div>
+<div class="toasts" id="toasts" aria-live="polite"></div>
+<script src="/js/console.js"></script>
+</body>
+</html>

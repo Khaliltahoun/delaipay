@@ -1,0 +1,90 @@
+/* =====================================================================================
+ * DelaiPay — Console plateforme (admin.delaipay.com)
+ * Même design system que les espaces (jetons de app.css) ; mise en page « opérateur » plus dense :
+ * barre latérale plus étroite, contenu plus large, tableaux compacts, en-têtes de page réduits.
+ * Aucune nouvelle couleur : l'identité « console » est portée par un libellé, jamais par une teinte.
+ * ===================================================================================== */
+body.console{--cons-side:228px}
+.cons-app{grid-template-columns:var(--cons-side) minmax(0,1fr)}
+.cons-side{padding-top:14px}
+.cons-brand{display:flex;align-items:center;gap:10px;padding:6px 10px 14px;margin:0 2px 8px;border-bottom:1px solid var(--side-line)}
+.cons-brand b{display:block;color:#fff;font-size:var(--fs-md);font-weight:var(--fw-semibold)}
+.cons-brand small{display:block;color:var(--side-muted);font-size:var(--fs-2xs);text-transform:uppercase;letter-spacing:var(--tracking-caps)}
+.side-name{display:block;font-size:var(--fs-sm);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.cons-top{min-height:52px;padding-top:6px;padding-bottom:6px}
+.cons-env{font-size:var(--fs-xs);font-weight:var(--fw-semibold);color:var(--ink-2);background:var(--surface-3);border:1px solid var(--line);
+  border-radius:var(--r-pill);padding:2px 10px;white-space:nowrap}
+.cons-timer{font-size:var(--fs-xs);color:var(--muted);font-variant-numeric:tabular-nums;white-space:nowrap}
+.cons-content{max-width:1600px;padding-top:20px}
+.cons-content .page-head{margin-bottom:16px;display:flex;align-items:flex-end;justify-content:space-between;gap:12px;flex-wrap:wrap}
+.cons-content .page-head h1{font-size:var(--fs-xl)}
+.cons-content .page-head p{font-size:var(--fs-sm)}
+.cons-content .card-h{padding:10px 14px}
+.cons-content .card-b{padding:14px}
+.cons-content .kpi{padding:10px 12px;gap:2px}
+.cons-content .kpi .val{font-size:var(--fs-xl)}
+.cons-content .kpi-grid{grid-template-columns:repeat(auto-fill,minmax(170px,1fr));gap:10px;margin-bottom:14px}
+.cons-content .kpi.warn{border-color:var(--warn-line)}
+.cons-content .kpi.late{border-color:var(--late-line)}
+.cons-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}
+.cons-grid .span-2{grid-column:1 / -1}
+@media (max-width:1080px){ .cons-grid{grid-template-columns:minmax(0,1fr)} }
+
+/* Tableaux opérateur : compacts, sans largeur minimale imposée (défilement dans le cadre seulement) */
+table.ops{min-width:0;font-size:var(--fs-sm)}
+table.ops thead th{padding:7px 10px;font-size:var(--fs-2xs);white-space:nowrap}
+table.ops tbody td{padding:6px 10px;white-space:nowrap;vertical-align:middle}
+table.ops tbody tr:hover td{background:var(--surface-2)}
+table.ops td.wrap{white-space:normal;min-width:220px}
+table.ops .muted{color:var(--muted)}
+table.ops a.rowlink{color:var(--ink);font-weight:var(--fw-semibold)}
+.ops-wrap{max-height:none}
+.ops-foot{display:flex;justify-content:space-between;align-items:center;gap:8px;padding:8px 12px;font-size:var(--fs-xs);color:var(--muted);border-top:1px solid var(--line-soft)}
+.cons-toolbar{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:10px}
+.cons-toolbar .input-fld{height:32px;width:auto;min-width:220px}
+.cons-toolbar select.input-fld{min-width:150px}
+.sort-btn{background:none;border:0;padding:0;font:inherit;color:inherit;cursor:pointer;text-transform:inherit;letter-spacing:inherit}
+.sort-btn[aria-sort="ascending"]::after{content:" ↑"} .sort-btn[aria-sort="descending"]::after{content:" ↓"}
+
+/* Définitions compactes */
+.dl-ops{display:grid;grid-template-columns:minmax(120px,auto) 1fr;gap:6px 14px;margin:0;font-size:var(--fs-sm)}
+.dl-ops dt{color:var(--muted)} .dl-ops dd{margin:0;font-weight:var(--fw-medium);word-break:break-word}
+
+/* Connexion console */
+.cons-tag{margin-bottom:10px}
+.qr-box{display:flex;gap:18px;align-items:flex-start;flex-wrap:wrap;margin:6px 0 14px}
+.qr-box .qr{background:#fff;border:1px solid var(--line);border-radius:var(--r-md);padding:6px;line-height:0}
+.qr-box .qr svg{width:180px;height:180px}
+.secret{font-family:var(--font-mono);font-size:var(--fs-sm);background:var(--surface-3);border:1px solid var(--line);border-radius:var(--r-sm);padding:6px 8px;word-break:break-all;user-select:all}
+.codes{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:6px 14px;font-family:var(--font-mono);font-size:var(--fs-md);
+  background:var(--surface-2);border:1px solid var(--line);border-radius:var(--r-md);padding:12px 14px;margin:10px 0}
+.otp-input{font-family:var(--font-mono);font-size:var(--fs-xl);letter-spacing:.3em;text-align:center}
+.linkish{background:none;border:0;padding:0;color:var(--brand-600);cursor:pointer;font-size:var(--fs-sm);font-weight:var(--fw-semibold)}
+.linkish:hover{text-decoration:underline}
+
+/* Lien affiché une seule fois (invitation, réinitialisation, accès support) */
+.once{border:1px dashed var(--warn-line);background:var(--warn-soft);border-radius:var(--r-md);padding:10px 12px;margin:10px 0}
+.once .once-row{display:flex;gap:8px;align-items:center}
+.once input{flex:1;min-width:0;font-family:var(--font-mono);font-size:var(--fs-xs)}
+
+/* Détail JSON avant → après du journal */
+.diff{font-family:var(--font-mono);font-size:var(--fs-2xs);white-space:pre-wrap;word-break:break-word;max-width:520px;color:var(--ink-2)}
+.diff .k{color:var(--muted)}
+details.row-det summary{cursor:pointer;color:var(--brand-600);font-size:var(--fs-xs);font-weight:var(--fw-semibold)}
+
+/* Mobile (≤ 720 px) : cartes de ligne, aucune barre de défilement de page */
+@media (max-width:1080px){ .cons-app{grid-template-columns:1fr} }
+@media (max-width:720px){
+  .cons-env{display:none}
+  #logoutBtn span{display:none}
+  .cons-toolbar .input-fld{min-width:0;flex:1 1 140px}
+  table.ops.rc thead{display:none}
+  table.ops.rc,table.ops.rc tbody,table.ops.rc tr{display:block;width:100%}
+  table.ops.rc tr{border-bottom:1px solid var(--line-soft);padding:8px 10px;display:flex;flex-wrap:wrap;gap:4px 10px}
+  table.ops.rc td{display:inline-block;padding:0;border:0;white-space:normal;background:none!important}
+  table.ops.rc td[data-l]::before{content:attr(data-l) " : ";color:var(--muted);font-size:var(--fs-2xs)}
+  table.ops.rc td.first{flex:1 1 100%;font-weight:var(--fw-semibold)}
+  table.ops.rc td.col-act{position:static;box-shadow:none;flex:1 1 100%}
+  .dl-ops{grid-template-columns:1fr}
+  .codes{grid-template-columns:1fr}
+}

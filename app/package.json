@@ -13,7 +13,9 @@
     "dev": "node --watch src/server.js",
     "demo:tenant": "node src/tenant-demo.js",
     "workspace:create": "node src/workspace-cli.js",
-    "demo:reset": "node src/demo-reset.js"
+    "demo:reset": "node src/demo-reset.js",
+    "platform:admin:create": "DP_PLATFORM_CLI_MODE=create node src/platform/cli.js",
+    "platform:admin": "node src/platform/cli.js"
   },
   "engines": {
     "node": ">=22.5"
