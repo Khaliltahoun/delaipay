@@ -2392,8 +2392,8 @@ function inviteModal() {
     } catch (e) { toast(e.message, 'err', 'Invitation impossible'); b.disabled = false; }
   };
 }
-function renderSecurity(box) {
-  box.innerHTML = `<div class="grid-2">
+/* Paramètres → Sécurité (INC 3A) : politique d'accès, appareils, sessions (administrateur) ; informations pour tous. */
+const SEC_INFO_HTML = `<div class="grid-2">
     <div class="card"><div class="card-h"><h3>Accès et sessions</h3></div><div class="card-b">
       <dl class="kv"><dt>Connexion</dt><dd>E-mail et mot de passe, limitée aux comptes de cet espace sur son adresse dédiée</dd>
         <dt>Session</dt><dd>12 heures, cookie inaccessible aux scripts de la page</dd>
@@ -2403,8 +2403,67 @@ function renderSecurity(box) {
     <div class="card"><div class="card-h"><h3>Traçabilité</h3></div><div class="card-b">
       <p class="dh" style="margin:0 0 12px;font-size:var(--fs-md)">Connexions, imports, conventions, clôtures et réouvertures, exports, invitations et changements de rôle sont inscrits au journal d'audit de l'espace.</p>
       <button class="btn btn-ghost" data-goto="audit">${svgI('history')}Ouvrir le journal d'audit</button>
-      <div class="hint" style="margin:14px 0 0">${svgI('info')}<span>Double authentification et connexion d'entreprise (SSO) : prévues dans une version ultérieure.</span></div></div></div></div>`;
+      <div class="hint" style="margin:14px 0 0">${svgI('info')}<span>Connexion d'entreprise (SSO) : prévue dans une version ultérieure.</span></div></div></div></div>`;
+const DEV_ST = { connu: ['Connu', 'pill-locked'], en_attente: ['En attente', 'pill-warn'], approuve: ['Approuvé', 'pill-ok'], refuse: ['Refusé', 'pill-late'], revoque: ['Révoqué', 'pill-locked'] };
+const devLabel = d => [d.navigateur, d.os, d.modele].filter(Boolean).join(' · ') || 'Appareil inconnu';
+async function renderSecurity(box) {
+  if (!can('manage_users')) { box.innerHTML = SEC_INFO_HTML; $$('#setBody [data-goto]').forEach(el => el.onclick = () => setView(el.dataset.goto)); return; }
+  const d = await api('/security', { fresh: true });
+  const p = d.politique;
+  const listRows = (id, list) => `<div class="ip-list" id="${id}">${(list.length ? list : [{ cidr: '', label: '' }]).map(e => `<div class="ip-row"><input class="input-fld mono" placeholder="203.0.113.0/24" value="${esc(e.cidr || '')}" aria-label="Adresse ou plage"><input class="input-fld" placeholder="Libellé (ex. Bureau)" value="${esc(e.label || '')}" aria-label="Libellé"><button class="btn btn-quiet btn-sm" data-rm title="Retirer">${svgI('x')}</button></div>`).join('')}</div>
+    <button class="btn btn-quiet btn-sm mt-8" data-add="${id}">${svgI('plus')}Ajouter une adresse</button>`;
+  const pending = d.appareils.filter(x => x.statut === 'en_attente');
+  box.innerHTML = `<div class="grid-2">
+    <div class="card"><div class="card-h"><div><h3>Politique d’accès</h3><div class="sub">Mode actuel : <b>${esc(d.mode)}</b> · votre adresse IP : <span class="mono">${esc(d.ipCourante || '—')}</span></div></div></div><div class="card-b">
+      <label class="check"><input type="checkbox" id="sp_dev" ${p.appareils ? 'checked' : ''}> <span><b>Appareils approuvés</b> — un nouvel appareil, même avec le bon mot de passe, attend votre approbation. Votre appareil actuel est approuvé automatiquement.</span></label>
+      <label class="check mt-8 ${p.appareils ? 'hidden' : ''}" id="sp_known_w"><input type="checkbox" id="sp_known"> <span>Approuver aussi les appareils déjà utilisés par les membres actifs</span></label>
+      <div class="fld mt-12"><label class="fld-lbl" for="sp_days">Durée d’une approbation (jours) <span class="dh t-xs">(vide = sans expiration)</span></label><input class="input-fld" id="sp_days" type="number" min="1" max="730" value="${p.dureeApprobationJours || ''}" style="max-width:160px"></div>
+      <label class="check mt-12"><input type="checkbox" id="sp_ip" ${p.ipAutorisees ? 'checked' : ''}> <span><b>Liste d’IP autorisées</b> — connexion et navigation uniquement depuis ces adresses (votre IP actuelle doit y figurer).</span></label>
+      <div class="mt-8">${listRows('sp_allow', p.listeIp)}</div>
+      <div class="fld-lbl mt-16">Adresses IP bloquées</div>${listRows('sp_block', p.ipBloquees)}
+    </div><div class="card-f"><button class="btn btn-primary" id="sp_save">Enregistrer la politique</button></div></div>
+    <div class="card"><div class="card-h"><div><h3>Appareils</h3><div class="sub">${pending.length ? `<b class="c-late">${pending.length} en attente d’approbation</b>` : 'Aucun appareil en attente'}</div></div></div>
+      <div class="card-b" style="padding:0">${d.appareils.length ? `<div class="table-wrap flat b-0"><table class="dense"><thead><tr><th>Utilisateur</th><th>Appareil</th><th>Statut</th><th>Dernière utilisation</th><th class="col-act"><span class="sr-only">Actions</span></th></tr></thead><tbody>
+        ${d.appareils.map(x => `<tr><td><b>${esc(x.utilisateur.nom || x.utilisateur.email)}</b><div class="dh t-xs">${esc(x.utilisateur.email)}</div></td>
+          <td>${esc(devLabel(x))}${x.id === d.appareilCourant ? ' <span class="pill pill-sm pill-brand">cet appareil</span>' : ''}<div class="dh t-xs mono">${esc(x.derniereIp || '—')}${x.pays ? ' · ' + esc(x.pays) : ''}</div></td>
+          <td><span class="pill pill-sm ${(DEV_ST[x.statut] || [])[1] || ''}">${esc((DEV_ST[x.statut] || [x.statut])[0])}</span>${x.expireLe ? `<div class="dh t-xs">jusqu’au ${esc(dateTimeFr(x.expireLe))}</div>` : ''}</td>
+          <td class="dh">${esc(dateTimeFr(x.lastSeen))}</td>
+          <td class="col-act"><div class="row-12" style="gap:4px">${x.statut !== 'approuve' && x.statut !== 'revoque' ? `<button class="btn btn-primary btn-xs" data-dev="approve" data-id="${esc(x.id)}">Approuver</button>` : ''}
+            ${x.statut === 'en_attente' ? `<button class="btn btn-ghost btn-xs" data-dev="refuse" data-id="${esc(x.id)}">Refuser</button>` : ''}
+            ${['approuve', 'connu'].includes(x.statut) && x.id !== d.appareilCourant ? `<button class="btn btn-ghost btn-xs" data-dev="revoke" data-id="${esc(x.id)}">Révoquer</button>` : ''}</div></td></tr>`).join('')}
+      </tbody></table></div>` : '<p class="dh p-24 m-0">Aucun appareil enregistré.</p>'}</div></div>
+    <div class="card" style="grid-column:1 / -1"><div class="card-h"><div><h3>Sessions actives</h3><div class="sub">${d.sessions.length} session(s) ouverte(s)</div></div></div>
+      <div class="card-b" style="padding:0"><div class="table-wrap flat b-0"><table class="dense"><thead><tr><th>Utilisateur</th><th>Appareil</th><th>Adresse IP</th><th>Ouverte le</th><th>Dernière activité</th><th class="col-act"><span class="sr-only">Actions</span></th></tr></thead><tbody>
+        ${d.sessions.map(x => `<tr><td><b>${esc(x.utilisateur.nom || x.utilisateur.email)}</b>${x.type === 'support' ? ' <span class="pill pill-sm pill-warn">Assistance DelaiPay</span>' : ''}</td><td>${esc([x.navigateur, x.os, x.modele].filter(Boolean).join(' · ') || '—')}</td>
+          <td class="mono">${esc(x.ipDerniere || '—')}${x.pays ? ' · ' + esc(x.pays) : ''}</td><td class="dh">${esc(dateTimeFr(x.debut))}</td><td class="dh">${esc(dateTimeFr(x.vu))}</td>
+          <td class="col-act">${x.id === d.sessionCourante ? '<span class="pill pill-sm pill-brand">vous</span>' : `<button class="btn btn-ghost btn-xs" data-ses="${esc(x.id)}">Fermer</button>`}</td></tr>`).join('') || '<tr><td colspan="6" class="dh ta-c p-24">Aucune session.</td></tr>'}
+      </tbody></table></div></div></div>
+    ${(d.supports || []).length ? `<div class="card" style="grid-column:1 / -1"><div class="card-h"><h3>Accès d’assistance DelaiPay</h3></div><div class="card-b" style="padding:0"><div class="table-wrap flat b-0"><table class="dense"><thead><tr><th>Ouvert par</th><th>Motif</th><th>Début</th><th>Fin</th><th>Statut</th></tr></thead><tbody>
+      ${d.supports.map(x => `<tr><td>${esc(x.admin)}</td><td>${esc(x.motif)}</td><td class="dh">${esc(dateTimeFr(x.debut))}</td><td class="dh">${esc(dateTimeFr(x.finEffective || x.fin))}</td><td>${x.actif ? '<span class="pill pill-sm pill-warn">En cours</span>' : '<span class="pill pill-sm pill-locked">Terminé</span>'}</td></tr>`).join('')}</tbody></table></div></div></div>` : ''}
+  </div><div class="mt-16">${SEC_INFO_HTML}</div>`;
   $$('#setBody [data-goto]').forEach(el => el.onclick = () => setView(el.dataset.goto));
+  $('#sp_dev').onchange = e => $('#sp_known_w').classList.toggle('hidden', !e.target.checked || p.appareils);
+  box.querySelectorAll('[data-add]').forEach(b => b.onclick = () => { const l = $('#' + b.dataset.add); const row = l.querySelector('.ip-row').cloneNode(true); row.querySelectorAll('input').forEach(i => { i.value = ''; }); l.appendChild(row); wireRm(); });
+  const wireRm = () => box.querySelectorAll('[data-rm]').forEach(b => b.onclick = () => { const l = b.closest('.ip-list'); if (l.children.length > 1) b.closest('.ip-row').remove(); else b.closest('.ip-row').querySelectorAll('input').forEach(i => { i.value = ''; }); });
+  wireRm();
+  const readList = id => [...$('#' + id).querySelectorAll('.ip-row')].map(r => { const [c, l] = r.querySelectorAll('input'); return { cidr: c.value.trim(), label: l.value.trim() }; }).filter(e => e.cidr);
+  $('#sp_save').onclick = async () => {
+    const body = { appareils: $('#sp_dev').checked, approuverAppareilsConnus: $('#sp_known').checked, dureeApprobationJours: $('#sp_days').value || null,
+      ipAutorisees: $('#sp_ip').checked, listeIp: readList('sp_allow'), ipBloquees: readList('sp_block') };
+    if (body.appareils && !p.appareils && !await ui.confirm({ tone: 'warn', title: 'Exiger des appareils approuvés ?', message: `Tout nouvel appareil devra être approuvé ici avant de pouvoir accéder à l’espace. Votre appareil actuel est approuvé automatiquement${body.approuverAppareilsConnus ? ', ainsi que les appareils déjà utilisés par les membres actifs' : ' ; les autres membres devront faire approuver leur appareil à leur prochaine action'}.`, confirmLabel: 'Activer' })) return;
+    try { const r = await api('/security/policy', { method: 'PUT', body }); toast((r.avertissements || []).join(' ') || 'Politique d’accès enregistrée et inscrite au journal d’audit.', (r.avertissements || []).length ? 'warn' : 'ok', 'Sécurité'); renderSecurity(box); }
+    catch (e) { toast(e.message, 'err', 'Politique non enregistrée'); }
+  };
+  box.querySelectorAll('[data-dev]').forEach(b => b.onclick = async () => {
+    const x = d.appareils.find(a => a.id === b.dataset.id), act = b.dataset.dev;
+    const L = { approve: ['Approuver', 'brand', 'L’utilisateur pourra se connecter depuis cet appareil.'], refuse: ['Refuser', 'danger', 'La demande est refusée ; l’utilisateur en est informé à la connexion.'], revoke: ['Révoquer', 'danger', 'Ses sessions sur cet appareil sont fermées immédiatement.'] }[act];
+    if (!await ui.confirm({ tone: L[1], title: `${L[0]} l’appareil de ${x.utilisateur.nom || x.utilisateur.email} ?`, message: L[2], facts: [['Appareil', devLabel(x)], ['Dernière IP', x.derniereIp || '—']], confirmLabel: L[0] })) return;
+    try { await api(`/security/devices/${x.id}/${act}`, { method: 'POST' }); toast('Décision enregistrée et inscrite au journal d’audit.', 'ok', 'Appareil'); renderSecurity(box); } catch (e) { toast(e.message, 'err'); }
+  });
+  box.querySelectorAll('[data-ses]').forEach(b => b.onclick = async () => {
+    if (!await ui.confirm({ tone: 'warn', title: 'Fermer cette session ?', message: 'L’utilisateur devra se reconnecter sur cet appareil.', confirmLabel: 'Fermer la session' })) return;
+    try { await api(`/security/sessions/${b.dataset.ses}/revoke`, { method: 'POST' }); toast('Session fermée.', 'ok'); renderSecurity(box); } catch (e) { toast(e.message, 'err'); }
+  });
 }
 function renderAccount(box) {
   const m = state.me || {};

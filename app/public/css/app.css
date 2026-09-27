@@ -952,6 +952,11 @@ tr.ign td{background:var(--surface-2)}
   *,*::before,*::after{animation-duration:.001ms!important;animation-iteration-count:1!important;transition-duration:.001ms!important;scroll-behavior:auto!important}
 }
 
+/* Paramètres → Sécurité : listes d'IP (adresse + libellé) */
+.ip-list{display:grid;gap:6px}
+.ip-row{display:grid;grid-template-columns:minmax(0,1.1fr) minmax(0,1fr) auto;gap:6px;align-items:center}
+@media (max-width:720px){ .ip-row{grid-template-columns:1fr auto} .ip-row input:nth-child(2){grid-column:1} }
+
 /* Bandeaux imposés par la plateforme (maintenance, abonnement, session d'assistance) */
 .pf-banner{display:flex;flex-direction:column;gap:8px;padding:10px 32px 0}
 .pf-banner .note{font-size:var(--fs-sm)}

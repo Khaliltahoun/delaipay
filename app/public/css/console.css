@@ -46,6 +46,11 @@ table.ops a.rowlink{color:var(--ink);font-weight:var(--fw-semibold)}
 .sort-btn{background:none;border:0;padding:0;font:inherit;color:inherit;cursor:pointer;text-transform:inherit;letter-spacing:inherit}
 .sort-btn[aria-sort="ascending"]::after{content:" ↑"} .sort-btn[aria-sort="descending"]::after{content:" ↓"}
 
+/* Éditeurs de listes d'IP (adresse + libellé) */
+.ip-list{display:grid;gap:6px}
+.ip-row{display:grid;grid-template-columns:minmax(0,1.1fr) minmax(0,1fr) auto;gap:6px;align-items:center}
+.ip-row .input-fld{height:32px}
+
 /* Définitions compactes */
 .dl-ops{display:grid;grid-template-columns:minmax(120px,auto) 1fr;gap:6px 14px;margin:0;font-size:var(--fs-sm)}
 .dl-ops dt{color:var(--muted)} .dl-ops dd{margin:0;font-weight:var(--fw-medium);word-break:break-word}

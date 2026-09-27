@@ -16,6 +16,7 @@ C.wsTab('users', 'Utilisateurs', async (el, ws, reload) => {
         <td data-l="Créé" class="mono">${C.fd(u.created_at)}</td><td data-l="Connexion">${C.ago(u.derniere_connexion)}</td>
         <td class="num" data-l="Appareils">${u.appareils}</td><td class="num" data-l="Sessions">${u.sessionsActives}</td>
         <td class="col-act"><div class="row-12" style="gap:4px;flex-wrap:wrap">
+          <button class="btn btn-ghost btn-xs" data-act="view" data-u="${esc(u.id)}">Sessions et appareils</button>
           <button class="btn btn-ghost btn-xs" data-act="role" data-u="${esc(u.id)}">Rôle…</button>
           <button class="btn btn-ghost btn-xs" data-act="${u.actif ? 'off' : 'on'}" data-u="${esc(u.id)}">${u.actif ? 'Désactiver…' : 'Réactiver'}</button>
           <button class="btn btn-ghost btn-xs" data-act="logout" data-u="${esc(u.id)}" ${u.sessionsActives ? '' : 'disabled'}>Déconnecter</button>
@@ -31,6 +32,14 @@ C.wsTab('users', 'Utilisateurs', async (el, ws, reload) => {
     const u = byId(b.dataset.u), who = `${u.nom || u.email} (${u.email})`;
     const call = async (method, path, body, ok) => { try { const r = await C.api(method, path, body); C.toast(ok(r)); reload(); return r; } catch (e) { C.toast(e.message, 'err'); return null; } };
     const base = `/workspaces/${ws.id}/users/${u.id}`;
+    if (b.dataset.act === 'view') {
+      const [ses, dev] = await Promise.all([C.api('GET', `/sessions?user=${u.id}&toutes=1&limit=100`), C.api('GET', `/devices?user=${u.id}`)]);
+      const line = s => `<tr><td class="first">${esc([s.navigateur, s.os, s.modele].filter(Boolean).join(' · ') || '—')}</td><td class="mono" data-l="IP">${esc(s.ipDerniere || s.derniereIp || '—')}</td><td data-l="Pays">${esc(s.pays || '—')}</td><td data-l="Vu">${C.ago(s.vu || s.lastSeen)}</td><td data-l="Statut">${esc(s.statutLabel || (s.active ? 'Active' : (s.motifFin || 'Terminée')))}</td></tr>`;
+      await C.dialog({ title: `Sessions et appareils — ${who}`, wide: true, cancel: 'Fermer', confirm: 'OK',
+        body: `<h4 class="sub-h">Appareils (${dev.rows.length})</h4>${C.table(['Appareil', 'Dernière IP', 'Pays', 'Dernière utilisation', 'Statut'], dev.rows.map(line), { empty: 'Aucun appareil.' })}
+          <h4 class="sub-h">Sessions (100 dernières)</h4>${C.table(['Appareil', 'IP', 'Pays', 'Dernière activité', 'Statut'], ses.rows.map(line), { empty: 'Aucune session.' })}` });
+      return;
+    }
     if (b.dataset.act === 'role') {
       const v = await C.dialog({ title: `Rôle de ${who}`, body: u.role === 'admin' && admins <= 1 ? `<div class="note note-warn">${IC.warn}<div>Dernier administrateur actif : il ne peut pas être rétrogradé.</div></div>` : '',
         fields: [{ name: 'role', label: 'Rôle', type: 'select', value: u.role, options: Object.entries(ROLES).map(([value, label]) => ({ value, label })) }], confirm: 'Changer le rôle' });
