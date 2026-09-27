@@ -1909,7 +1909,9 @@ function visaData(req, e) {
   const observations = String(req.query.observations || '').slice(0, 25000);
   let data = null, erreur = null;
   if (conclusion) {
-    try { data = visa.buildData({ e, annee: p.annee, trimestre: p.trimestre, montant: declaration.montant_total_ttc, conclusion, signataire, type: visaOf(e.ca_ht), observations }); }
+    // P3-11 : ville de signature tirée de l'adresse de l'espace (Paramètres → Espace de travail).
+    const adresseCabinet = (db.prepare('SELECT adresse FROM cabinet WHERE id=?').get(req.cabinetId) || {}).adresse || null;
+    try { data = visa.buildData({ e, annee: p.annee, trimestre: p.trimestre, montant: declaration.montant_total_ttc, conclusion, signataire, type: visaOf(e.ca_ht), observations, adresseCabinet }); }
     catch (err) { if (!(err instanceof visa.VisaError)) throw err; erreur = { error: err.message, code: err.code }; }
   }
   return { p, declaration, data, conclusion, signataire, erreur };

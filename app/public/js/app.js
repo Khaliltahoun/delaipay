@@ -2044,6 +2044,8 @@ async function renderVisa() {
         <textarea class="input-fld" id="obsInp" rows="4" style="height:auto;padding:8px 12px" ${v.erreur ? 'aria-invalid="true"' : ''} placeholder="Une ${concl === 'Avec réserve' ? 'réserve' : 'observation'} par ligne">${esc(obsTxt)}</textarea>
         <span class="fld-help">Une par ligne ; elles sont imprimées, numérotées, juste avant la conclusion (« mentionnées ci-dessus »).</span>${v.erreur ? `<span class="fld-err">${esc(v.erreur.error)}</span>` : ''}</div>` : ''}
       <div class="fld"><label class="fld-lbl">Signataire</label><input class="input-fld" id="signInp" value="${esc(sign || v.signataire || '')}"></div>
+      ${v.blocks ? `<div class="fld"><label class="fld-lbl">Lieu de signature</label><input class="input-fld" value="${esc(v.lieu || 'Non renseigné')}" readonly>
+        ${v.lieu ? '<span class="fld-help">Ville tirée de l’adresse de l’espace (Paramètres → Espace de travail).</span>' : `<span class="fld-help c-late">Adresse de l’espace non renseignée : la lettre porte « Le ${esc(v.date)} » sans ville. ${can('manage_workspace') ? 'Complétez l’adresse dans Paramètres → Espace de travail.' : 'Demandez à un administrateur de compléter l’adresse de l’espace.'}</span>`}</div>` : ''}
       ${v.reference ? `<div class="fld"><label class="fld-lbl">Référence</label><input class="input-fld" value="${esc(v.reference)}" readonly></div>` : ''}
       <div class="actions" style="margin-top:4px">
         ${concl && v.blocks ? `<a class="btn btn-primary" href="${base}/export.docx${q}">${svgI('dl')}Word (.docx)</a><a class="btn btn-ghost" href="${base}/export.pdf${q}">${svgI('dl')}PDF</a>`

@@ -27,6 +27,20 @@ function normalizeObservations(conclusion, observations) {
   if (long) throw new VisaError(`Chaque ${need.mot} est limitée à ${OBS_LEN} caractères.`, 'observation_trop_longue');
   return list;
 }
+/**
+ * P3-11 : ville de signature = ville de l'adresse de l'ESPACE (cabinet), jamais une ville codée en dur.
+ * « 12 bd Zerktouni, 20000 Casablanca » → « Casablanca » ; dernier segment (virgule / retour à la ligne), sans code
+ * postal ni pays. Adresse absente ou illisible → null (la lettre porte alors « Le jj/mm/aaaa », l'écran le signale).
+ */
+function cityFromAddress(adresse) {
+  const parts = String(adresse || '').split(/[,\n;]/).map(x => x.replace(/\b\d{4,6}\b/g, ' ').replace(/\s+/g, ' ').trim()).filter(Boolean)
+    .filter(x => !/^(maroc|morocco|royaume du maroc)$/i.test(x));
+  let last = parts[parts.length - 1];
+  // Adresse sur une seule ligne sans virgule (« Avenue Mohammed V 40000 Marrakech ») : dernier mot.
+  if (parts.length === 1 && last && last.split(' ').length > 2) last = last.split(' ').pop();
+  if (!last || !/\p{L}/u.test(last) || last.length > 60) return null;
+  return last;
+}
 class VisaError extends Error { constructor(msg, code) { super(msg); this.status = 400; this.code = code; } }
 
 function frDate(d) { return `${String(d.getDate()).padStart(2, '0')}/${String(d.getMonth() + 1).padStart(2, '0')}/${d.getFullYear()}`; }
@@ -37,7 +51,7 @@ function periodeDates(annee, trimestre) {
 }
 
 /** Construit les blocs du visa à partir des données de la déclaration. */
-function buildData({ e, annee, trimestre, montant, conclusion, signataire, type, observations }) {
+function buildData({ e, annee, trimestre, montant, conclusion, signataire, type, observations, adresseCabinet }) {
   if (!CONCLUSIONS.includes(conclusion))
     throw new VisaError(`Conclusion du visa ${conclusion ? `« ${conclusion} » non reconnue` : 'manquante'} : choisissez « Sans observation », « Avec observation », « Avec réserve » ou « Refus de visa ».`, 'conclusion_invalide');
   const obs = normalizeObservations(conclusion, observations);
@@ -49,6 +63,7 @@ function buildData({ e, annee, trimestre, montant, conclusion, signataire, type,
   const roleTitle = isCAC ? 'du commissaire aux comptes' : "de l'expert-comptable";
   const role = isCAC ? 'commissaire aux comptes' : 'expert-comptable';
   const today = frDate(new Date());
+  const lieu = cityFromAddress(adresseCabinet);
   const art = "l'article 2.78 de la loi 69-21";
 
   const spacer = { runs: [{ t: '' }] };
@@ -81,14 +96,14 @@ function buildData({ e, annee, trimestre, montant, conclusion, signataire, type,
     conclusionBlock(conclusion, periodeSuffix),
     { align: 'justify', runs: [{ t: `Notre visa n'a pour seul objectif que celui indiqué dans le premier paragraphe ci-dessus et est réservé à votre propre usage dans le cadre de la loi 69-21. Il ne peut être utilisé à d'autres fins, ni être communiqué à d'autres parties.` }] },
     spacer,
-    { align: 'right', runs: [{ t: `Marrakech le ${today}`, b: true }] },
+    { align: 'right', runs: [{ t: lieu ? `${lieu} le ${today}` : `Le ${today}`, b: true }] },
     { align: 'right', runs: [{ t: signataire, b: true }] },
     { align: 'right', runs: [{ t: "Membre de l'Ordre des", b: true }] },
     { align: 'right', runs: [{ t: 'Experts Comptables', b: true }] },
   ];
 
   return { type, typeLabel: isCAC ? 'Commissaire aux comptes (CAC)' : 'Expert-comptable / comptable agréé',
-    role, conclusion, signataire, observations: obs, lieu: 'Marrakech', date: today, debut, fin, montant, blocks };
+    role, conclusion, signataire, observations: obs, lieu, date: today, debut, fin, montant, blocks };
 }
 
 function conclusionBlock(conclusion, suffix) {
@@ -144,4 +159,4 @@ function toPdf(blocks, stream) {
   return doc;
 }
 
-module.exports = { buildData, toDocx, toPdf, periodeDates, CONCLUSIONS, VisaError, NEEDS_OBS, normalizeObservations };
+module.exports = { cityFromAddress, buildData, toDocx, toPdf, periodeDates, CONCLUSIONS, VisaError, NEEDS_OBS, normalizeObservations };

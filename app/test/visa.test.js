@@ -42,3 +42,18 @@ test('visa : « Avec observation » et « Avec réserve » exigent au moins une 
   assert.doesNotThrow(() => visa.buildData({ ...base, conclusion: 'Sans observation' }));
   assert.doesNotThrow(() => visa.buildData({ ...base, conclusion: 'Refus de visa' }));
 });
+
+test('visa : ville de signature tirée de l’adresse de l’espace (P3-11), repli explicite sans ville', () => {
+  assert.equal(visa.cityFromAddress('12 bd Zerktouni, 20000 Casablanca'), 'Casablanca');
+  assert.equal(visa.cityFromAddress('Résidence Al Andalous\nAgdal, Rabat, Maroc'), 'Rabat');
+  assert.equal(visa.cityFromAddress('Avenue Mohammed V 40000 Marrakech'), 'Marrakech');
+  assert.equal(visa.cityFromAddress('Fès'), 'Fès');
+  for (const a of [null, '', '   ', '20000', ', ,']) assert.equal(visa.cityFromAddress(a), null, JSON.stringify(a));
+  const withCity = visa.buildData({ ...base, conclusion: 'Sans observation', adresseCabinet: '45 rue Ibn Batouta, 90000 Tanger' });
+  assert.equal(withCity.lieu, 'Tanger');
+  assert.match(text(withCity), /\nTanger le \d{2}\/\d{2}\/\d{4}\n/);
+  const none = visa.buildData({ ...base, conclusion: 'Sans observation' });
+  assert.equal(none.lieu, null);
+  assert.match(text(none), /\nLe \d{2}\/\d{2}\/\d{4}\n/);
+  for (const d of [withCity, none]) assert.ok(!text(d).includes('Marrakech'), 'plus aucune ville codée en dur');
+});
