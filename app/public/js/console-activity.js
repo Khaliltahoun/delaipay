@@ -28,7 +28,7 @@ C.views.activity = async (el) => {
       <select class="input-fld" id="aH" aria-label="Période">${[['24', '24 heures'], ['168', '7 jours'], ['720', '30 jours'], ['', 'Tout']].map(([v, l]) => `<option value="${v}" ${f.heures === v ? 'selected' : ''}>${l}</option>`).join('')}</select>
       <span class="muted t-sm">${d.rows.length} évènement(s)</span></div>`
     + C.table(['Date', 'Espace', 'Compte', 'Résultat', 'Motif', 'IP', 'Pays', 'Appareil'], d.rows.map(r => `<tr>
-      <td class="first mono">${C.fdt(r.created_at)}</td><td data-l="Espace">${r.cabinet_id ? `<a href="#/workspace/${esc(r.cabinet_id)}/securite">${esc(r.slug || '—')}</a>` : '<span class="muted">—</span>'}</td>
+      <td class="first mono">${C.fdtz(r.created_at)}</td><td data-l="Espace">${r.cabinet_id ? `<a href="#/workspace/${esc(r.cabinet_id)}/securite">${esc(r.slug || '—')}</a>` : '<span class="muted">—</span>'}</td>
       <td data-l="Compte">${esc(r.email || '—')}${r.user_role === 'admin' ? ' <span class="pill pill-sm pill-brand">admin</span>' : ''}</td>
       <td data-l="Résultat"><span class="pill pill-sm ${(RES[r.resultat] || [])[1] || ''}">${esc((RES[r.resultat] || [r.resultat])[0])}</span></td>
       <td class="wrap muted" data-l="Motif">${esc(MOTIF[r.motif] || r.motif || '—')}</td><td class="mono" data-l="IP">${esc(r.ip || '—')}</td><td data-l="Pays">${esc(r.pays || '—')}</td>
@@ -38,7 +38,7 @@ C.views.activity = async (el) => {
 C.wsTab('activite', 'Activité', async (el, ws) => {
   const d = await C.api('GET', `/login-activity?cabinet=${ws.id}&limit=200`);
   el.innerHTML = `<div class="card mb-14"><div class="card-h"><h3>Signaux</h3></div><div class="card-b">${C.signalsHtml(d.signaux)}</div></div>`
-    + C.table(['Date', 'Compte', 'Résultat', 'Motif', 'IP', 'Pays', 'Appareil'], d.rows.map(r => `<tr><td class="first mono">${C.fdt(r.created_at)}</td>
+    + C.table(['Date', 'Compte', 'Résultat', 'Motif', 'IP', 'Pays', 'Appareil'], d.rows.map(r => `<tr><td class="first mono">${C.fdtz(r.created_at)}</td>
       <td data-l="Compte">${esc(r.email || '—')}</td><td data-l="Résultat"><span class="pill pill-sm ${(RES[r.resultat] || [])[1] || ''}">${esc((RES[r.resultat] || [r.resultat])[0])}</span></td>
       <td class="muted" data-l="Motif">${esc(MOTIF[r.motif] || r.motif || '—')}</td><td class="mono" data-l="IP">${esc(r.ip || '—')}</td><td data-l="Pays">${esc(r.pays || '—')}</td>
       <td data-l="Appareil">${esc([r.navigateur, r.os].filter(Boolean).join(' · ') || '—')}</td></tr>`), { empty: 'Aucune connexion enregistrée.' });

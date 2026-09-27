@@ -22,7 +22,10 @@ const C = window.DPC = { $, $$, esc, IC, state: { me: null }, views: {} };
 /* ------------------------------------------------------------------ format */
 const pad = n => String(n).padStart(2, '0');
 function toDate(s) { if (!s) return null; const d = new Date(/Z$|[+-]\d\d:\d\d$/.test(s) ? s : String(s).replace(' ', 'T') + 'Z'); return isNaN(d) ? null : d; }
-C.fdt = s => { const d = toDate(s); return d ? `${pad(d.getDate())}/${pad(d.getMonth() + 1)}/${d.getFullYear()} ${pad(d.getHours())}:${pad(d.getMinutes())}` : '—'; };
+// Horodatages stockés en UTC, affichés dans le fuseau de la plateforme (src/time-format.js) ; fdtz = avec le fuseau.
+C.tz = 'Africa/Casablanca';
+C.fdt = s => window.DPTime ? window.DPTime.formatLocal(s, C.tz, { withZone: false }).replace(' à ', ' ') : (toDate(s) ? toDate(s).toISOString().slice(0, 16).replace('T', ' ') : '—');
+C.fdtz = s => window.DPTime ? window.DPTime.formatLocal(s, C.tz) : C.fdt(s);
 C.fd = s => { if (!s) return '—'; const m = String(s).match(/^(\d{4})-(\d{2})-(\d{2})/); return m ? `${m[3]}/${m[2]}/${m[1]}` : '—'; };
 C.money = n => n == null || isNaN(n) ? '—' : Number(n).toLocaleString('fr-FR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).replace(/\u202f|\u00a0/g, ' ') + ' <span class="dh">DH</span>';
 C.int = n => n == null ? '—' : Number(n).toLocaleString('fr-FR').replace(/\u202f|\u00a0/g, ' ');
@@ -230,6 +233,7 @@ async function boot() {
     return showLogin();
   }
   C.state.me = me; idleSeconds = me.session.idleSeconds; lastActivity = Date.now();
+  if (me.fuseau) C.tz = me.fuseau;
   $('#loginScreen').classList.add('hidden'); $('#app').classList.remove('hidden');
   $('#sideName').textContent = me.admin.nom; $('#sideAv').textContent = (me.admin.nom || '··').split(/\s+/).map(w => w[0]).join('').slice(0, 2).toUpperCase();
   $('#consEnv').textContent = location.host;
@@ -265,14 +269,14 @@ function diffHtml(r) {
   return parts.length ? `<details class="row-det"><summary>Voir</summary><div class="diff">${parts.join('')}</div></details>` : '<span class="muted">—</span>';
 }
 C.auditTable = rows => C.table(['Date', 'Administrateur', 'Action', 'Cible', 'Avant → après', { label: 'IP', prio: 2 }], rows.map(r => `<tr>
-  <td class="first mono">${C.fdt(r.created_at)}</td><td data-l="Par">${esc(r.admin_email || '—')}</td>
+  <td class="first mono">${C.fdtz(r.created_at)}</td><td data-l="Par">${esc(r.admin_email || '—')}</td>
   <td data-l="Action"><b>${esc(ACTION_FR[r.action] || r.action)}</b></td>
   <td data-l="Cible">${esc(r.cible_libelle || '—')}${r.cible_type ? ` <span class="muted t-xs">${esc(r.cible_type)}</span>` : ''}</td>
   <td class="wrap">${diffHtml(r)}</td><td class="mono muted" data-l="IP" data-prio="2">${esc(r.ip || '—')}</td></tr>`), { empty: 'Aucune entrée.' });
 
 C.views.audit = async (el) => {
   const d = await C.api('GET', '/audit?limit=200');
-  el.innerHTML = C.pageHead('Journal plateforme', 'Toutes les actions de la console et de la ligne de commande : qui, quoi, quelle cible, avant → après, adresse IP, heure. <b>Lecture seule</b> : aucune entrée ne peut être modifiée ni supprimée.')
+  el.innerHTML = C.pageHead('Journal plateforme', `Toutes les actions de la console et de la ligne de commande : qui, quoi, quelle cible, avant → après, adresse IP, heure. <b>Lecture seule</b> : aucune entrée ne peut être modifiée ni supprimée. Heures dans le fuseau ${esc(C.tz)} (${esc(window.DPTime ? window.DPTime.zoneLabel(C.tz) : 'UTC')}), stockées en UTC.`)
     + C.auditTable(d.rows);
 };
 C.views.account = async (el) => {

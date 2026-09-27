@@ -240,7 +240,7 @@ const XICO = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-
 function renderPlatformBanner() {
   const p = state.plateforme; const z = $('#platformBanner'); if (!z || !p) return;
   const fr = d => d ? String(d).slice(0, 10).split('-').reverse().join('/') : '';
-  const hm = iso => { const d = new Date(iso); return isNaN(d) ? '' : `${fr(d.toISOString())} à ${String(d.getHours()).padStart(2, '0')} h ${String(d.getMinutes()).padStart(2, '0')}`; };
+  const hm = iso => tsLocal(iso);   // même fuseau (celui de l'espace) et même format que le journal d'audit
   const notes = [];
   for (const m of p.maintenance || []) notes.push(['info', 'info', m.portee === 'espace' ? 'Maintenance de votre espace' : 'Maintenance DelaiPay', m.message + (m.fin ? ` (fin prévue le ${hm(m.fin)})` : '')]);
   const a = p.abonnement;
@@ -591,13 +591,16 @@ function buildPeriodActions() {
   // Dernière action tracée (qui / quand) — lecture seule depuis le journal d'audit.
   if (state.clientId && st) periodDetail().then(d => {
     const h = $('#perHist'); const last = d && d.historique && d.historique[0]; if (!h || !last) return;
-    h.textContent = `${last.action === 'cloture' ? 'Clôturée' : 'Rouverte'} le ${dateTimeFr(last.date)}${last.par ? ' par ' + last.par : ''}.`;
+    h.textContent = `${last.action === 'cloture' ? 'Clôturée' : 'Rouverte'} le ${tsLocal(last.date)}${last.par ? ' par ' + last.par : ''}.`;
   }).catch(() => {});
 }
 // Détail + historique d'une période (endpoint existant, lecture seule).
 function periodDetail(p = state.period) {
   return api(`/clients/${state.clientId}/periods/${p.annee}/${p.trimestre}/summary`, { fresh: true });
 }
+/* Horodatages du journal, des sessions et des bandeaux : fuseau de l'espace, fuseau affiché (stockage UTC) — src/time-format.js. */
+function wsTz() { return (state.workspace && state.workspace.fuseauHoraire) || 'Africa/Casablanca'; }
+function tsLocal(s, withZone = true) { return window.DPTime ? window.DPTime.formatLocal(s, wsTz(), { withZone }) : dateTimeFr(s); }
 function dateTimeFr(s) { if (!s) return '—'; const m = String(s).match(/^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2})/); return m ? `${m[3]}/${m[2]}/${m[1]} à ${m[4]}:${m[5]}` : dateFr(s); }
 // VISA-1 : vérifications en attente lues avant la clôture ; la case d'accusé vit dans le dialogue (retiré à sa
 // fermeture), son état est donc mémorisé à chaque changement.
@@ -803,7 +806,7 @@ async function renderDash() {
     </div>
     <div class="card"><div class="card-h"><div><h3>Activité récente</h3><div class="sub">journal d'audit du cabinet</div></div><button class="btn btn-quiet btn-sm" data-goto="audit">Tout voir</button></div>
       <div class="card-b py-4">${acts.length ? acts.map(a => `<div class="act"><span class="a-dot" style="background:${/cloture|delete|annulation/.test(a.action) ? 'var(--locked)' : /reouverture/.test(a.action) ? 'var(--warn)' : 'var(--brand-500)'}"></span>
-        <div class="a-body"><b>${esc(ACT[a.action] || a.action)}</b>${a.entite ? ` <span class="dh">· ${esc(a.entite)}</span>` : ''}<div class="dh t-xs">${esc(a.user_nom || '—')}</div></div><span class="a-time">${esc(dateTimeFr(a.created_at))}</span></div>`).join('')
+        <div class="a-body"><b>${esc(ACT[a.action] || a.action)}</b>${a.entite ? ` <span class="dh">· ${esc(a.entite)}</span>` : ''}<div class="dh t-xs">${esc(a.user_nom || '—')}</div></div><span class="a-time">${esc(tsLocal(a.created_at))}</span></div>`).join('')
         : '<div class="empty p-24"><p>Aucune activité enregistrée.</p></div>'}</div>
     </div>
   </div>`;
@@ -1112,7 +1115,7 @@ async function renderPeriodCard(p) {
       <span class="period-badge ${m[1]}" style="font-size:var(--fs-sm);padding:3px 10px">${locked ? svgI('lock', '') : ''}${esc(m[0])}</span>
       <span class="dh t-sm">${locked ? 'Montants, déclaration et exports figés' : 'Saisie et import autorisés'}</span></div>
     ${hist.length ? `<div class="hist">${hist.slice(0, 3).map(h => `<div class="hist-i"><span class="h-ic ${h.action === 'cloture' ? 'tone-locked' : 'tone-warn'}">${svgI(h.action === 'cloture' ? 'lock' : 'unlock', '')}</span>
-      <div class="h-b"><b>${h.action === 'cloture' ? 'Clôturée' : 'Rouverte'}</b> par ${esc(h.par || '—')}<small>${esc(dateTimeFr(h.date))}</small>${h.motif ? `<q>${esc(h.motif)}</q>` : ''}</div></div>`).join('')}</div>`
+      <div class="h-b"><b>${h.action === 'cloture' ? 'Clôturée' : 'Rouverte'}</b> par ${esc(h.par || '—')}<small>${esc(tsLocal(h.date))}</small>${h.motif ? `<q>${esc(h.motif)}</q>` : ''}</div></div>`).join('')}</div>`
       : `<div class="dh t-sm">Aucune clôture enregistrée pour cette période.</div>`}
     <div class="actions mt-12">${isAdmin
       ? (locked ? `<button class="btn btn-ghost btn-sm" id="pcReopen">${svgI('unlock')}Rouvrir…</button>` : `<button class="btn btn-ghost btn-sm" id="pcClose">${svgI('lock')}Clôturer la période…</button>`)
@@ -1775,7 +1778,7 @@ async function renderDocs() {
   const locked = currentPeriodLocked();
   wrap.innerHTML = `<div class="card"><div class="card-h"><div><h3>Historique des imports</h3><div class="sub">${docs.length} fichier(s) · ${esc(currentClient().name)} · ${TRI_LABEL(state.period.trimestre)} ${state.period.annee}</div></div></div>
     ${docs.length ? `<div class="table-wrap flat b-0"><table style="min-width:640px"><thead><tr><th>Fichier</th><th class="num">Factures</th><th>Importé le</th><th></th></tr></thead>
-      <tbody>${docs.map(d => `<tr><td><b>${esc(d.nom)}</b></td><td class="num">${d.nb_factures || 0}</td><td class="mono dh">${esc(dateTimeFr((d.created_at || '').replace('T', ' ')))}</td>
+      <tbody>${docs.map(d => `<tr><td><b>${esc(d.nom)}</b></td><td class="num">${d.nb_factures || 0}</td><td class="mono dh">${esc(tsLocal((d.created_at || '').replace('T', ' ')))}</td>
         <td style="text-align:right;white-space:nowrap"><a class="btn btn-quiet btn-sm" href="/api/clients/${state.clientId}/documents/${d.id}/download">${svgI('dl')}Télécharger</a>
           ${d.import_lot_id ? `<a class="btn btn-quiet btn-sm" href="/api/imports/${d.import_lot_id}/rejections.csv">Rejets</a>` : ''}
           ${locked ? '' : `<button class="btn btn-danger-ghost btn-sm" data-perm="import" data-del="${d.id}" data-nb="${d.nb_factures || 0}" data-nom="${esc(d.nom)}">Supprimer</button>`}</td></tr>`).join('')}</tbody></table></div>`
@@ -2300,7 +2303,7 @@ async function renderWorkspace(box) {
         <div class="pv-body">Chaque cabinet dispose de son espace, de ses données cloisonnées et de ses utilisateurs, dans une interface DelaiPay commune.</div></div></div></div>
       <div class="card"><div class="card-h"><div><h3>Espace</h3><div class="sub">informations d'abonnement</div></div></div><div class="card-b">
         <dl class="kv"><dt>Adresse</dt><dd><span class="code">${esc(w.slug || '—')}.delaipay.com</span></dd><dt>Statut</dt><dd>${w.active === false ? '<span class="pill pill-sm pill-late">Désactivé</span>' : '<span class="pill pill-sm pill-ok">Actif</span>'}</dd>
-          <dt>Créé le</dt><dd>${esc(dateFr(w.createdAt))}</dd>${w.updatedAt ? `<dt>Modifié le</dt><dd>${esc(dateTimeFr(w.updatedAt))}</dd>` : ''}</dl>
+          <dt>Créé le</dt><dd>${esc(dateFr(w.createdAt))}</dd>${w.updatedAt ? `<dt>Modifié le</dt><dd>${esc(tsLocal(w.updatedAt))}</dd>` : ''}</dl>
         <div class="hint mt-12">${svgI('info')}<span>L'adresse publique sera active à l'ouverture de la plateforme en ligne. Pour la changer, contactez DelaiPay.</span></div></div></div>
     </div></div>`;
   if (!isAdmin) return;
@@ -2350,7 +2353,7 @@ async function renderUsers(box) {
     <tbody>${d.users.map(u => `<tr><td data-rc="t"><div class="fournisseur"><b>${esc(u.nom || '—')}${u.id === state.me.id ? ' <span class="dh">(vous)</span>' : ''}</b><small>${esc(u.email)}</small></div></td>
       <td data-rc="s">${roleSel(u)}</td>
       <td data-rc="s">${u.actif ? '<span class="pill pill-sm pill-ok">Actif</span>' : '<span class="pill pill-sm pill-locked">Désactivé</span>'}</td>
-      <td class="dh" data-rc="m" data-label="Dernière connexion">${u.derniere_connexion ? esc(dateTimeFr(u.derniere_connexion)) : 'Jamais'}</td>
+      <td class="dh" data-rc="m" data-label="Dernière connexion">${u.derniere_connexion ? esc(tsLocal(u.derniere_connexion)) : 'Jamais'}</td>
       <td class="col-act" data-rc="s">${u.id === state.me.id ? '' : `<button class="btn ${u.actif ? 'btn-quiet row-del' : 'btn-ghost'} btn-sm" data-toggle="${u.id}" data-actif="${u.actif ? 1 : 0}" data-nom="${esc(u.nom || u.email)}">${u.actif ? 'Désactiver' : 'Réactiver'}</button>`}</td></tr>`).join('')}</tbody></table></div>
   <div class="grid-2">
     <div class="card"><div class="card-h"><div><h3>Invitations</h3><div class="sub">valables 7 jours, à usage unique</div></div></div>
@@ -2436,8 +2439,8 @@ async function renderSecurity(box) {
       <div class="card-b" style="padding:0">${d.appareils.length ? `<div class="table-wrap flat b-0"><table class="dense"><thead><tr><th>Utilisateur</th><th>Appareil</th><th>Statut</th><th>Dernière utilisation</th><th class="col-act"><span class="sr-only">Actions</span></th></tr></thead><tbody>
         ${d.appareils.map(x => `<tr><td><b>${esc(x.utilisateur.nom || x.utilisateur.email)}</b><div class="dh t-xs">${esc(x.utilisateur.email)}</div></td>
           <td>${esc(devLabel(x))}${x.id === d.appareilCourant ? ' <span class="pill pill-sm pill-brand">cet appareil</span>' : ''}<div class="dh t-xs mono">${esc(x.derniereIp || '—')}${x.pays ? ' · ' + esc(x.pays) : ''}</div></td>
-          <td><span class="pill pill-sm ${(DEV_ST[x.statut] || [])[1] || ''}">${esc((DEV_ST[x.statut] || [x.statut])[0])}</span>${x.expireLe ? `<div class="dh t-xs">jusqu’au ${esc(dateTimeFr(x.expireLe))}</div>` : ''}</td>
-          <td class="dh">${esc(dateTimeFr(x.lastSeen))}</td>
+          <td><span class="pill pill-sm ${(DEV_ST[x.statut] || [])[1] || ''}">${esc((DEV_ST[x.statut] || [x.statut])[0])}</span>${x.expireLe ? `<div class="dh t-xs">jusqu’au ${esc(tsLocal(x.expireLe))}</div>` : ''}</td>
+          <td class="dh">${esc(tsLocal(x.lastSeen))}</td>
           <td class="col-act"><div class="row-12" style="gap:4px">${x.statut !== 'approuve' && x.statut !== 'revoque' ? `<button class="btn btn-primary btn-xs" data-dev="approve" data-id="${esc(x.id)}">Approuver</button>` : ''}
             ${x.statut === 'en_attente' ? `<button class="btn btn-ghost btn-xs" data-dev="refuse" data-id="${esc(x.id)}">Refuser</button>` : ''}
             ${['approuve', 'connu'].includes(x.statut) && x.id !== d.appareilCourant ? `<button class="btn btn-ghost btn-xs" data-dev="revoke" data-id="${esc(x.id)}">Révoquer</button>` : ''}</div></td></tr>`).join('')}
@@ -2445,11 +2448,11 @@ async function renderSecurity(box) {
     <div class="card"><div class="card-h"><div><h3>Sessions actives</h3><div class="sub">${d.sessions.length} session(s) ouverte(s)</div></div></div>
       <div class="card-b" style="padding:0"><div class="table-wrap flat b-0"><table class="dense"><thead><tr><th>Utilisateur</th><th>Appareil</th><th>Adresse IP</th><th>Ouverte le</th><th>Dernière activité</th><th class="col-act"><span class="sr-only">Actions</span></th></tr></thead><tbody>
         ${d.sessions.map(x => `<tr><td><b>${esc(x.utilisateur.nom || x.utilisateur.email)}</b>${x.type === 'support' ? ' <span class="pill pill-sm pill-warn">Assistance DelaiPay</span>' : ''}</td><td>${esc([x.navigateur, x.os, x.modele].filter(Boolean).join(' · ') || '—')}</td>
-          <td class="mono">${esc(x.ipDerniere || '—')}${x.pays ? ' · ' + esc(x.pays) : ''}</td><td class="dh">${esc(dateTimeFr(x.debut))}</td><td class="dh">${esc(dateTimeFr(x.vu))}</td>
+          <td class="mono">${esc(x.ipDerniere || '—')}${x.pays ? ' · ' + esc(x.pays) : ''}</td><td class="dh">${esc(tsLocal(x.debut))}</td><td class="dh">${esc(tsLocal(x.vu))}</td>
           <td class="col-act">${x.id === d.sessionCourante ? '<span class="pill pill-sm pill-brand">vous</span>' : `<button class="btn btn-ghost btn-xs" data-ses="${esc(x.id)}">Fermer</button>`}</td></tr>`).join('') || '<tr><td colspan="6" class="dh ta-c p-24">Aucune session.</td></tr>'}
       </tbody></table></div></div></div>
     ${(d.supports || []).length ? `<div class="card"><div class="card-h"><h3>Accès d’assistance DelaiPay</h3></div><div class="card-b" style="padding:0"><div class="table-wrap flat b-0"><table class="dense"><thead><tr><th>Ouvert par</th><th>Motif</th><th>Début</th><th>Fin</th><th>Statut</th></tr></thead><tbody>
-      ${d.supports.map(x => `<tr><td>${esc(x.admin)}</td><td>${esc(x.motif)}</td><td class="dh">${esc(dateTimeFr(x.debut))}</td><td class="dh">${esc(dateTimeFr(x.finEffective || x.fin))}</td><td>${x.actif ? '<span class="pill pill-sm pill-warn">En cours</span>' : '<span class="pill pill-sm pill-locked">Terminé</span>'}</td></tr>`).join('')}</tbody></table></div></div></div>` : ''}
+      ${d.supports.map(x => `<tr><td>${esc(x.admin)}</td><td>${esc(x.motif)}</td><td class="dh">${esc(tsLocal(x.debut))}</td><td class="dh">${esc(tsLocal(x.finEffective || x.fin))}</td><td>${x.actif ? '<span class="pill pill-sm pill-warn">En cours</span>' : '<span class="pill pill-sm pill-locked">Terminé</span>'}</td></tr>`).join('')}</tbody></table></div></div></div>` : ''}
   </div><div class="mt-16">${SEC_INFO_HTML}</div>`;
   $$('#setBody [data-goto]').forEach(el => el.onclick = () => setView(el.dataset.goto));
   $('#sp_dev').onchange = e => $('#sp_known_w').classList.toggle('hidden', !e.target.checked || p.appareils);
@@ -2606,9 +2609,9 @@ async function renderAudit() {
   const rows = await api('/audit');
   const tone = a => /cloture/.test(a) ? 'pill-locked' : /reouverture|connexion_refusee|acces_support|en_attente|bloquee/.test(a) ? 'pill-warn' : /delete|annulation|verrouillage|suspension|suppression|revoque|refuse|deconnexion_forcee/.test(a) ? 'pill-late' : a === 'login' ? '' : 'pill-brand';
   $('#view').innerHTML = `
-  <div class="page-head"><div class="eyebrow">Contrôle</div><h1>Journal d'audit</h1><p>Traçabilité des actions sensibles : connexions, imports, conventions, clôtures et réouvertures, exports. Les 100 dernières entrées.</p></div>
+  <div class="page-head"><div class="eyebrow">Contrôle</div><h1>Journal d'audit</h1><p>Traçabilité des actions sensibles : connexions, imports, conventions, clôtures et réouvertures, exports. Les 100 dernières entrées. Heures affichées dans le fuseau de l’espace (${esc(wsTz())}, ${esc(window.DPTime ? window.DPTime.zoneLabel(wsTz()) : 'UTC')}).</p></div>
   <div class="table-wrap"><table class="dense rc"><thead><tr><th>Date</th><th>Utilisateur</th><th>Action</th><th data-prio="2">Objet</th><th>Détails</th></tr></thead>
-  <tbody>${rows.length ? rows.map(a => { const det = auditDetails(a.details); return `<tr><td class="mono dh nowrap" data-rc="m">${esc(dateTimeFr(a.created_at))}</td><td data-rc="m">${esc(a.user_nom || '—')}</td><td data-rc="t"><span class="pill pill-sm ${tone(a.action)}">${esc(AUDIT_LBL[a.action] || a.action)}</span></td><td class="dh" data-prio="2">${esc(ENTITE_LBL[a.entite] || a.entite || '—')}</td><td class="dh audit-det" data-rc="s" title="${esc(det)}">${esc(det)}</td></tr>`; }).join('') : '<tr><td colspan="5" class="dh ta-c p-24">Aucune entrée.</td></tr>'}</tbody></table></div>`;
+  <tbody>${rows.length ? rows.map(a => { const det = auditDetails(a.details); return `<tr><td class="mono dh nowrap" data-rc="m">${esc(tsLocal(a.created_at))}</td><td data-rc="m">${esc(a.user_nom || '—')}</td><td data-rc="t"><span class="pill pill-sm ${tone(a.action)}">${esc(AUDIT_LBL[a.action] || a.action)}</span></td><td class="dh" data-prio="2">${esc(ENTITE_LBL[a.entite] || a.entite || '—')}</td><td class="dh audit-det" data-rc="s" title="${esc(det)}">${esc(det)}</td></tr>`; }).join('') : '<tr><td colspan="5" class="dh ta-c p-24">Aucune entrée.</td></tr>'}</tbody></table></div>`;
 }
 
 /* ============================== divers ============================== */

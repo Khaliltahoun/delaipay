@@ -25,7 +25,7 @@ const PUB = path.join(__dirname, '..', 'public');
  */
 function buildVersion() {
   const h = crypto.createHash('sha1');
-  const rels = ['../src/brand-color.js'];
+  const rels = ['../src/brand-color.js', '../src/time-format.js'];
   for (const dir of ['js', 'css']) { try { for (const f of fs.readdirSync(path.join(PUB, dir)).sort()) rels.push(`${dir}/${f}`); } catch (_) {} }
   for (const rel of rels) { try { h.update(fs.readFileSync(path.join(PUB, rel))); } catch (_) {} }
   return h.digest('hex').slice(0, 10);
@@ -59,6 +59,7 @@ function mountStatic(app) {
   app.use('/assets', assetCache, express.static(path.join(PUB, 'assets'), staticOpts));
   app.use('/css', assetCache, express.static(path.join(PUB, 'css'), staticOpts));
   app.get('/js/brand-color.js', assetCache, (req, res) => res.type('application/javascript').sendFile(path.join(__dirname, 'brand-color.js')));
+  app.get('/js/time-format.js', assetCache, (req, res) => res.type('application/javascript').sendFile(path.join(__dirname, 'time-format.js')));
   app.use('/js', assetCache, express.static(path.join(PUB, 'js'), staticOpts));
   // Icône de l'onglet (les navigateurs la demandent à la racine même avec <link rel="icon">).
   app.get('/favicon.ico', (req, res) => {

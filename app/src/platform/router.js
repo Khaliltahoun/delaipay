@@ -124,7 +124,9 @@ function createConsoleApp({ mountStatic, sendPage, version }) {
   api.use(pauth.requireConsole);
   api.get('/me', (req, res) => {
     res.json({ admin: pauth.publicAdmin(req.padmin), session: { expiresAt: req.psession.expires_at, idleSeconds: pauth.IDLE_MIN * 60 },
-      recoveryCodesRemaining: pauth.remainingRecoveryCodes(req.padmin.id), ip: netu.clientIp(req) });
+      recoveryCodesRemaining: pauth.remainingRecoveryCodes(req.padmin.id), ip: netu.clientIp(req),
+      // Fuseau d'affichage de la console (horodatages stockés en UTC) : PLATFORM_TIMEZONE, défaut Africa/Casablanca.
+      fuseau: process.env.PLATFORM_TIMEZONE || 'Africa/Casablanca' });
   });
   api.post('/me/recovery-codes', codeLimit, (req, res) => {
     const code = (req.body || {}).code;

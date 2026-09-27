@@ -104,6 +104,7 @@ test('console : enrôlement 2FA obligatoire (QR local, codes de secours hachés,
   assert.equal(r.body.recoveryCodes.length, 10);
   const me = await b.get('/api/platform/me');
   assert.equal(me.status, 200); assert.equal(me.body.admin.email, email); assert.equal(me.body.admin.totpEnabled, true);
+  assert.equal(me.body.fuseau, 'Africa/Casablanca', 'fuseau d’affichage de la console');
   const row = db.prepare('SELECT * FROM platform_admin WHERE email=?').get(email);
   assert.ok(!String(row.totp_secret_enc).includes(secret), 'secret TOTP chiffré au repos');
   assert.equal(store.open(row.totp_secret_enc), secret);
