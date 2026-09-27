@@ -41,9 +41,25 @@ function createWorkspace(input) {
   const a = i.admin || {};
   const email = String(a.email || '').trim().toLowerCase();
   if (!EMAIL_RE.test(email)) throw new WorkspaceError('Adresse e-mail de l’administrateur invalide.');
+  // Deux modes : compte créé avec mot de passe (CLI, démo) OU invitation du premier administrateur (console :
+  // l'administrateur choisit lui-même son mot de passe, que la plateforme ne connaît jamais).
+  const invite = !!a.invite;
   const adminNom = String(a.nom || '').trim();
-  if (!adminNom) throw new WorkspaceError('Nom de l’administrateur requis.');
-  const pwErr = passwordProblem(a.password); if (pwErr) throw new WorkspaceError(pwErr);
+  if (!invite && !adminNom) throw new WorkspaceError('Nom de l’administrateur requis.');
+  if (!invite) { const pwErr = passwordProblem(a.password); if (pwErr) throw new WorkspaceError(pwErr); }
+  const ids = {};
+  for (const [k, col, re, lbl] of [['ice', 'ice', /^\d{15}$/, 'ICE : 15 chiffres.'], ['ifFiscal', 'if_fiscal', /^\d{1,12}$/, 'Identifiant fiscal : chiffres uniquement (12 au maximum).']]) {
+    const v = i[k] == null ? '' : String(i[k]).replace(/\s/g, '');
+    if (v && !re.test(v)) throw new WorkspaceError(lbl);
+    ids[col] = v || null;
+  }
+  const lim = {};
+  for (const [k, col] of [['maxUtilisateurs', 'max_utilisateurs'], ['maxClients', 'max_clients']]) {
+    if (i[k] == null || i[k] === '') { lim[col] = null; continue; }
+    const n = +i[k]; if (!Number.isInteger(n) || n < 1 || n > 100000) throw new WorkspaceError('Limite invalide : nombre entier positif attendu.');
+    lim[col] = n;
+  }
+  const contactNom = i.contactNom == null ? null : String(i.contactNom).trim().slice(0, 120) || null;
   const patch = tenant.validateWorkspacePatch({
     nomAffiche: i.nomAffiche, raisonLegale: i.raisonLegale, primaryColor: i.primaryColor, locale: i.locale,
     devise: i.devise, fuseauHoraire: i.fuseauHoraire, contactEmail: i.contactEmail, contactTelephone: i.contactTelephone, adresse: i.adresse,
@@ -51,20 +67,24 @@ function createWorkspace(input) {
   if (!patch.ok) throw new WorkspaceError(patch.error);
   if (db.prepare('SELECT 1 FROM cabinet WHERE lower(slug)=?').get(slug)) throw new WorkspaceError(`L’identifiant « ${slug} » est déjà utilisé.`, 409);
 
-  const cabinetId = uid('cab'), userId = uid('usr');
+  const cabinetId = uid('cab'), userId = invite ? null : uid('usr');
+  let invitation = null;
+  require('./lifecycle'); // colonnes de cycle de vie (ice, if_fiscal, limites…) garanties avant l'insertion
   db.exec('BEGIN');
   try {
     db.prepare(`INSERT INTO cabinet (id, nom, slug, plan, actif, updated_at) VALUES (?,?,?,?,1,datetime('now'))`)
       .run(cabinetId, nom, slug, i.plan || 'pro');
-    const cols = Object.keys(patch.values);
-    if (cols.length) db.prepare(`UPDATE cabinet SET ${cols.map(c => c + '=?').join(', ')} WHERE id=?`).run(...cols.map(c => patch.values[c]), cabinetId);
-    db.prepare(`INSERT INTO utilisateur (id, cabinet_id, nom, email, password_hash, role, initiales, titre, actif)
+    const vals = { ...patch.values, ...ids, ...lim, contact_nom: contactNom };
+    const cols = Object.keys(vals);
+    if (cols.length) db.prepare(`UPDATE cabinet SET ${cols.map(c => c + '=?').join(', ')} WHERE id=?`).run(...cols.map(c => vals[c]), cabinetId);
+    if (invite) invitation = insertInvitation(cabinetId, null, email, 'admin');
+    else db.prepare(`INSERT INTO utilisateur (id, cabinet_id, nom, email, password_hash, role, initiales, titre, actif)
                 VALUES (?,?,?,?,?,'admin',?,?,1)`).run(userId, cabinetId, adminNom, email, hashPassword(a.password), initialsOfName(adminNom), a.titre || 'Administrateur');
     if (typeof i.onInsideTransaction === 'function') i.onInsideTransaction(); // (tests) injection d'échec
     db.exec('COMMIT');
   } catch (e) { db.exec('ROLLBACK'); throw e; }
-  audit(cabinetId, userId, 'create', 'espace_travail', { slug, nom, admin: email }, null);
-  return { cabinetId, userId, slug };
+  audit(cabinetId, userId, 'create', 'espace_travail', { slug, nom, admin: email, ...(invite ? { invitation_admin: true } : {}), ...(i.par ? { par: i.par } : {}) }, null);
+  return { cabinetId, userId, slug, invitation };
 }
 
 function setWorkspaceActive(cabinetId, actif) {
@@ -192,37 +212,51 @@ function listUsers(cabinetId) {
 }
 function activeAdminCount(cabinetId) { return db.prepare(`SELECT COUNT(*) n FROM utilisateur WHERE cabinet_id=? AND role='admin' AND actif=1`).get(cabinetId).n; }
 /** Modifie rôle / statut d'un utilisateur DU MÊME cabinet. Protège le dernier administrateur et soi-même. */
-function updateUser(cabinetId, actorId, targetId, patch) {
+function updateUser(cabinetId, actorId, targetId, patch, opts = {}) {
   const u = db.prepare('SELECT * FROM utilisateur WHERE id=? AND cabinet_id=?').get(targetId, cabinetId);
   if (!u) throw new WorkspaceError('Utilisateur introuvable.', 404);
   const next = { role: u.role, actif: u.actif };
   if (patch.role !== undefined) { if (!permissions.isRole(patch.role)) throw new WorkspaceError('Rôle inconnu.'); next.role = patch.role; }
   if (patch.actif !== undefined) next.actif = patch.actif ? 1 : 0;
+  if (!u.actif && next.actif) limitCheck(cabinetId, { pendingIncluded: false });
   if (targetId === actorId && (next.role !== 'admin' || !next.actif)) throw new WorkspaceError('Vous ne pouvez pas retirer vos propres droits d’administration ni désactiver votre propre compte.');
   const losingAdmin = u.role === 'admin' && u.actif && (next.role !== 'admin' || !next.actif);
   if (losingAdmin && activeAdminCount(cabinetId) <= 1) throw new WorkspaceError('L’espace doit conserver au moins un administrateur actif.');
   // Une ancienne « fonction » qui n'était que le libellé d'un rôle est effacée (jamais de rôle périmé affiché).
   const staleTitre = u.titre && Object.values(permissions.ROLES).some(r => r.label === u.titre);
   db.prepare('UPDATE utilisateur SET role=?, actif=?, titre=? WHERE id=?').run(next.role, next.actif, staleTitre ? null : u.titre, u.id);
-  audit(cabinetId, actorId, 'update', 'utilisateur', { utilisateur: u.email, avant: { role: u.role, actif: !!u.actif }, apres: { role: next.role, actif: !!next.actif } }, null);
+  if (u.actif && !next.actif) require('./sessions').endForUser(u.id, 'compte_desactive');   // accès coupé immédiatement
+  audit(cabinetId, actorId, 'update', 'utilisateur', { utilisateur: u.email, avant: { role: u.role, actif: !!u.actif }, apres: { role: next.role, actif: !!next.actif }, ...(opts.par ? { par: opts.par } : {}) }, null);
   return listUsers(cabinetId).find(x => x.id === u.id);
 }
 
 /* ---------------- Invitations (locales, prêtes pour l'e-mail) ---------------- */
 const sha256 = s => crypto.createHash('sha256').update(String(s)).digest('hex');
-function createInvitation(cabinetId, actorId, { email, role }) {
-  const mail = String(email || '').trim().toLowerCase();
-  if (!EMAIL_RE.test(mail)) throw new WorkspaceError('Adresse e-mail invalide.');
-  if (!permissions.isRole(role)) throw new WorkspaceError('Rôle inconnu.');
-  if (db.prepare('SELECT 1 FROM utilisateur WHERE cabinet_id=? AND email=?').get(cabinetId, mail)) throw new WorkspaceError('Un utilisateur de cet espace possède déjà cette adresse.', 409);
+/** Insère une invitation (jeton renvoyé en clair UNE fois, stocké haché) — utilisable dans une transaction. */
+function insertInvitation(cabinetId, actorId, mail, role) {
   db.prepare(`UPDATE invitation SET revoked_at=datetime('now') WHERE cabinet_id=? AND email=? AND accepted_at IS NULL AND revoked_at IS NULL`).run(cabinetId, mail);
   const token = crypto.randomBytes(32).toString('base64url');
   const id = uid('inv');
   const expires = new Date(Date.now() + INVITE_TTL_DAYS * 86400000).toISOString().replace('T', ' ').slice(0, 19);
   db.prepare(`INSERT INTO invitation (id, cabinet_id, email, role, token_hash, expires_at, created_by) VALUES (?,?,?,?,?,?,?)`)
     .run(id, cabinetId, mail, role, sha256(token), expires, actorId);
-  audit(cabinetId, actorId, 'create', 'invitation', { email: mail, role, expire: expires }, null); // jamais le jeton
-  return { id, email: mail, role, expires_at: expires, token }; // le jeton n'est renvoyé qu'ici, une seule fois
+  return { id, email: mail, role, expires_at: expires, token };
+}
+function createInvitation(cabinetId, actorId, { email, role }, opts = {}) {
+  const mail = String(email || '').trim().toLowerCase();
+  if (!EMAIL_RE.test(mail)) throw new WorkspaceError('Adresse e-mail invalide.');
+  if (!permissions.isRole(role)) throw new WorkspaceError('Rôle inconnu.');
+  if (db.prepare('SELECT 1 FROM utilisateur WHERE cabinet_id=? AND email=?').get(cabinetId, mail)) throw new WorkspaceError('Un utilisateur de cet espace possède déjà cette adresse.', 409);
+  // Limite d'utilisateurs de l'abonnement (comptes actifs + invitations en attente, hors invitation remplacée).
+  const replaced = db.prepare(`SELECT COUNT(*) n FROM invitation WHERE cabinet_id=? AND email=? AND accepted_at IS NULL AND revoked_at IS NULL AND expires_at > datetime('now')`).get(cabinetId, mail).n;
+  if (!replaced) limitCheck(cabinetId, { pendingIncluded: true });
+  const inv = insertInvitation(cabinetId, actorId, mail, role);
+  audit(cabinetId, actorId, 'create', 'invitation', { email: mail, role, expire: inv.expires_at, ...(opts.par ? { par: opts.par } : {}) }, null); // jamais le jeton
+  return inv; // le jeton n'est renvoyé qu'ici, une seule fois
+}
+function limitCheck(cabinetId, opts) {
+  try { require('./lifecycle').assertLimit(cabinetId, 'utilisateur', opts); }
+  catch (e) { throw new WorkspaceError(e.message, e.status || 403); }
 }
 function listInvitations(cabinetId) {
   return db.prepare(`SELECT i.id, i.email, i.role, i.expires_at, i.created_at, i.accepted_at, i.revoked_at, u.nom created_by_nom
@@ -242,7 +276,7 @@ function findValidInvitation(token, hostCabinetId) {
   if (!inv || inv.accepted_at || inv.revoked_at || inv.expires_at < nowSql()) return null;
   if (hostCabinetId !== undefined && hostCabinetId !== null && inv.cabinet_id !== hostCabinetId) return null;
   const cab = db.prepare('SELECT * FROM cabinet WHERE id=?').get(inv.cabinet_id);
-  if (!cab || cab.actif === 0) return null;
+  if (!cab || cab.actif === 0 || cab.supprime_le) return null;
   return { inv, cab };
 }
 function acceptInvitation(token, hostCabinetId, { nom, password }) {
@@ -252,6 +286,7 @@ function acceptInvitation(token, hostCabinetId, { nom, password }) {
   const pwErr = passwordProblem(password); if (pwErr) throw new WorkspaceError(pwErr);
   const { inv } = found;
   if (db.prepare('SELECT 1 FROM utilisateur WHERE cabinet_id=? AND email=?').get(inv.cabinet_id, inv.email)) throw new WorkspaceError('Un compte existe déjà pour cette adresse dans cet espace.', 409);
+  limitCheck(inv.cabinet_id, { pendingIncluded: false });
   const userId = uid('usr');
   db.exec('BEGIN');
   try {
@@ -269,5 +304,5 @@ function acceptInvitation(token, hostCabinetId, { nom, password }) {
 module.exports = {
   WorkspaceError, createWorkspace, setWorkspaceActive, saveLogo, removeLogo, logoFile, sniffImage,
   ONBOARDING_STEPS, onboardingState, updateOnboarding, listUsers, updateUser, activeAdminCount,
-  createInvitation, listInvitations, revokeInvitation, findValidInvitation, acceptInvitation, passwordProblem, RESERVED,
+  createInvitation, insertInvitation, listInvitations, revokeInvitation, findValidInvitation, acceptInvitation, passwordProblem, RESERVED,
 };

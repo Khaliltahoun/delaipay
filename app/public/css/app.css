@@ -952,6 +952,12 @@ tr.ign td{background:var(--surface-2)}
   *,*::before,*::after{animation-duration:.001ms!important;animation-iteration-count:1!important;transition-duration:.001ms!important;scroll-behavior:auto!important}
 }
 
+/* Bandeaux imposés par la plateforme (maintenance, abonnement, session d'assistance) */
+.pf-banner{display:flex;flex-direction:column;gap:8px;padding:10px 32px 0}
+.pf-banner .note{font-size:var(--fs-sm)}
+@media (max-width:1280px){ .pf-banner{padding-left:24px;padding-right:24px} }
+@media (max-width:720px){ .pf-banner{padding:8px 16px 0} }
+
 /* 9 ─ Responsive -------------------------------------------------------------------- */
 @media (max-width:1280px){
   .search{display:none}

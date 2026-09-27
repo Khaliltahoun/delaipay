@@ -11,6 +11,7 @@ const { importWorkbook } = require('./importer');
 const reseau = require('./reseau');
 const periodCheck = require('./period-check');
 const anomalies = require('./anomalies');
+const lifecycle = require('./lifecycle');
 const auth = require('./auth');
 const visa = require('./visa');
 const tenant = require('./tenant');
@@ -246,10 +247,14 @@ router.post('/auth/login', loginIpCeiling, loginLimiter, (req, res) => {
   // le compte dont le mot de passe correspond (même réponse pour tous — pas d'indication de l'espace).
   if (candidates.length > 1)
     return res.status(409).json({ error: 'Cette adresse e-mail est rattachée à plusieurs espaces de travail. Connectez-vous depuis l’adresse de votre espace (ex. votre-cabinet.delaipay.com).', code: 'ambiguous_workspace' });
-  const ucab = db.prepare('SELECT actif FROM cabinet WHERE id=?').get(u.cabinet_id);
-  if (!ucab || ucab.actif === 0) {
-    auditLogin(req, 'connexion_refusee', 'espace de travail désactivé', [u.cabinet_id]);
-    return res.status(403).json({ error: 'Cet espace de travail est désactivé. Contactez DelaiPay pour le réactiver.', code: 'workspace_inactive' });
+  const ucab = db.prepare('SELECT actif, supprime_le FROM cabinet WHERE id=?').get(u.cabinet_id);
+  if (!ucab || ucab.supprime_le) {
+    auditLogin(req, 'connexion_refusee', 'espace de travail supprimé', [u.cabinet_id]);
+    return res.status(403).json({ error: 'Cet espace de travail n’est plus disponible.', code: 'workspace_deleted' });
+  }
+  if (ucab.actif === 0) {
+    auditLogin(req, 'connexion_refusee', 'espace de travail suspendu', [u.cabinet_id]);
+    return res.status(403).json({ error: 'Cet espace de travail est suspendu. Contactez DelaiPay pour le réactiver.', code: 'workspace_inactive' });
   }
   try { db.prepare(`UPDATE utilisateur SET derniere_connexion=datetime('now') WHERE id=?`).run(u.id); } catch (_) {}
   loginLimiter.reset(req);   // connexion réussie : le compteur de CETTE identité repart de zéro
@@ -270,7 +275,7 @@ router.get('/me', auth.requireAuth, (req, res) => {
   const role = req.user.role;
   const perms = {}; for (const a of Object.keys(permissions.MATRIX)) perms[a] = permissions.can(role, a);
   res.json({ user: { ...publicUser(req.user), roleLabel: (permissions.ROLES[role] || {}).label || role }, cabinet: cab,
-    workspace: tenant.workspaceOf(row), permissions: perms });
+    workspace: tenant.workspaceOf(row), permissions: perms, plateforme: platformNotices(req, row) });
 });
 
 // Identité PUBLIQUE de l'espace désigné par le nom d'hôte (page de connexion) : nom affiché,
@@ -314,8 +319,16 @@ router.post('/invitations/accept', inviteLimiter, (req, res) => {
 router.get('/tenant', (req, res) => {
   const ws = tenant.resolve(req);
   res.setHeader('Cache-Control', 'no-store');
-  res.json({ slug: ws.slug, ...tenant.publicBranding(ws.cabinet) });
+  // Espace supprimé (délai de grâce avant purge) : plus aucune identité publique.
+  if (ws.cabinet && ws.cabinet.supprime_le) return res.json({ slug: ws.slug, known: false, deleted: true, product: 'DelaiPay', maintenance: lifecycle.maintenanceFor(null) });
+  res.json({ slug: ws.slug, ...tenant.publicBranding(ws.cabinet), maintenance: lifecycle.maintenanceFor(ws.cabinet) });
 });
+/** Bandeaux imposés par la plateforme : maintenance, abonnement (échéance, grâce, lecture seule). */
+function platformNotices(req, cab) {
+  const s = lifecycle.subscriptionState(req.cabinetId);
+  const abo = s.configured && s.date_fin ? { etat: s.etat, date_fin: s.date_fin, fin_grace: s.fin_grace, jours_restants: s.jours_restants } : null;
+  return { maintenance: lifecycle.maintenanceFor(cab), abonnement: abo, acces: lifecycle.accessMode(req.cabinetId).mode };
+}
 function publicUser(u) {
   return { id: u.id, nom: u.nom, email: u.email, role: u.role,
     initiales: u.initiales || (u.nom || 'U').split(' ').map(x => x[0]).join('').slice(0, 2).toUpperCase(),
@@ -329,6 +342,8 @@ router.use(auth.requireAuth);
 router.use((req, res, next) => { res.setHeader('X-DP-Session', `${req.user.id}:${req.user.role}`); next(); });
 // Compte « Lecture seule » : aucune méthode d'écriture, quelle que soit la route (filet global).
 router.use(permissions.readOnlyGuard);
+// Abonnement échu au-delà du délai de grâce : espace en lecture seule pour tous les rôles (src/lifecycle.js).
+router.use(lifecycle.writeGuard);
 
 /* ============================================================ ESPACE DE TRAVAIL (tenant) */
 // Identité d'affichage du cabinet connecté. Lecture : tout utilisateur du cabinet.
@@ -548,6 +563,7 @@ router.get('/clients', (req, res) => {
 router.post('/clients', (req, res) => {
   const b = req.body || {};
   if (!b.raison_sociale) return res.status(400).json({ error: 'Raison sociale requise.' });
+  try { lifecycle.assertLimit(req.cabinetId, 'client'); } catch (e) { return res.status(e.status || 403).json({ error: e.message, code: e.code }); }
   const id = uid('ent');
   db.prepare(`INSERT INTO entreprise (id, cabinet_id, raison_sociale, ice, if_fiscal, rc, forme_juridique,
       secteur, ville, adresse, ca_ht, exercice_ref, email, telephone, expert_responsable)
@@ -1856,7 +1872,9 @@ router.post('/taux', (req, res) => {
 
 /* ============================================================ AUDIT */
 router.get('/audit', (req, res) => {
-  const rows = db.prepare(`SELECT a.*, u.nom user_nom FROM audit_log a LEFT JOIN utilisateur u ON u.id=a.user_id
+  // Actions de la console (user_id NULL, details.par) : attribuées à l'équipe DelaiPay, jamais anonymes.
+  const rows = db.prepare(`SELECT a.*, COALESCE(u.nom, json_extract(CASE WHEN json_valid(a.details) THEN a.details END, '$.par')) user_nom
+     FROM audit_log a LEFT JOIN utilisateur u ON u.id=a.user_id
      WHERE a.cabinet_id=? ORDER BY a.created_at DESC LIMIT 100`).all(req.cabinetId);
   res.json(rows);
 });

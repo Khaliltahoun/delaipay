@@ -55,7 +55,7 @@ table.ops a.rowlink{color:var(--ink);font-weight:var(--fw-semibold)}
 .qr-box{display:flex;gap:18px;align-items:flex-start;flex-wrap:wrap;margin:6px 0 14px}
 .qr-box .qr{background:#fff;border:1px solid var(--line);border-radius:var(--r-md);padding:6px;line-height:0}
 .qr-box .qr svg{width:180px;height:180px}
-.secret{font-family:var(--font-mono);font-size:var(--fs-sm);background:var(--surface-3);border:1px solid var(--line);border-radius:var(--r-sm);padding:6px 8px;word-break:break-all;user-select:all}
+.secret{font-family:var(--font-mono);font-size:var(--fs-sm);background:var(--surface-3);border:1px solid var(--line);border-radius:var(--r-sm);padding:6px 8px;word-break:normal;overflow-wrap:anywhere;user-select:all}
 .codes{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:6px 14px;font-family:var(--font-mono);font-size:var(--fs-md);
   background:var(--surface-2);border:1px solid var(--line);border-radius:var(--r-md);padding:12px 14px;margin:10px 0}
 .otp-input{font-family:var(--font-mono);font-size:var(--fs-xl);letter-spacing:.3em;text-align:center}

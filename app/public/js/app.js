@@ -57,7 +57,7 @@ async function api(path, opts = {}) {
     checkSessionFingerprint(res.headers.get('X-DP-Session'));
     const data = ct.includes('json') ? await res.json().catch(() => ({})) : await res.text();
     // Session expirée / compte ou espace désactivé : retour à la connexion AVEC un motif lisible (jamais silencieux).
-    if (res.status === 401) { const code = (data && data.code) || 'expired'; window.location.href = '/login?reason=' + encodeURIComponent(code); throw new Error((data && data.error) || 'Session expirée.'); }
+    if (res.status === 401) { const code = (data && (data.reason || data.code)) || 'expired'; window.location.href = '/login?reason=' + encodeURIComponent(code); throw new Error((data && data.error) || 'Session expirée.'); }
     if (!res.ok) {
       if (res.status >= 500) throw new Error(method === 'GET' ? 'Une erreur est survenue côté serveur. Réessayez ; si le problème persiste, contactez le support DelaiPay.' : 'Une erreur est survenue : l’opération n’a pas abouti et aucune donnée n’a été modifiée. Réessayez ou contactez le support.');
       if (res.status === 429) throw apiError((data && data.error) || 'Trop de demandes en peu de temps : patientez quelques instants puis réessayez.', res.status, data);
@@ -234,13 +234,33 @@ const ui = {
 window.ui = ui;
 const XICO = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>`;
 
+/* ============================== bandeaux de la plateforme (INC 3A) ==============================
+ * Maintenance (plateforme / espace), abonnement (échéance, grâce, lecture seule), session support.
+ * Imposés par DelaiPay : non masquables, sans aucune incidence sur les données. */
+function renderPlatformBanner() {
+  const p = state.plateforme; const z = $('#platformBanner'); if (!z || !p) return;
+  const fr = d => d ? String(d).slice(0, 10).split('-').reverse().join('/') : '';
+  const hm = iso => { const d = new Date(iso); return isNaN(d) ? '' : `${fr(d.toISOString())} à ${String(d.getHours()).padStart(2, '0')} h ${String(d.getMinutes()).padStart(2, '0')}`; };
+  const notes = [];
+  for (const m of p.maintenance || []) notes.push(['info', 'info', m.portee === 'espace' ? 'Maintenance de votre espace' : 'Maintenance DelaiPay', m.message + (m.fin ? ` (fin prévue le ${hm(m.fin)})` : '')]);
+  const a = p.abonnement;
+  if (a && a.etat === 'lecture_seule') notes.push(['locked', 'lock', 'Espace en lecture seule', `L’abonnement a expiré le ${fr(a.date_fin)}. Consultation et exports restent possibles ; aucune donnée n’a été supprimée. Contactez DelaiPay pour le renouveler.`]);
+  else if (a && a.etat === 'grace') notes.push(['warn', 'warn', 'Abonnement expiré', `L’abonnement a expiré le ${fr(a.date_fin)}. Sans renouvellement, l’espace passera en lecture seule après le ${fr(a.fin_grace)}.`]);
+  else if (a && a.etat === 'bientot' && state.me && state.me.role === 'admin') notes.push(['info', 'info', 'Renouvellement de l’abonnement', `Échéance le ${fr(a.date_fin)} (dans ${a.jours_restants} jour${a.jours_restants > 1 ? 's' : ''}).`]);
+  if (p.support) notes.push(['warn', 'lock', 'Session d’assistance DelaiPay', `Accès en lecture seule accordé à l’équipe DelaiPay jusqu’au ${hm(p.support.fin)} — motif : ${p.support.motif}. Tout est inscrit au journal d’audit.`]);
+  z.innerHTML = notes.map(([tone, ic, t, msg]) => `<div class="note note-${tone}">${svgI(ic)}<div><div class="note-t">${esc(t)}</div>${esc(msg)}</div></div>`).join('');
+  z.classList.toggle('hidden', !notes.length);
+}
+
 /* ============================== bootstrap ============================== */
 async function boot() {
   try {
     const me = await api('/me');
     state.me = me.user; state.cabinet = me.cabinet; state.workspace = me.workspace || null; state.perms = me.permissions || {};
+    state.plateforme = me.plateforme || null;
   } catch { return; }
   applyWorkspace();
+  renderPlatformBanner();
   // header/user — rôle EFFECTIF (serveur) ; la fonction n'est affichée que si elle n'est pas un simple libellé de rôle
   $('#sideName').textContent = state.me.nom; $('#sideTitle').textContent = state.me.roleLabel || state.me.role;
   try { const why = sessionStorage.getItem('dp-session-changed'); if (why) { sessionStorage.removeItem('dp-session-changed'); setTimeout(() => toast(why === 'user' ? `Session mise à jour : vous êtes connecté·e en tant que ${state.me.nom}.` : `Votre rôle a changé : ${state.me.roleLabel}.`, 'info', 'Session actualisée'), 300); } } catch (_) {}

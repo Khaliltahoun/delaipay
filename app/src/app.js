@@ -25,9 +25,9 @@ const PUB = path.join(__dirname, '..', 'public');
  */
 function buildVersion() {
   const h = crypto.createHash('sha1');
-  for (const rel of ['js/app.js', 'js/login.js', 'js/invite.js', 'js/console.js', 'css/app.css', 'css/console.css', '../src/brand-color.js']) {
-    try { h.update(fs.readFileSync(path.join(PUB, rel))); } catch (_) {}
-  }
+  const rels = ['../src/brand-color.js'];
+  for (const dir of ['js', 'css']) { try { for (const f of fs.readdirSync(path.join(PUB, dir)).sort()) rels.push(`${dir}/${f}`); } catch (_) {} }
+  for (const rel of rels) { try { h.update(fs.readFileSync(path.join(PUB, rel))); } catch (_) {} }
   return h.digest('hex').slice(0, 10);
 }
 const VERSION = process.env.APP_VERSION || buildVersion();

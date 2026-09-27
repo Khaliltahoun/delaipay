@@ -188,7 +188,7 @@ function showCodes(codes, thenBoot) {
 C.codesHtml = codesHtml;
 
 /* ------------------------------------------------------------------ coquille */
-const TITLES = { dash: 'Tableau de bord', workspaces: 'Espaces de travail', workspace: 'Espace de travail', sessions: 'Sessions et appareils',
+const TITLES = { dash: 'Tableau de bord', workspaces: 'Espaces de travail', workspace: 'Espace de travail', 'workspace-new': 'Nouvel espace', sessions: 'Sessions et appareils',
   activity: 'Activité de connexion', audit: 'Journal plateforme', settings: 'Réglages', account: 'Mon compte' };
 function parseHash() {
   const h = (location.hash || '#/dash').replace(/^#\/?/, '');
@@ -199,7 +199,7 @@ C.go = (view, ...params) => { location.hash = '#/' + [view, ...params.map(encode
 async function render() {
   if (!C.state.me) return;
   const { view, params } = parseHash();
-  $$('.nav-item').forEach(b => b.toggleAttribute('aria-current', b.dataset.view === view || (view === 'workspace' && b.dataset.view === 'workspaces')));
+  $$('.nav-item').forEach(b => b.toggleAttribute('aria-current', b.dataset.view === view || (/^workspace/.test(view) && b.dataset.view === 'workspaces')));
   $$('.nav-item').forEach(b => { if (b.hasAttribute('aria-current')) b.setAttribute('aria-current', 'page'); });
   $('#crumbView').textContent = TITLES[view] || '';
   document.title = `${TITLES[view] || 'Console'} — Console DelaiPay`;
