@@ -10,6 +10,36 @@ Ce document décrit l'installation, la configuration, la sauvegarde et la mise �
 
 ---
 
+## 0. Avant la mise en ligne de la version « console plateforme » (Incrément 3A) — liste de contrôle
+
+À cocher **toutes** avant d'exposer la version issue de la branche `feature/saas-productization` (console
+`admin.<domaine>`, sessions serveur, appareils, politique d'accès). Aucune de ces étapes n'est automatique.
+
+- [ ] **Proxy de confiance** : derrière nginx sur la même machine, définir **`TRUST_PROXY=loopback`**. Par défaut plus aucun
+      en-tête `X-Forwarded-For` n'est cru : sans cette variable, tous les utilisateurs apparaîtraient avec l'IP de nginx
+      (journal, limitation de débit, listes d'IP, appareils). Ne jamais mettre une valeur plus large que le proxy réel.
+- [ ] **Aucun administrateur plateforme de démonstration en production** : les comptes `ops@delaipay.demo`,
+      `ops2@delaipay.demo`, `ops3@delaipay.demo`, leurs mots de passe et leurs **codes de secours** n'existent que dans les
+      bases locales de démonstration et ne doivent **JAMAIS** se trouver dans la base de production (ne jamais y copier une
+      base de démonstration). Vérification : `npm run platform:admin -- list` sur le serveur ne doit afficher que de vrais comptes.
+- [ ] **Premier administrateur plateforme réel** créé **sur le serveur** : `npm run platform:admin:create -- --email … --nom "…"`
+      (mot de passe `PLATFORM_ADMIN_PASSWORD` ≥ 14 caractères, sinon généré et affiché une fois), puis enrôlement 2FA à la
+      première connexion sur `https://admin.<domaine>/` et conservation hors ligne des 10 codes de secours.
+- [ ] **`PLATFORM_SECRET_KEY`** (64 caractères hexadécimaux) définie et sauvegardée à part : elle chiffre les secrets 2FA ;
+      la perdre impose un `reset-2fa` de chaque administrateur plateforme.
+- [ ] **Domaines** : `TENANT_BASE_DOMAINS=delaipay.com` (console = `admin.delaipay.com`, espaces = `<slug>.delaipay.com`),
+      certificat TLS couvrant `*.delaipay.com`, `COOKIE_SECURE=1`. Optionnel : liste d'IP de la console (`PLATFORM_ALLOWED_IPS`).
+- [ ] **Tous les utilisateurs devront se reconnecter** après ce déploiement : les jetons émis avant (sans session serveur)
+      sont refusés. Prévenir les cabinets (une reconnexion, aucune donnée perdue).
+- [ ] **Sauvegardes configurées AVANT l'arrivée de données clients réelles** : sauvegarde automatique de la base SQLite
+      (`VACUUM INTO`, cf. §7), de `uploads/`, de `PLATFORM_SECRET_KEY` et du secret JWT, hors du serveur, testée par une
+      restauration ; `BACKUP_DIR` renseigné pour que le tableau de bord de la console affiche la dernière sauvegarde.
+- [ ] **Données personnelles (loi 09-08)** : conditions d'utilisation et déclaration CNDP à jour (sessions, appareils,
+      activité de connexion) ; rétention 12 mois par défaut, purge par `npm run platform:purge -- --confirmer`.
+- [ ] Après démarrage : `/healthz` répond, un espace de test se connecte, la référence de non-régression est inchangée.
+
+---
+
 ## 1. Prérequis
 
 - **Node.js ≥ 22.5** (le projet utilise `node:sqlite`, intégré à Node à partir de cette version).
