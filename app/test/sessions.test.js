@@ -92,3 +92,39 @@ test('réseau : X-Forwarded-For forgé ne contourne ni la liste d’IP autorisé
   assert.equal((await spoof2.post('/api/auth/login', { email: w.email, password: PW })).body.code, 'ip_bloquee', 'le XFF ne masque pas l’IP bloquée');
   db.prepare('UPDATE cabinet SET acces_json=NULL WHERE id=?').run(w.cabinetId);
 });
+
+test('rétention : la purge ne supprime que sessions / appareils / connexions anciens — jamais la comptabilité ni les journaux', async () => {
+  const retention = require('../src/retention');
+  const { execFileSync } = require('child_process');
+  const w = ws();
+  const { b } = await login(w);   // session + appareil récents (actifs) : conservés
+  const ent = 'ent_ret_' + process.pid;
+  db.prepare('INSERT INTO entreprise (id, cabinet_id, raison_sociale) VALUES (?,?,?)').run(ent, w.cabinetId, 'CLIENT ANCIEN');
+  db.prepare(`INSERT INTO facture (id, cabinet_id, entreprise_id, numero, ttc, created_at) VALUES (?,?,?,?,?, datetime('now','-5 years'))`).run('fac_ret_' + process.pid, w.cabinetId, ent, 'F-ANCIENNE', 1000);
+  db.prepare(`INSERT INTO audit_log (id, cabinet_id, action, details, created_at) VALUES (?,?,?,?, datetime('now','-5 years'))`).run('log_ret_' + process.pid, w.cabinetId, 'login', '{}');
+  db.prepare(`INSERT INTO user_session (id, cabinet_id, user_id, created_at, last_seen_at, expires_at, ended_at, end_reason) VALUES (?,?,?, datetime('now','-2 years'), datetime('now','-2 years'), datetime('now','-2 years'), datetime('now','-2 years'), 'deconnexion')`).run('ses_old_' + process.pid, w.cabinetId, w.userId);
+  db.prepare(`INSERT INTO device (id, cabinet_id, user_id, token_hash, statut, first_seen, last_seen) VALUES (?,?,?,?, 'connu', datetime('now','-2 years'), datetime('now','-2 years'))`).run('dev_old_' + process.pid, w.cabinetId, w.userId, 'h_old_' + process.pid);
+  db.prepare(`INSERT INTO login_event (id, cabinet_id, email, resultat, created_at) VALUES (?,?,?, 'echec', datetime('now','-2 years'))`).run('lev_old_' + process.pid, w.cabinetId, w.email);
+  require('../src/platform/store').paudit({ id: null, email: 'test' }, 'test_retention', {});
+  const before = { fac: db.prepare('SELECT COUNT(*) n FROM facture').get().n, audit: db.prepare('SELECT COUNT(*) n FROM audit_log').get().n, paudit: db.prepare('SELECT COUNT(*) n FROM platform_audit').get().n, ent: db.prepare('SELECT COUNT(*) n FROM entreprise').get().n };
+  const p = retention.plan(12);
+  assert.ok(p.sessions >= 1 && p.appareils >= 1 && p.connexions >= 1);
+  // CLI : aperçu sans --confirmer (rien supprimé), puis suppression.
+  const cli = require('path').join(__dirname, '..', 'src', 'retention-cli.js');
+  const env = { ...process.env, DB_PATH: process.env.DB_PATH };
+  const dry = execFileSync(process.execPath, [cli], { env, stdio: 'pipe' }).toString();
+  assert.match(dry, /Aperçu uniquement/);
+  assert.ok(db.prepare('SELECT 1 FROM user_session WHERE id=?').get('ses_old_' + process.pid), 'aperçu : rien supprimé');
+  const out = execFileSync(process.execPath, [cli, '--confirmer'], { env, stdio: 'pipe' }).toString();
+  assert.match(out, /Supprimé : \d+ session/);
+  assert.ok(!db.prepare('SELECT 1 FROM user_session WHERE id=?').get('ses_old_' + process.pid));
+  assert.ok(!db.prepare('SELECT 1 FROM device WHERE id=?').get('dev_old_' + process.pid));
+  assert.ok(!db.prepare('SELECT 1 FROM login_event WHERE id=?').get('lev_old_' + process.pid));
+  assert.equal(db.prepare('SELECT COUNT(*) n FROM facture').get().n, before.fac, 'factures intactes');
+  assert.equal(db.prepare('SELECT COUNT(*) n FROM entreprise').get().n, before.ent, 'clients intacts');
+  assert.equal(db.prepare('SELECT COUNT(*) n FROM audit_log').get().n, before.audit, 'journal d’espace intact');
+  assert.ok(db.prepare('SELECT COUNT(*) n FROM platform_audit').get().n >= before.paudit + 1, 'journal plateforme intact (+ entrée de purge)');
+  assert.ok(db.prepare(`SELECT 1 FROM platform_audit WHERE action='purge_retention'`).get());
+  assert.equal((await b.get('/api/me')).status, 200, 'session et appareil récents conservés');
+  assert.deepEqual(retention.TABLES, ['user_session', 'device', 'login_event']);
+});

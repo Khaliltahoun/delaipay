@@ -52,3 +52,18 @@ module.exports = function (api, { version } = {}) {
     });
   });
 };
+
+// Rétention des données de connexion (réglage ; la purge reste une commande serveur).
+module.exports.retention = function (api) {
+  const retention = require('../../retention');
+  const store = require('../store');
+  api.get('/retention', (req, res) => res.json({ mois: retention.months(), defaut: retention.DEFAULT_MONTHS, apercu: retention.plan(), tables: retention.TABLES }));
+  api.put('/retention', (req, res) => {
+    try {
+      const avant = retention.months();
+      const mois = retention.setMonths((req.body || {}).mois, req.padmin.email);
+      store.paudit(req.padmin, 'retention_modifiee', { type: 'plateforme', libelle: 'données de connexion', avant: { mois: avant }, apres: { mois } }, req);
+      res.json({ ok: true, mois, apercu: retention.plan() });
+    } catch (e) { res.status(e.status || 400).json({ error: e.message }); }
+  });
+};

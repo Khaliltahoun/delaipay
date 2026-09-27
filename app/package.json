@@ -15,7 +15,8 @@
     "workspace:create": "node src/workspace-cli.js",
     "demo:reset": "node src/demo-reset.js",
     "platform:admin:create": "DP_PLATFORM_CLI_MODE=create node src/platform/cli.js",
-    "platform:admin": "node src/platform/cli.js"
+    "platform:admin": "node src/platform/cli.js",
+    "platform:purge": "node src/retention-cli.js"
   },
   "engines": {
     "node": ">=22.5"
