@@ -8,6 +8,11 @@ const { Document, Packer, Paragraph, TextRun, AlignmentType } = require('docx');
 const PDFDocument = require('pdfkit');
 const { fmtMoney } = require('./util');
 
+/* Conclusions du modèle officiel — liste FERMÉE (modification autorisée par le fondateur, 2026-09-27 : voir DECISIONS.md).
+ * Une conclusion vide ou non reconnue est REFUSÉE : jamais de formulation « pas d'observations » par défaut. */
+const CONCLUSIONS = ['Sans observation', 'Avec observation', 'Avec réserve', 'Refus de visa'];
+class VisaError extends Error { constructor(msg, code) { super(msg); this.status = 400; this.code = code; } }
+
 function frDate(d) { return `${String(d.getDate()).padStart(2, '0')}/${String(d.getMonth() + 1).padStart(2, '0')}/${d.getFullYear()}`; }
 function periodeDates(annee, trimestre) {
   const s = new Date(annee, (trimestre - 1) * 3, 1);
@@ -17,6 +22,8 @@ function periodeDates(annee, trimestre) {
 
 /** Construit les blocs du visa à partir des données de la déclaration. */
 function buildData({ e, annee, trimestre, montant, conclusion, signataire, type }) {
+  if (!CONCLUSIONS.includes(conclusion))
+    throw new VisaError(`Conclusion du visa ${conclusion ? `« ${conclusion} » non reconnue` : 'manquante'} : choisissez « Sans observation », « Avec observation », « Avec réserve » ou « Refus de visa ».`, 'conclusion_invalide');
   const rs = e.raison_sociale;
   const siege = e.adresse || e.ville || '—';
   const { debut, fin } = periodeDates(annee, trimestre);
@@ -65,12 +72,14 @@ function buildData({ e, annee, trimestre, montant, conclusion, signataire, type 
 }
 
 function conclusionBlock(conclusion, suffix) {
-  const c = (conclusion || '').toLowerCase();
-  let lead;
-  if (c.includes('réserve')) lead = "Sur la base de nos travaux, et en raison des réserves mentionnées ci-dessus, nous exprimons une conclusion avec réserve sur la concordance des informations figurant dans l'état joint à la déclaration des délais de paiement, avec les justificatifs des informations figurant sur les factures non payées dans les délais prévus à l'article 2.78 de la loi 69-21";
-  else if (c.includes('refus')) lead = "Sur la base de nos travaux, nous ne sommes pas en mesure de nous prononcer sur la concordance des informations figurant dans l'état joint à la déclaration des délais de paiement, avec les justificatifs des informations figurant sur les factures non payées dans les délais prévus à l'article 2.78 de la loi 69-21";
-  else if (c.includes('observation') && !c.includes('sans')) lead = "Sur la base de nos travaux, et sous réserve des observations mentionnées ci-dessus, nous n'avons pas d'autres observations sur la concordance des informations figurant dans l'état joint à la déclaration des délais de paiement, avec les justificatifs des informations figurant sur les factures non payées dans les délais prévus à l'article 2.78 de la loi 69-21";
-  else lead = "Sur la base de nos travaux, nous n'avons pas d'observations sur la concordance des informations figurant dans l'état joint à la déclaration des délais de paiement, avec les justificatifs des informations figurant sur les factures non payées dans les délais prévus à l'article 2.78 de la loi 69-21";
+  const LEADS = {
+    'Avec réserve': "Sur la base de nos travaux, et en raison des réserves mentionnées ci-dessus, nous exprimons une conclusion avec réserve sur la concordance des informations figurant dans l'état joint à la déclaration des délais de paiement, avec les justificatifs des informations figurant sur les factures non payées dans les délais prévus à l'article 2.78 de la loi 69-21",
+    'Refus de visa': "Sur la base de nos travaux, nous ne sommes pas en mesure de nous prononcer sur la concordance des informations figurant dans l'état joint à la déclaration des délais de paiement, avec les justificatifs des informations figurant sur les factures non payées dans les délais prévus à l'article 2.78 de la loi 69-21",
+    'Avec observation': "Sur la base de nos travaux, et sous réserve des observations mentionnées ci-dessus, nous n'avons pas d'autres observations sur la concordance des informations figurant dans l'état joint à la déclaration des délais de paiement, avec les justificatifs des informations figurant sur les factures non payées dans les délais prévus à l'article 2.78 de la loi 69-21",
+    'Sans observation': "Sur la base de nos travaux, nous n'avons pas d'observations sur la concordance des informations figurant dans l'état joint à la déclaration des délais de paiement, avec les justificatifs des informations figurant sur les factures non payées dans les délais prévus à l'article 2.78 de la loi 69-21",
+  };
+  const lead = LEADS[conclusion];
+  if (!lead) throw new VisaError('Conclusion du visa non reconnue.', 'conclusion_invalide');
   return { align: 'justify', runs: [{ t: lead }, ...suffix] };
 }
 
@@ -115,4 +124,4 @@ function toPdf(blocks, stream) {
   return doc;
 }
 
-module.exports = { buildData, toDocx, toPdf, periodeDates };
+module.exports = { buildData, toDocx, toPdf, periodeDates, CONCLUSIONS, VisaError };

@@ -1898,7 +1898,7 @@ router.get('/clients/:id/declaration/export.xml', (req, res) => {
 });
 
 /* ============================================================ VISA */
-const VISA_CONCLUSIONS = ['Sans observation', 'Avec observation', 'Avec réserve', 'Refus de visa'];
+const VISA_CONCLUSIONS = visa.CONCLUSIONS;
 function visaData(req, e) {
   const p = req.query.annee ? { annee: +req.query.annee, trimestre: +req.query.trimestre } : latestPeriod(e.id);
   const { declaration } = buildDeclaration(req.cabinetId, e, p.annee, p.trimestre);
