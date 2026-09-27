@@ -316,6 +316,19 @@ router.post('/invitations/accept', inviteLimiter, (req, res) => {
   } catch (e) { res.status(e.status || 400).json({ error: e.message }); }
 });
 
+// Réinitialisation de mot de passe — lien à usage unique créé depuis la console (src/password-reset.js).
+router.post('/password-reset/lookup', inviteLimiter, (req, res) => {
+  res.setHeader('Cache-Control', 'no-store');
+  const f = require('./password-reset').find(String((req.body && req.body.token) || ''), hostCabinetId(req));
+  if (!f) return res.status(410).json({ error: 'Ce lien de réinitialisation est invalide, expiré ou déjà utilisé. Demandez-en un nouveau.', code: 'reset_invalid' });
+  res.json({ email: f.u.email, expiresAt: f.r.expires_at, workspace: tenant.publicBranding(f.cab) });
+});
+router.post('/password-reset/complete', inviteLimiter, (req, res) => {
+  const b = req.body || {};
+  try { require('./password-reset').complete(String(b.token || ''), hostCabinetId(req), b.password, req.ip); res.json({ ok: true }); }
+  catch (e) { res.status(e.status || 400).json({ error: e.message }); }
+});
+
 router.get('/tenant', (req, res) => {
   const ws = tenant.resolve(req);
   res.setHeader('Cache-Control', 'no-store');

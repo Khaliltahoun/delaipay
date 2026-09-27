@@ -1,0 +1,44 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="referrer" content="no-referrer">
+<title>Nouveau mot de passe — DelaiPay</title>
+<meta name="theme-color" content="#0E3544">
+<link rel="icon" href="/favicon.ico" sizes="16x16 32x32">
+<link rel="icon" type="image/png" sizes="16x16" href="/assets/brand/favicon-16.png">
+<link rel="icon" type="image/png" sizes="32x32" href="/assets/brand/favicon-32.png">
+<link rel="apple-touch-icon" href="/assets/brand/apple-touch-icon.png">
+<link rel="manifest" href="/manifest.webmanifest">
+<link rel="stylesheet" href="/css/app.css">
+</head>
+<body>
+<div class="login-wrap">
+  <aside class="login-aside">
+    <div class="brand2"><img src="/assets/brand/delaipay-logo-dark-bg.svg" alt="DelaiPay" width="117" height="34"></div>
+    <h2>Choisissez un nouveau mot de passe.</h2>
+    <p>Ce lien à usage unique a été créé à votre demande par l'équipe DelaiPay. Toutes vos sessions ouvertes seront fermées.</p>
+    <div class="foot"><span>© 2026 DelaiPay</span><span>Lien personnel, valable 24 heures</span></div>
+  </aside>
+  <main class="login-main">
+    <form class="login-card" id="resetForm" novalidate>
+      <div class="login-mobile-brand"><img class="on-light" src="/assets/brand/delaipay-logo-light-bg.svg" alt="DelaiPay" width="104" height="30"><img class="on-dark" src="/assets/brand/delaipay-logo-dark-bg.svg" alt="DelaiPay" width="104" height="30"></div>
+      <div id="state" class="empty" style="padding:24px 0"><span class="spin"></span><p>Vérification du lien…</p></div>
+      <div id="formBox" class="hidden">
+        <div class="login-ws" id="wsBox"><div class="ws-mono" id="wsMono">··</div><div><small>Espace de travail</small><b id="wsName">—</b></div></div>
+        <h1>Nouveau mot de passe</h1>
+        <p class="lead">Compte <b id="rsMail">—</b></p>
+        <div id="err" class="login-err hidden" role="alert"></div>
+        <div class="fld"><label class="fld-lbl" for="pw">Nouveau mot de passe</label><input class="input-fld" id="pw" type="password" autocomplete="new-password" required>
+          <span class="fld-help">10 caractères minimum, avec au moins une lettre et un chiffre.</span></div>
+        <div class="fld"><label class="fld-lbl" for="pw2">Confirmer le mot de passe</label><input class="input-fld" id="pw2" type="password" autocomplete="new-password" required></div>
+        <button class="btn btn-primary login-submit" id="submitBtn" type="submit">Enregistrer le mot de passe</button>
+        <div class="login-legal" id="expires"></div>
+      </div>
+    </form>
+  </main>
+</div>
+<script src="/js/reset.js"></script>
+</body>
+</html>

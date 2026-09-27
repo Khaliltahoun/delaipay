@@ -39,7 +39,7 @@ function renderPage(file) {
   return html;
 }
 const PAGES = {};
-for (const [k, f] of Object.entries({ app: 'app.html', login: 'login.html', invite: 'invite.html', console: 'console.html' })) {
+for (const [k, f] of Object.entries({ app: 'app.html', login: 'login.html', invite: 'invite.html', reset: 'reset.html', console: 'console.html' })) {
   try { PAGES[k] = renderPage(f); } catch (_) {}
 }
 function sendPage(res, name) {
@@ -100,6 +100,8 @@ function createApp() {
   });
   // Acceptation d'invitation (publique : le jeton fait foi, vérifié côté API).
   app.get('/invite', (req, res) => { res.setHeader('Referrer-Policy', 'no-referrer'); sendPage(res, 'invite'); });
+  // Réinitialisation de mot de passe (publique : le jeton, dans le fragment d'URL, fait foi).
+  app.get('/reset', (req, res) => { res.setHeader('Referrer-Policy', 'no-referrer'); sendPage(res, 'reset'); });
   app.get(['/', '/app'], pageGuard, (req, res) => sendPage(res, 'app'));
 
   // API

@@ -24,4 +24,19 @@ async function consoleSession() {
   assert.equal(r.status, 200, JSON.stringify(r.body));
   return Object.assign(b, { email, secret });
 }
-module.exports = { ADMIN, PW, newIp, consoleBrowser, consoleSession };
+/** Crée un espace depuis la console (premier administrateur invité). */
+async function createWs(c, slug, extra = {}) {
+  const r = await c.post('/api/platform/workspaces', { slug, nom: 'Cabinet ' + slug, adminEmail: `admin@${slug}.ma`, ...extra });
+  assert.equal(r.status, 200, JSON.stringify(r.body));
+  return r.body;
+}
+/** Accepte l'invitation sur l'hôte de l'espace ; renvoie le navigateur connecté. */
+async function acceptAdmin(created, { password = 'Secret-1234', nom = 'Première Admin', browser } = {}) {
+  const token = created.invitation.lien.split('#t=')[1];
+  const host = new URL(created.invitation.lien).hostname;
+  const b = browser || H.browser(host);
+  const r = await b.post('/api/invitations/accept', { token, nom, password });
+  assert.equal(r.status, 200, JSON.stringify(r.body));
+  return b;
+}
+module.exports = { ADMIN, PW, newIp, consoleBrowser, consoleSession, createWs, acceptAdmin };
