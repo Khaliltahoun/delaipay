@@ -55,6 +55,8 @@ test('assistance : session en lecture seule stricte, lien à usage unique et li�
   const me = await b.get('/api/me');
   assert.equal(me.status, 200); assert.equal(me.body.user.role, 'lecture'); assert.match(me.body.user.nom, /Assistance DelaiPay/);
   assert.equal(me.body.plateforme.support.motif, 'Ticket 42 — écart de total T1');
+  // Empreinte de session lue par l'interface (« id:rôle ») : l'identifiant synthétique ne contient aucun « : ».
+  assert.deepEqual(me.headers['x-dp-session'].split(':'), [me.body.user.id, 'lecture']);
   const clients = await b.get('/api/clients');
   assert.equal(clients.status, 200); assert.ok(clients.body.some(x => x.name === 'CLIENT VISIBLE EN ASSISTANCE'));
   for (const [m, p, body] of [['POST', '/api/clients', { raison_sociale: 'X' }], ['PUT', '/api/me/password', { current: 'x', next: 'Autre-mdp-123' }], ['PUT', '/api/workspace', { nomAffiche: 'X' }], ['POST', '/api/invitations', { email: 'x@y.ma', role: 'admin' }]]) {

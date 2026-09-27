@@ -25,7 +25,7 @@ C.views.dash = async (el) => {
     <div class="cons-grid">
       <div class="card"><div class="card-h"><h3>Renouvellements dans les 30 jours</h3></div><div class="card-b" style="padding:0">${C.table(['Espace', 'Échéance', { label: 'Montant', num: true }, 'Paiement'],
         a.renouvellements.map(r => `<tr><td class="first"><a class="rowlink" href="#/workspace/${esc(r.id)}/abonnement">${esc(r.nom)}</a> <span class="muted mono t-xs">${esc(r.slug)}</span></td><td class="mono" data-l="Échéance">${C.fd(r.date_fin)}</td><td class="num" data-l="Montant">${C.money(r.montant)}</td><td data-l="Paiement">${esc({ paye: 'Payé', en_attente: 'En attente', en_retard: 'En retard' }[r.statut_paiement] || '—')}</td></tr>`),
-        { empty: 'Aucune échéance dans les 30 jours.' })}
+        { empty: 'Aucune échéance dans les 30 jours.', compact: true })}</div>
         ${a.echus.length ? `<div class="ops-foot"><span>${a.echus.length} abonnement(s) échu(s) : ${a.echus.map(e => `<a href="#/workspace/${esc(e.id)}/abonnement">${esc(e.slug)}</a> (${esc(e.etat === 'lecture_seule' ? 'lecture seule' : 'grâce')})`).join(', ')}</span></div>` : ''}</div>
       <div class="card"><div class="card-h"><h3>Actions rapides</h3></div><div class="card-b" style="display:grid;gap:8px">
         <button class="btn btn-ghost" data-go="workspace-new" style="justify-content:flex-start">${IC.plus}Créer un espace de travail</button>
@@ -36,7 +36,7 @@ C.views.dash = async (el) => {
       </div></div>
       <div class="card"><div class="card-h"><h3>Accès d’assistance en cours</h3></div><div class="card-b" style="padding:0">${C.table(['Espace', 'Par', 'Motif', 'Fin'],
         act.rows.map(r => `<tr><td class="first"><a class="rowlink" href="#/workspace/${esc(r.espace.id)}/assistance">${esc(r.espace.slug)}</a></td><td data-l="Par">${esc(r.admin)}</td><td class="wrap" data-l="Motif">${esc(r.motif)}</td><td class="mono" data-l="Fin">${C.fdt(r.fin)}</td></tr>`),
-        { empty: 'Aucun accès d’assistance en cours.' })}</div></div>
+        { empty: 'Aucun accès d’assistance en cours.', compact: true })}</div></div>
       <div class="card"><div class="card-h"><h3>Système</h3></div><div class="card-b"><dl class="dl-ops">
         <dt>Version</dt><dd class="mono">${esc(s.version || '—')}${s.commit ? ` · commit ${esc(s.commit)}` : ''}</dd>
         <dt>Démarré</dt><dd>${C.fdt(s.startedAt)} · depuis ${dur(s.uptimeSec)}</dd>

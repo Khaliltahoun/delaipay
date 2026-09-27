@@ -2413,7 +2413,7 @@ async function renderSecurity(box) {
   const listRows = (id, list) => `<div class="ip-list" id="${id}">${(list.length ? list : [{ cidr: '', label: '' }]).map(e => `<div class="ip-row"><input class="input-fld mono" placeholder="203.0.113.0/24" value="${esc(e.cidr || '')}" aria-label="Adresse ou plage"><input class="input-fld" placeholder="Libellé (ex. Bureau)" value="${esc(e.label || '')}" aria-label="Libellé"><button class="btn btn-quiet btn-sm" data-rm title="Retirer">${svgI('x')}</button></div>`).join('')}</div>
     <button class="btn btn-quiet btn-sm mt-8" data-add="${id}">${svgI('plus')}Ajouter une adresse</button>`;
   const pending = d.appareils.filter(x => x.statut === 'en_attente');
-  box.innerHTML = `<div class="grid-2">
+  box.innerHTML = `<div class="sec-stack">
     <div class="card"><div class="card-h"><div><h3>Politique d’accès</h3><div class="sub">Mode actuel : <b>${esc(d.mode)}</b> · votre adresse IP : <span class="mono">${esc(d.ipCourante || '—')}</span></div></div></div><div class="card-b">
       <label class="check"><input type="checkbox" id="sp_dev" ${p.appareils ? 'checked' : ''}> <span><b>Appareils approuvés</b> — un nouvel appareil, même avec le bon mot de passe, attend votre approbation. Votre appareil actuel est approuvé automatiquement.</span></label>
       <label class="check mt-8 ${p.appareils ? 'hidden' : ''}" id="sp_known_w"><input type="checkbox" id="sp_known"> <span>Approuver aussi les appareils déjà utilisés par les membres actifs</span></label>
@@ -2432,13 +2432,13 @@ async function renderSecurity(box) {
             ${x.statut === 'en_attente' ? `<button class="btn btn-ghost btn-xs" data-dev="refuse" data-id="${esc(x.id)}">Refuser</button>` : ''}
             ${['approuve', 'connu'].includes(x.statut) && x.id !== d.appareilCourant ? `<button class="btn btn-ghost btn-xs" data-dev="revoke" data-id="${esc(x.id)}">Révoquer</button>` : ''}</div></td></tr>`).join('')}
       </tbody></table></div>` : '<p class="dh p-24 m-0">Aucun appareil enregistré.</p>'}</div></div>
-    <div class="card" style="grid-column:1 / -1"><div class="card-h"><div><h3>Sessions actives</h3><div class="sub">${d.sessions.length} session(s) ouverte(s)</div></div></div>
+    <div class="card"><div class="card-h"><div><h3>Sessions actives</h3><div class="sub">${d.sessions.length} session(s) ouverte(s)</div></div></div>
       <div class="card-b" style="padding:0"><div class="table-wrap flat b-0"><table class="dense"><thead><tr><th>Utilisateur</th><th>Appareil</th><th>Adresse IP</th><th>Ouverte le</th><th>Dernière activité</th><th class="col-act"><span class="sr-only">Actions</span></th></tr></thead><tbody>
         ${d.sessions.map(x => `<tr><td><b>${esc(x.utilisateur.nom || x.utilisateur.email)}</b>${x.type === 'support' ? ' <span class="pill pill-sm pill-warn">Assistance DelaiPay</span>' : ''}</td><td>${esc([x.navigateur, x.os, x.modele].filter(Boolean).join(' · ') || '—')}</td>
           <td class="mono">${esc(x.ipDerniere || '—')}${x.pays ? ' · ' + esc(x.pays) : ''}</td><td class="dh">${esc(dateTimeFr(x.debut))}</td><td class="dh">${esc(dateTimeFr(x.vu))}</td>
           <td class="col-act">${x.id === d.sessionCourante ? '<span class="pill pill-sm pill-brand">vous</span>' : `<button class="btn btn-ghost btn-xs" data-ses="${esc(x.id)}">Fermer</button>`}</td></tr>`).join('') || '<tr><td colspan="6" class="dh ta-c p-24">Aucune session.</td></tr>'}
       </tbody></table></div></div></div>
-    ${(d.supports || []).length ? `<div class="card" style="grid-column:1 / -1"><div class="card-h"><h3>Accès d’assistance DelaiPay</h3></div><div class="card-b" style="padding:0"><div class="table-wrap flat b-0"><table class="dense"><thead><tr><th>Ouvert par</th><th>Motif</th><th>Début</th><th>Fin</th><th>Statut</th></tr></thead><tbody>
+    ${(d.supports || []).length ? `<div class="card"><div class="card-h"><h3>Accès d’assistance DelaiPay</h3></div><div class="card-b" style="padding:0"><div class="table-wrap flat b-0"><table class="dense"><thead><tr><th>Ouvert par</th><th>Motif</th><th>Début</th><th>Fin</th><th>Statut</th></tr></thead><tbody>
       ${d.supports.map(x => `<tr><td>${esc(x.admin)}</td><td>${esc(x.motif)}</td><td class="dh">${esc(dateTimeFr(x.debut))}</td><td class="dh">${esc(dateTimeFr(x.finEffective || x.fin))}</td><td>${x.actif ? '<span class="pill pill-sm pill-warn">En cours</span>' : '<span class="pill pill-sm pill-locked">Terminé</span>'}</td></tr>`).join('')}</tbody></table></div></div></div>` : ''}
   </div><div class="mt-16">${SEC_INFO_HTML}</div>`;
   $$('#setBody [data-goto]').forEach(el => el.onclick = () => setView(el.dataset.goto));
@@ -2545,7 +2545,7 @@ async function renderExports() {
 /* ============================== AUDIT ============================== */
 const ROLE_FR = { admin: 'Administrateur', collaborateur: 'Comptable', lecture: 'Lecture seule' };
 const ENTITE_LBL = { utilisateur: 'Utilisateur', entreprise: 'Client', facture: 'Facture', convention: 'Convention', fournisseur: 'Fournisseur', declaration: 'Déclaration',
-  periode: 'Période', import_lot: 'Import', document: 'Fichier', espace_travail: 'Espace de travail', invitation: 'Invitation', taux_bam: 'Taux BAM', visa: 'Visa', export: 'Export', anomalie: 'Anomalie' };
+  periode: 'Période', import_lot: 'Import', document: 'Fichier', espace_travail: 'Espace de travail', invitation: 'Invitation', taux_bam: 'Taux BAM', visa: 'Visa', export: 'Export', anomalie: 'Anomalie', appareil: 'Appareil' };
 const DET_KEY = { email: 'E-mail', role: 'Rôle', avant: 'Avant', apres: 'Après', nom: 'Nom', actif: 'Actif', annee: 'Année', trimestre: 'Trimestre', statut: 'Statut',
   factures: 'Factures', facture: 'Facture', imported: 'Factures importées', file: 'Fichier', taille: 'Taille', taux: 'Taux', motif: 'Motif', nb: 'Lignes', exclues: 'Exclues', figee: 'Période figée',
   format: 'Format', slug: 'Adresse', admin: 'Administrateur', raison: 'Motif', operateur_reseau: 'Opérateur de réseau', date_debut: 'Début', delai: 'Délai (j)', entreprise: 'Client',
@@ -2553,7 +2553,10 @@ const DET_KEY = { email: 'E-mail', role: 'Rôle', avant: 'Avant', apres: 'Après
   date_signature: 'Signature', date_effet: 'Effet', date_fin: 'Fin', signature_retroactive: 'Signature rétroactive', accuse_signature_retroactive: 'Accusé de signature rétroactive',
   avertissements: 'Avertissements', levee_initiale: 'Levée initiale', le: 'Le', par: 'Par', modifications: 'Modifications',
   verifications_en_attente: 'Vérifications en attente', accuse_verifications: 'Accusé des vérifications', ouvertes: 'anomalies ouvertes', aVerifier: 'à vérifier',
-  convManquantes: 'sans convention justificative', horsValidite: 'hors période de validité', total: 'total', scenario: 'Scénario', sauvegarde: 'Sauvegarde' };
+  convManquantes: 'sans convention justificative', horsValidite: 'hors période de validité', total: 'total', scenario: 'Scénario', sauvegarde: 'Sauvegarde',
+  compte: 'Compte', appareil: 'Appareil', sessions_fermees: 'Sessions fermées', motif_fin: 'Fin', ouvert_par: 'Ouvert par', fin_prevue: 'Fin prévue',
+  duree_minutes: 'Durée (min)', lecture_seule: 'Lecture seule', debut: 'Début', ip: 'IP', export: 'Export', purge_possible_apres: 'Purge possible après',
+  appareils_approuves: 'Appareils approuvés', appareils: 'Appareils', sessions: 'Sessions', fichier: 'Fichier', expire: 'Expire le', invitation_admin: 'Invitation de l’administrateur' };
 // Clés internes jamais affichées (identifiants techniques, horodatage déjà présent dans la colonne Date).
 const HIDDEN_DET = new Set(['id', 'importId', 'utilisateur', 'token', 'hash', 'anomalie', 'horodatage']);
 const INTERNAL_ID = /^[a-z]{2,6}_[A-Za-z0-9_-]{8,}$/;
@@ -2582,10 +2585,16 @@ const AUDIT_LBL = { login: 'Connexion', import: 'Import de factures', import_con
   create: 'Création', update: 'Modification', delete: 'Suppression', cloture_periode: 'Clôture de période', reouverture_periode: 'Réouverture de période', recalcul: 'Recalcul',
   revue_doublon: 'Revue de doublon', classification_fournisseur: 'Classification réseau', import_conventions: 'Import de conventions', export: 'Export',
   connexion_refusee: 'Connexion refusée', verrouillage_connexion: 'Connexion verrouillée', levee_anomalie: 'Levée d’anomalie validée', annulation_levee: 'Levée annulée',
-  resolution_anomalie: 'Anomalie résolue', reinitialisation_demo: 'Remise à blanc (démo)', preparation_demo: 'Préparation (démo)', onboarding_termine: 'Configuration terminée' };
+  resolution_anomalie: 'Anomalie résolue', reinitialisation_demo: 'Remise à blanc (démo)', preparation_demo: 'Préparation (démo)', onboarding_termine: 'Configuration terminée',
+  // INC 3A — sécurité des accès et actions de la plateforme DelaiPay
+  suspension_espace: 'Espace suspendu', reactivation_espace: 'Espace réactivé', suppression_espace: 'Espace supprimé', restauration_espace: 'Espace restauré',
+  export_espace: 'Export des données de l’espace', politique_acces: 'Politique d’accès modifiée', appareil_approuve: 'Appareil approuvé', appareil_refuse: 'Appareil refusé',
+  appareil_revoque: 'Appareil révoqué', revocation_appareils: 'Appareils révoqués', appareil_en_attente: 'Appareil en attente d’approbation', connexion_bloquee: 'Connexion bloquée (politique)',
+  deconnexion_forcee: 'Déconnexion forcée', lien_reinitialisation: 'Lien de réinitialisation créé', reinitialisation_mot_de_passe: 'Mot de passe réinitialisé',
+  acces_support_ouvert: 'Accès d’assistance ouvert', acces_support_utilise: 'Accès d’assistance utilisé', acces_support_termine: 'Accès d’assistance terminé' };
 async function renderAudit() {
   const rows = await api('/audit');
-  const tone = a => /cloture/.test(a) ? 'pill-locked' : /reouverture|connexion_refusee/.test(a) ? 'pill-warn' : /delete|annulation|verrouillage/.test(a) ? 'pill-late' : a === 'login' ? '' : 'pill-brand';
+  const tone = a => /cloture/.test(a) ? 'pill-locked' : /reouverture|connexion_refusee|acces_support|en_attente|bloquee/.test(a) ? 'pill-warn' : /delete|annulation|verrouillage|suspension|suppression|revoque|refuse|deconnexion_forcee/.test(a) ? 'pill-late' : a === 'login' ? '' : 'pill-brand';
   $('#view').innerHTML = `
   <div class="page-head"><div class="eyebrow">Contrôle</div><h1>Journal d'audit</h1><p>Traçabilité des actions sensibles : connexions, imports, conventions, clôtures et réouvertures, exports. Les 100 dernières entrées.</p></div>
   <div class="table-wrap"><table class="dense rc"><thead><tr><th>Date</th><th>Utilisateur</th><th>Action</th><th data-prio="2">Objet</th><th>Détails</th></tr></thead>

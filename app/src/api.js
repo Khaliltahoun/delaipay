@@ -529,7 +529,7 @@ router.post('/security/devices/:did/:action', (req, res) => {
   const pol = accessPolicy.policyOf(db.prepare('SELECT acces_json FROM cabinet WHERE id=?').get(req.cabinetId));
   const r = devices.decide(d.id, statut, secActor(req), { dureeJours: pol.dureeApprobationJours });
   const owner = db.prepare('SELECT email FROM utilisateur WHERE id=?').get(d.user_id);
-  const det = { appareil: `${d.navigateur || '?'} · ${d.os || '?'}`, utilisateur: owner && owner.email, avant: d.statut, apres: statut, sessions_fermees: r.sessions };
+  const det = { appareil: `${d.navigateur || '?'} · ${d.os || '?'}`, compte: owner && owner.email, avant: d.statut, apres: statut, sessions_fermees: r.sessions };
   audit(req.cabinetId, req.user.id, 'appareil_' + statut, 'appareil', det, req.ip);
   secPlatformAudit(req, 'appareil_' + statut, { avant: { statut: d.statut }, apres: { statut }, details: det });
   res.json({ ok: true, ...r });
@@ -541,7 +541,7 @@ router.post('/security/sessions/:sid/revoke', (req, res) => {
   if (req.session && x.id === req.session.id) return res.status(400).json({ error: 'Pour fermer votre propre session, utilisez « Se déconnecter ».', code: 'auto_blocage' });
   const n = sessionsMod.end(x.id, 'deconnexion_forcee');
   const owner = db.prepare('SELECT email FROM utilisateur WHERE id=?').get(x.user_id);
-  audit(req.cabinetId, req.user.id, 'deconnexion_forcee', 'utilisateur', { utilisateur: owner && owner.email, sessions_fermees: n }, req.ip);
+  audit(req.cabinetId, req.user.id, 'deconnexion_forcee', 'utilisateur', { compte: owner && owner.email, sessions_fermees: n }, req.ip);
   secPlatformAudit(req, 'deconnexion_forcee', { details: { utilisateur: owner && owner.email, depuis: 'espace' } });
   res.json({ ok: true });
 });
@@ -1991,7 +1991,7 @@ router.post('/taux', (req, res) => {
 router.get('/audit', (req, res) => {
   // Actions de la console (user_id NULL, details.par) : attribuées à l'équipe DelaiPay, jamais anonymes.
   const rows = db.prepare(`SELECT a.*, COALESCE(u.nom, json_extract(CASE WHEN json_valid(a.details) THEN a.details END, '$.par'),
-       CASE WHEN a.user_id LIKE 'support:%' THEN 'Assistance DelaiPay' END) user_nom
+       CASE WHEN a.user_id LIKE 'support-%' THEN 'Assistance DelaiPay' END) user_nom
      FROM audit_log a LEFT JOIN utilisateur u ON u.id=a.user_id
      WHERE a.cabinet_id=? ORDER BY a.created_at DESC LIMIT 100`).all(req.cabinetId);
   res.json(rows);

@@ -17,7 +17,7 @@ C.wsTab('assistance', 'Assistance', async (el, ws, reload) => {
     <div class="card span-2"><div class="card-h"><h3>Historique</h3></div><div class="card-b" style="padding:0">${C.table(['Ouvert par', 'Motif', 'Début', 'Fin prévue', 'Fin effective', 'Statut'], d.rows.map(a => `<tr>
       <td class="first">${esc(a.admin)}</td><td class="wrap" data-l="Motif">${esc(a.motif)}</td><td class="mono" data-l="Début">${C.fdt(a.debut)}</td><td class="mono" data-l="Fin prévue">${C.fdt(a.fin)}</td>
       <td class="mono" data-l="Fin">${a.finEffective ? `${C.fdt(a.finEffective)} <span class="muted t-xs">${esc(a.finMotif || '')}</span>` : '—'}</td>
-      <td data-l="Statut">${a.actif ? '<span class="pill pill-sm pill-warn">En cours</span>' : '<span class="pill pill-sm pill-locked">Terminé</span>'}</td></tr>`), { empty: 'Aucun accès d’assistance.' })}</div></div></div>`;
+      <td data-l="Statut">${a.actif ? '<span class="pill pill-sm pill-warn">En cours</span>' : '<span class="pill pill-sm pill-locked">Terminé</span>'}</td></tr>`), { empty: 'Aucun accès d’assistance.', compact: true })}</div></div></div>`;
   const showLink = (r) => C.showOnce('Lien d’ouverture de l’accès d’assistance', C.onceBox('Ouvrir dans un nouvel onglet', r.lien, `Usage unique, valable 2 minutes. Accès jusqu’au ${C.fdt(r.fin)}.`)
     + `<p class="mt-14 m-0"><a class="btn btn-primary" href="${esc(r.lien)}" target="_blank" rel="noopener noreferrer">${IC.out}Ouvrir l’espace en lecture seule</a></p>`);
   const open = $('#s_open');

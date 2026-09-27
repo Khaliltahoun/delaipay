@@ -28,7 +28,7 @@ function create(cabinetId, userId, byLabel) {
   const expires = sqlTime(Date.now() + TTL_H * 3600e3);
   db.prepare('INSERT INTO password_reset (id, cabinet_id, user_id, token_hash, expires_at, created_by) VALUES (?,?,?,?,?,?)')
     .run(uid('pwr'), cabinetId, userId, sha256(token), expires, byLabel || null);
-  audit(cabinetId, null, 'lien_reinitialisation', 'utilisateur', { utilisateur: u.email, expire: expires, par: byLabel }, null);
+  audit(cabinetId, null, 'lien_reinitialisation', 'utilisateur', { compte: u.email, expire: expires, par: byLabel }, null);
   return { token, expires_at: expires, email: u.email };
 }
 /** Lien valide pour ce jeton ET pour l'espace désigné par l'hôte (si l'hôte en désigne un). */
@@ -55,7 +55,7 @@ function complete(token, hostCabinetId, password, ip) {
     db.exec('COMMIT');
   } catch (e) { db.exec('ROLLBACK'); throw e; }
   const ended = require('./sessions').endForUser(f.u.id, 'mot_de_passe_reinitialise');
-  audit(f.cab.id, f.u.id, 'reinitialisation_mot_de_passe', 'utilisateur', { utilisateur: f.u.email, sessions_fermees: ended }, ip);
+  audit(f.cab.id, f.u.id, 'reinitialisation_mot_de_passe', 'utilisateur', { compte: f.u.email, sessions_fermees: ended }, ip);
   return f.u;
 }
 

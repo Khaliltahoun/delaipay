@@ -93,7 +93,7 @@ function exchange(token, hostCabinetId, req, res) {
   return a;
 }
 function syntheticUser(a) {
-  return { id: 'support:' + a.id, cabinet_id: a.cabinet_id, nom: label(a), email: a.admin_email, role: 'lecture', initiales: 'DP', titre: 'Assistance DelaiPay', actif: 1 };
+  return { id: 'support-' + a.id, cabinet_id: a.cabinet_id, nom: label(a), email: a.admin_email, role: 'lecture', initiales: 'DP', titre: 'Assistance DelaiPay', actif: 1 };
 }
 function listForCabinet(cabinetId, limit = 50) {
   sweep();

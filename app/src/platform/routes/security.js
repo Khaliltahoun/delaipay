@@ -47,7 +47,7 @@ module.exports = function (api) {
     if (!s) return res.status(404).json({ error: 'Session introuvable.', code: 'session_introuvable' });
     const n = sessions.end(s.id, 'deconnexion_forcee');
     const u = db.prepare('SELECT email FROM utilisateur WHERE id=?').get(s.user_id), c = db.prepare('SELECT slug FROM cabinet WHERE id=?').get(s.cabinet_id);
-    lifecycle.tenantAudit(s.cabinet_id, 'deconnexion_forcee', { utilisateur: u && u.email, sessions_fermees: n }, actorLabel(req), netu.clientIp(req));
+    lifecycle.tenantAudit(s.cabinet_id, 'deconnexion_forcee', { compte: u && u.email, sessions_fermees: n }, actorLabel(req), netu.clientIp(req));
     store.paudit(req.padmin, 'session_revoquee', { type: 'espace', id: s.cabinet_id, libelle: `${c && c.slug} · ${u && u.email}`, details: { session: s.id, navigateur: s.navigateur, ip: s.ip_derniere } }, req);
     res.json({ ok: true });
   });
@@ -60,7 +60,7 @@ module.exports = function (api) {
     const cab = db.prepare('SELECT * FROM cabinet WHERE id=?').get(d.cabinet_id);
     const r = devices.decide(d.id, statut, actorLabel(req), { dureeJours: accessPolicy.policyOf(cab).dureeApprobationJours });
     const u = db.prepare('SELECT email FROM utilisateur WHERE id=?').get(d.user_id);
-    const det = { appareil: `${d.navigateur || '?'} · ${d.os || '?'}`, utilisateur: u && u.email, avant: d.statut, apres: statut, sessions_fermees: r.sessions };
+    const det = { appareil: `${d.navigateur || '?'} · ${d.os || '?'}`, compte: u && u.email, avant: d.statut, apres: statut, sessions_fermees: r.sessions };
     lifecycle.tenantAudit(d.cabinet_id, 'appareil_' + statut, det, actorLabel(req), netu.clientIp(req));
     store.paudit(req.padmin, 'appareil_' + statut, { type: 'espace', id: d.cabinet_id, libelle: `${cab && cab.slug} · ${u && u.email}`, avant: { statut: d.statut }, apres: { statut }, details: det }, req);
     res.json({ ok: true, ...r });

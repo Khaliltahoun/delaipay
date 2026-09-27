@@ -242,7 +242,9 @@ $('#logoutBtn').addEventListener('click', async () => { try { await post('/auth/
 
 /* ------------------------------------------------------------------ vues de base */
 C.pageHead = (title, sub, actions = '') => `<div class="page-head"><div><h1>${esc(title)}</h1>${sub ? `<p>${sub}</p>` : ''}</div>${actions ? `<div class="actions">${actions}</div>` : ''}</div>`;
-C.table = (head, rows, { empty = 'Aucune donnée.', cls = '' } = {}) => rows.length
+C.table = (head, rows, { empty = 'Aucune donnée.', cls = '', compact = false } = {}) => !rows.length && compact
+  ? `<p class="t-sm muted m-0" style="padding:14px">${esc(empty)}</p>`
+  : rows.length
   ? `<div class="table-wrap ops-wrap"><table class="ops rc ${cls}"><thead><tr>${head.map(h => `<th${h.num ? ' class="num"' : ''}${h.prio ? ` data-prio="${h.prio}"` : ''}>${h.html || esc(h.label || h)}</th>`).join('')}</tr></thead><tbody>${rows.join('')}</tbody></table></div>`
   : `<div class="card"><div class="empty"><div class="ic">${IC.info}</div><p>${esc(empty)}</p></div></div>`;
 

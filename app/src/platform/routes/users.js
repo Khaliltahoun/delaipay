@@ -58,7 +58,7 @@ module.exports = function (api) {
   api.post('/workspaces/:id/users/:uid/logout', (req, res) => {
     const c = ctx(req, res); if (!c) return;
     const n = sessions.endForUser(c.u.id, 'deconnexion_forcee');
-    lifecycle.tenantAudit(c.cab.id, 'deconnexion_forcee', { utilisateur: c.u.email, sessions_fermees: n }, actorLabel(req), netu.clientIp(req));
+    lifecycle.tenantAudit(c.cab.id, 'deconnexion_forcee', { compte: c.u.email, sessions_fermees: n }, actorLabel(req), netu.clientIp(req));
     store.paudit(req.padmin, 'deconnexion_forcee', { type: 'espace', id: c.cab.id, libelle: `${c.cab.slug} · ${c.u.email}`, details: { sessions_fermees: n } }, req);
     res.json({ ok: true, sessionsFermees: n });
   });
@@ -79,7 +79,7 @@ module.exports = function (api) {
     const dev = devicesMod();
     if (!dev) return res.status(501).json({ error: 'Suivi des appareils indisponible.' });
     const r = dev.revokeAllForUser(c.u.id, actorLabel(req));
-    lifecycle.tenantAudit(c.cab.id, 'revocation_appareils', { utilisateur: c.u.email, appareils: r.appareils, sessions_fermees: r.sessions }, actorLabel(req), netu.clientIp(req));
+    lifecycle.tenantAudit(c.cab.id, 'revocation_appareils', { compte: c.u.email, appareils: r.appareils, sessions_fermees: r.sessions }, actorLabel(req), netu.clientIp(req));
     store.paudit(req.padmin, 'appareils_revoques', { type: 'espace', id: c.cab.id, libelle: `${c.cab.slug} · ${c.u.email}`, details: r }, req);
     res.json({ ok: true, ...r });
   });

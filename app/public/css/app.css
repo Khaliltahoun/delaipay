@@ -953,6 +953,8 @@ tr.ign td{background:var(--surface-2)}
 }
 
 /* Paramètres → Sécurité : listes d'IP (adresse + libellé) */
+.sec-stack{display:grid;gap:14px}
+.sec-stack .ip-list{max-width:760px}
 .ip-list{display:grid;gap:6px}
 .ip-row{display:grid;grid-template-columns:minmax(0,1.1fr) minmax(0,1fr) auto;gap:6px;align-items:center}
 @media (max-width:720px){ .ip-row{grid-template-columns:1fr auto} .ip-row input:nth-child(2){grid-column:1} }

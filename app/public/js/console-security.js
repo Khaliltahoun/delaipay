@@ -18,7 +18,7 @@ function sessionsTable(rows, { showWs = true } = {}) {
       <td class="mono" data-l="Ouverte">${C.fdt(s.debut)}</td><td data-l="Vue">${C.ago(s.vu)}</td>
       <td data-l="Statut">${s.active ? '<span class="pill pill-sm pill-ok">Active</span>' : `<span class="muted t-xs">${esc(END[s.motifFin] || s.motifFin || 'Expirée')}</span>`}</td>
       <td class="col-act">${s.active ? `<button class="btn btn-ghost btn-xs" data-revs="${esc(s.id)}">Fermer</button>` : ''}</td></tr>`),
-    { empty: 'Aucune session.' });
+    { empty: 'Aucune session.', compact: !showWs });
 }
 function devicesTable(rows, { showWs = true } = {}) {
   return C.table([...(showWs ? ['Espace'] : []), 'Utilisateur', 'Appareil', 'Modèle', 'Statut', 'Première IP', 'Dernière IP', 'Pays', 'Vu la 1re fois', 'Dernière utilisation', { html: '<span class="sr-only">Actions</span>' }],
@@ -31,7 +31,7 @@ function devicesTable(rows, { showWs = true } = {}) {
       <td class="col-act"><div class="row-12" style="gap:4px">${d.statut !== 'approuve' && d.statut !== 'revoque' ? `<button class="btn btn-primary btn-xs" data-dev="approve" data-id="${esc(d.id)}">Approuver</button>` : ''}
         ${d.statut === 'en_attente' ? `<button class="btn btn-ghost btn-xs" data-dev="refuse" data-id="${esc(d.id)}">Refuser</button>` : ''}
         ${['approuve', 'connu'].includes(d.statut) ? `<button class="btn btn-ghost btn-xs" data-dev="revoke" data-id="${esc(d.id)}">Révoquer</button>` : ''}</div></td></tr>`),
-    { empty: 'Aucun appareil.' });
+    { empty: 'Aucun appareil.', compact: !showWs });
 }
 function wireRows(el, reload) {
   $$('[data-revs]', el).forEach(b => b.addEventListener('click', async () => {
