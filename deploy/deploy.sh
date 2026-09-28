@@ -97,6 +97,6 @@ else
 fi
 
 # ---- 5. nettoyage : versions et sauvegardes de pré-déploiement au-delà de KEEP_RELEASES
-ls -1dt "$RELEASES"/*/ 2>/dev/null | grep -v '\.echec/$' | tail -n +"$((KEEP_RELEASES + 1))" | while read -r d; do [ "${d%/}" != "$(readlink "$CURRENT")" ] && rm -rf "$d"; done
-ls -1t "$PREDEPLOY"/*.db 2>/dev/null | tail -n +"$((KEEP_RELEASES + 1))" | while read -r f; do rm -f "$f"; done
+ls -1dt "$RELEASES"/*/ 2>/dev/null | grep -v '\.echec/$' | tail -n +"$((KEEP_RELEASES + 1))" | while read -r d; do [ "${d%/}" != "$(readlink "$CURRENT")" ] && rm -rf "$d"; done || true
+ls -1t "$PREDEPLOY"/*.db 2>/dev/null | tail -n +"$((KEEP_RELEASES + 1))" | while read -r f; do rm -f "$f"; done || true
 say "Terminé."
