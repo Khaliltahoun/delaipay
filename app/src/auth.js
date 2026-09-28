@@ -12,7 +12,8 @@ const PROD = process.env.NODE_ENV === 'production';
 // chaque redémarrage invaliderait toutes les sessions — on échoue explicitement.
 function loadSecret() {
   if (process.env.JWT_SECRET) return process.env.JWT_SECRET;
-  const p = path.join(__dirname, '..', 'data', '.secret');
+  // Secret persistant à côté de la BASE (et non du code) : survit aux déploiements par versions (releases/<id>).
+  const p = path.join(path.dirname(require('./db').DB_PATH), '.secret');
   try { return fs.readFileSync(p, 'utf8'); }
   catch (_) {
     const s = require('crypto').randomBytes(48).toString('hex');

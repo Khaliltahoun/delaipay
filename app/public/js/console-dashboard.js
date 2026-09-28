@@ -6,6 +6,7 @@ const dur = s => { const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 6
 C.views.dash = async (el) => {
   const [d, act] = await Promise.all([C.api('GET', '/dashboard'), C.api('GET', '/support/active')]);
   const badge = $('#sigBadge'); badge.textContent = d.signaux; badge.classList.toggle('hidden', !d.signaux);
+  const b = d.systeme.sauvegarde;
   const kpi = (lbl, val, sub = '', tone = '', go = '') => `<div class="kpi ${tone} ${go ? 'clk' : ''}" ${go ? `data-go="${go}" role="button" tabindex="0"` : ''}><div class="lbl">${esc(lbl)}</div><div class="val">${val}</div>${sub ? `<div class="sub">${sub}</div>` : ''}</div>`;
   const a = d.abonnements, s = d.systeme;
   el.innerHTML = C.pageHead('Tableau de bord', `Plateforme DelaiPay — ${C.int(d.espaces.total)} espace(s). Aucun chiffre comptable des clients n’est affiché ici.`,
@@ -21,6 +22,7 @@ C.views.dash = async (el) => {
       ${kpi('Échecs et blocages · 24 h', `${C.int(d.echecs24h)} <small>/ ${C.int(d.bloquees24h)} bloquée(s)</small>`, '', d.echecs24h || d.bloquees24h ? 'late' : '', 'activity')}
       ${kpi('Appareils en attente', C.int(d.appareilsEnAttente), 'à approuver', d.appareilsEnAttente ? 'warn' : '', 'sessions/devices/en_attente')}
       ${kpi('Accès d’assistance actifs', C.int(d.accesSupportActifs), '', d.accesSupportActifs ? 'warn' : '')}
+      ${kpi('Dernière sauvegarde', b.configure && b.derniere ? `${String(b.ageHeures).replace('.', ',')} <small>h</small>` : '—', b.configure ? (b.derniere ? C.bytes(b.derniere.taille) : 'aucune réussie') : 'non configurée', b.alerte || !b.configure ? 'late' : '')}
     </div>
     <div class="cons-grid">
       <div class="card"><div class="card-h"><h3>Renouvellements dans les 30 jours</h3></div><div class="card-b" style="padding:0">${C.table(['Espace', 'Échéance', { label: 'Montant', num: true }, 'Paiement'],
@@ -42,7 +44,11 @@ C.views.dash = async (el) => {
         <dt>Démarré</dt><dd>${C.fdt(s.startedAt)} · depuis ${dur(s.uptimeSec)}</dd>
         <dt>Base de données</dt><dd>${C.bytes(s.base.taille)} <span class="muted mono t-xs">${esc(s.base.fichier)}</span></dd>
         <dt>Erreurs depuis le démarrage</dt><dd>${s.errors ? `<b class="c-late">${C.int(s.errors)}</b>` : '0'}</dd>
-        <dt>Dernière sauvegarde</dt><dd>${s.sauvegarde.le ? `${C.fdt(s.sauvegarde.le)} <span class="muted mono t-xs">${esc(s.sauvegarde.fichier)}</span>` : `<span class="pill pill-sm pill-warn">${esc(s.sauvegarde.message)}</span>`}</dd>
+        <dt>Dernière sauvegarde</dt><dd>${(() => { const b = s.sauvegarde;
+          if (!b.configure) return `<span class="pill pill-sm pill-warn">${esc(b.message)}</span>`;
+          const ok = b.derniere ? `${C.fdt(b.derniere.at)} · ${C.bytes(b.derniere.taille)} <span class="muted t-xs">(il y a ${String(b.ageHeures).replace('.', ',')} h)</span>` : 'aucune réussie';
+          return `${b.alerte ? `<span class="pill pill-sm pill-late">${b.echec ? 'Échec' : 'En retard (> 26 h)'}</span> ` : '<span class="pill pill-sm pill-ok">À jour</span> '}${ok}${b.echec ? `<div class="t-xs c-late">Dernière tentative ${C.fdt(b.echec.at)} : ${esc(b.echec.error || '')}</div>` : ''}`; })()}</dd>
+        <dt>Disque (données)</dt><dd>${s.disque ? `${s.disque.alerte ? '<span class="pill pill-sm pill-late">Faible</span> ' : ''}${C.bytes(s.disque.libre)} libres sur ${C.bytes(s.disque.total)} (${String(s.disque.pctLibre).replace('.', ',')} %)` : '—'}</dd>
         <dt>Géolocalisation</dt><dd>${s.geoip ? 'Base GeoIP locale' : '— (aucune base locale)'}</dd>
         <dt>Proxy de confiance</dt><dd class="mono">${esc(s.proxyDeConfiance || 'aucun (X-Forwarded-For ignoré)')}</dd>
         <dt>Node.js</dt><dd class="mono">${esc(s.node)}</dd></dl></div></div>

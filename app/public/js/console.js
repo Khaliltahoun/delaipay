@@ -35,7 +35,7 @@ C.fromLocalInput = v => (v ? window.DPTime.fromLocalInput(v, C.tz) : null);
 C.money = n => n == null || isNaN(n) ? '—' : Number(n).toLocaleString('fr-FR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).replace(/\u202f|\u00a0/g, ' ') + ' <span class="dh">DH</span>';
 C.int = n => n == null ? '—' : Number(n).toLocaleString('fr-FR').replace(/\u202f|\u00a0/g, ' ');
 C.ago = s => { const d = toDate(s); if (!d) return '—'; const m = Math.round((Date.now() - d) / 60000); if (m < 1) return 'à l’instant'; if (m < 60) return `il y a ${m} min`; const h = Math.round(m / 60); if (h < 48) return `il y a ${h} h`; return C.fdt(s); };
-C.bytes = n => n == null ? '—' : n < 1024 ? n + ' o' : n < 1048576 ? (n / 1024).toFixed(1).replace('.', ',') + ' Ko' : (n / 1048576).toFixed(1).replace('.', ',') + ' Mo';
+C.bytes = n => n == null ? '—' : n < 1024 ? n + ' o' : n < 1048576 ? (n / 1024).toFixed(1).replace('.', ',') + ' Ko' : n < 1073741824 ? (n / 1048576).toFixed(1).replace('.', ',') + ' Mo' : (n / 1073741824).toFixed(1).replace('.', ',') + ' Go';
 
 /* ------------------------------------------------------------------ API */
 let lastActivity = Date.now(), idleSeconds = 900;
@@ -210,6 +210,7 @@ async function render() {
   $$('.nav-item').forEach(b => b.toggleAttribute('aria-current', b.dataset.view === view || (/^workspace/.test(view) && b.dataset.view === 'workspaces')));
   $$('.nav-item').forEach(b => { if (b.hasAttribute('aria-current')) b.setAttribute('aria-current', 'page'); });
   $('#crumbView').textContent = TITLES[view] || '';
+  refreshSystemAlerts();
   document.title = `${TITLES[view] || 'Console'} — Console DelaiPay`;
   const el = $('#view');
   el.innerHTML = '<div class="skel-page"><div class="skel skel-row"></div><div class="skel skel-row"></div><div class="skel skel-row"></div></div>';
@@ -218,6 +219,15 @@ async function render() {
   catch (e) { if (e.status === 401) return; el.innerHTML = `<div class="empty err"><div class="ic">${IC.warn}</div><h4>Affichage impossible</h4><p>${esc(e.message)}</p><div class="actions"><button class="btn btn-ghost" id="retry">Réessayer</button></div></div>`; $('#retry').addEventListener('click', render); }
 }
 window.addEventListener('hashchange', render);
+// Alertes système (sauvegarde en échec ou de plus de 26 h, disque faible) en tête de toutes les pages.
+let _alertsAt = 0;
+async function refreshSystemAlerts(force) {
+  if (!force && Date.now() - _alertsAt < 60e3) return; _alertsAt = Date.now();
+  try {
+    const r = await C.api('GET', '/system/alerts');
+    $('#bannerZone').innerHTML = r.alertes.map(a => `<div class="note note-danger" style="margin:10px 32px 0">${IC.warn}<div><div class="note-t">${a.type === 'disque' ? 'Disque' : 'Sauvegardes'}</div>${esc(a.message)}</div></div>`).join('');
+  } catch (_) {}
+}
 C.render = render;
 
 function tickIdle() {

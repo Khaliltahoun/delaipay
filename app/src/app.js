@@ -74,6 +74,7 @@ function createApp() {
   app.set('trust proxy', netu.trustProxySetting());
   app.disable('x-powered-by');
   app.disable('etag'); // ETag géré par express.static pour les assets ; désactivé sinon
+  app.use(runtime.requestId);   // X-Request-Id : corrèle une erreur signalée par un utilisateur et le journal du serveur
 
   // Console plateforme : sous-application isolée, choisie par l'hôte AVANT toute route d'espace.
   const consoleApp = require('./platform/router').createConsoleApp({ mountStatic, sendPage, version: VERSION });
@@ -114,8 +115,13 @@ function createApp() {
   // API
   app.use('/api', require('./api'));
 
-  // Health
-  app.get('/healthz', (req, res) => res.json({ ok: true, version: VERSION, ts: Date.now() }));
+  // Santé (surveillance externe, script de déploiement) : aucune donnée d'espace, aucun secret. 503 si la base ne répond pas.
+  app.get('/healthz', (req, res) => {
+    res.setHeader('Cache-Control', 'no-store');
+    let dbOk = false; try { dbOk = require('./db').db.prepare('SELECT 1 AS ok').get().ok === 1; } catch (_) {}
+    const snap = runtime.snapshot();
+    res.status(dbOk ? 200 : 503).json({ ok: dbOk, version: VERSION, commit: snap.commit, uptimeSec: snap.uptimeSec, db: dbOk ? 'ok' : 'indisponible', ts: Date.now() });
+  });
 
   // 404
   app.use((req, res) => {
@@ -125,10 +131,9 @@ function createApp() {
 
   // Filet de sécurité : ne jamais divulguer de trace au client.
   app.use((err, req, res, next) => {
-    runtime.countError();
-    console.error('Erreur non gérée :', err);
+    runtime.logError(req, err);
     if (res.headersSent) return next(err);
-    if (req.path.startsWith('/api')) return res.status(500).json({ error: 'L’opération n’a pas abouti à cause d’une erreur inattendue. Réessayez ; si le problème persiste, contactez votre administrateur.', code: 'erreur_serveur' });
+    if (req.path.startsWith('/api')) return res.status(500).json({ error: `L’opération n’a pas abouti à cause d’une erreur inattendue. Réessayez ; si le problème persiste, contactez votre administrateur (référence ${req.id}).`, code: 'erreur_serveur', requestId: req.id });
     res.status(500).send('Une erreur inattendue est survenue. Réessayez dans un instant.');
   });
   return app;

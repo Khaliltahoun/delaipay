@@ -12,7 +12,7 @@ const { uid } = require('./util');
 const tenant = require('./tenant');
 const permissions = require('./permissions');
 
-const LOGO_DIR = path.join(__dirname, '..', 'uploads', 'logos');
+const LOGO_DIR = path.join(require('./paths').UPLOADS_DIR, 'logos');
 const LOGO_MAX = 1024 * 1024; // 1 Mo
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const PASSWORD_MIN = 10;

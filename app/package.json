@@ -16,7 +16,11 @@
     "demo:reset": "node src/demo-reset.js",
     "platform:admin:create": "DP_PLATFORM_CLI_MODE=create node src/platform/cli.js",
     "platform:admin": "node src/platform/cli.js",
-    "platform:purge": "node src/retention-cli.js"
+    "platform:purge": "node src/retention-cli.js",
+    "backup": "node src/ops/backup.js",
+    "restore": "node src/ops/restore.js",
+    "verify:baseline": "node src/ops/verify-baseline.js",
+    "staging:seed": "node src/ops/staging-seed.js"
   },
   "engines": {
     "node": ">=22.5"

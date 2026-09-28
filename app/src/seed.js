@@ -8,7 +8,7 @@ const crypto = require('crypto');
 const { importWorkbook } = require('./importer');
 const { DEMO_CLIENT, DEMO_PERSONA, DEMO_CONVENTIONS, DEMO_SOURCE_NAME, demoWorkbookBuffer } = require('./demo-fixture');
 
-const UP = path.join(__dirname, '..', 'uploads');
+const UP = require('./paths').UPLOADS_DIR;
 fs.mkdirSync(UP, { recursive: true });
 
 const TAUX = [

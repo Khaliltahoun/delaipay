@@ -31,7 +31,7 @@ function footprint(cabinetId) {
     bytes += sizes[t] * n / totals[t];
   }
   let files = 0;
-  const up = path.join(__dirname, '..', '..', 'uploads');
+  const up = require('../paths').UPLOADS_DIR;
   for (const r of db.prepare('SELECT chemin FROM document WHERE cabinet_id=? AND chemin IS NOT NULL').all(cabinetId)) {
     try { files += fs.statSync(path.isAbsolute(r.chemin) ? r.chemin : path.join(up, r.chemin)).size; } catch (_) {}
   }

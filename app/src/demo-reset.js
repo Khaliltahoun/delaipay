@@ -55,7 +55,7 @@ function resetDemoWorkspace({ slug, confirm, env = process.env, now = new Date()
   db.exec(`VACUUM INTO '${backup.replace(/'/g, "''")}'`);
 
   // Fichiers à retirer après validation (documents importés, justificatifs, logo).
-  const UP = path.join(__dirname, '..', 'uploads');
+  const UP = require('./paths').UPLOADS_DIR;
   const files = [
     ...db.prepare('SELECT chemin f FROM document WHERE cabinet_id=? AND chemin IS NOT NULL').all(cab.id).map(r => r.f),
     ...db.prepare('SELECT fichier f FROM convention WHERE cabinet_id=? AND fichier IS NOT NULL').all(cab.id).map(r => r.f),
@@ -105,7 +105,7 @@ function prepareVerificationScenario({ slug, env = process.env }) {
     mapping: { numero: 0, designation: 1, mht: 2, tva: 3, ttc: 4, four_if: 5, four_nom: 6, four_ice: 7, taux_tva: 8, date_paiement: 10, date_facture: 11, delai_conv: 13 }, // correspondance proposée par l'assistant
     cabinetId: cab.id, entrepriseId: ent, annee: 2026, trimestre: 1, sourceName: 'scenario-verification-t1-2026.xlsx', userId: admin ? admin.id : null });
   const four = nom => db.prepare('SELECT id FROM fournisseur WHERE entreprise_id=? AND raison_sociale=?').get(ent, nom).id;
-  const UP = path.join(__dirname, '..', 'uploads'); fs.mkdirSync(UP, { recursive: true });
+  const UP = require('./paths').UPLOADS_DIR; fs.mkdirSync(UP, { recursive: true });
   // Justificatif PDF minimal (fictif) : lisible par un navigateur, sans sélecteur de fichiers.
   const pdf = n => { const f = uid('up') + '.pdf'; fs.writeFileSync(path.join(UP, f), Buffer.from(`%PDF-1.4\n1 0 obj<</Type/Catalog/Pages 2 0 R>>endobj 2 0 obj<</Type/Pages/Kids[3 0 R]/Count 1>>endobj 3 0 obj<</Type/Page/Parent 2 0 R/MediaBox[0 0 595 842]/Contents 4 0 R/Resources<</Font<</F1 5 0 R>>>>>>endobj 4 0 obj<</Length 60>>stream\nBT /F1 14 Tf 60 780 Td (Convention fictive de demonstration - ${n}) Tj ET\nendstream endobj 5 0 obj<</Type/Font/Subtype/Type1/BaseFont/Helvetica>>endobj\ntrailer<</Root 1 0 R>>\n%%EOF\n`, 'latin1')); return f; };
   const conv = (nom, o) => db.prepare(`INSERT INTO convention (id,cabinet_id,entreprise_id,fournisseur_id,objet,delai_convenu,statut,conforme,date_signature,date_debut,date_fin,fichier,fichier_nom)

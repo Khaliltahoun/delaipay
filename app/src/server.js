@@ -5,7 +5,10 @@ const { ensureSeed } = require('./seed');
 const PORT = process.env.PORT || 3000;
 const app = createApp();
 
-ensureSeed().then((info) => {
+// DELAIPAY_AUTO_SEED=0 (staging) : aucun compte ni client créé automatiquement au premier démarrage —
+// les données fictives du staging viennent de `npm run staging:seed`, le 1er administrateur plateforme de la CLI.
+const seed = process.env.DELAIPAY_AUTO_SEED === '0' ? Promise.resolve({ seeded: false }) : ensureSeed();
+seed.then((info) => {
   app.listen(PORT, () => {
     console.log('\n  ╭─────────────────────────────────────────────╮');
     console.log('  │   DelaiPay — SaaS délais de paiement 69-21   │');

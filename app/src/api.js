@@ -65,7 +65,7 @@ const heavyLimiter = rateLimit({ windowMs: 60 * 1000, max: 20,
 // relaie explicitement au middleware d'erreur (sinon la requête reste suspendue).
 const asyncHandler = fn => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
 
-const UP_DIR = path.join(__dirname, '..', 'uploads');
+const UP_DIR = require('./paths').UPLOADS_DIR;
 fs.mkdirSync(UP_DIR, { recursive: true });
 const upload = multer({ dest: UP_DIR, limits: { fileSize: 25 * 1024 * 1024 } });
 

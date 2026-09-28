@@ -13,18 +13,16 @@ function dbSize() {
   let n = 0; for (const s of ['', '-wal', '-shm']) { try { n += fs.statSync(DB_PATH + s).size; } catch (_) {} }
   return n;
 }
-/** Dernière sauvegarde : fichier le plus récent de BACKUP_DIR (aucune sauvegarde automatique n'est configurée par défaut). */
-function lastBackup() {
-  const dir = process.env.BACKUP_DIR;
-  if (!dir) return { configure: false, message: 'Aucune sauvegarde configurée' };
-  try {
-    const files = fs.readdirSync(dir).map(f => { const st = fs.statSync(path.join(dir, f)); return st.isFile() ? { f, t: st.mtimeMs, size: st.size } : null; }).filter(Boolean).sort((a, b) => b.t - a.t);
-    if (!files.length) return { configure: true, message: 'Aucune sauvegarde trouvée dans BACKUP_DIR' };
-    return { configure: true, fichier: files[0].f, le: new Date(files[0].t).toISOString(), taille: files[0].size };
-  } catch (_) { return { configure: true, message: 'BACKUP_DIR illisible' }; }
-}
-
 module.exports = function (api, { version } = {}) {
+  // Alertes système affichées en tête de toutes les pages de la console : sauvegarde en échec / en retard, disque.
+  api.get('/system/alerts', (req, res) => {
+    const b = runtime.backupStatus(DB_PATH), d = runtime.disk(path.dirname(DB_PATH));
+    const out = [];
+    if (b.configure && b.echec) out.push({ type: 'sauvegarde_echec', gravite: 'eleve', message: `Échec de la dernière sauvegarde (${b.echec.at}) : ${b.echec.error || 'erreur inconnue'}.`, at: b.echec.at });
+    else if (b.configure && b.enRetard) out.push({ type: 'sauvegarde_retard', gravite: 'eleve', message: b.derniere ? `Dernière sauvegarde réussie il y a ${b.ageHeures} h (plus de 26 h).` : 'Aucune sauvegarde réussie à ce jour.', at: b.derniere && b.derniere.at });
+    if (d && d.alerte) out.push({ type: 'disque', gravite: 'eleve', message: `Espace disque faible : ${Math.round(d.libre / 1024 ** 3 * 10) / 10} Go libres (${d.pctLibre} %).` });
+    res.json({ alertes: out, sauvegarde: b, disque: d });
+  });
   api.get('/dashboard', (req, res) => {
     const ws = views.list();
     const byStatus = { actif: 0, suspendu: 0, expire: 0, supprime: 0 };
@@ -47,7 +45,7 @@ module.exports = function (api, { version } = {}) {
       appareilsEnAttente: db.prepare(`SELECT COUNT(*) n FROM device WHERE statut='en_attente'`).get().n,
       accesSupportActifs: support.activeCount(),
       signaux: loginActivity.signals().length,
-      systeme: { version, ...runtime.snapshot(), node: process.version, base: { taille: dbSize(), fichier: path.basename(DB_PATH) }, sauvegarde: lastBackup(),
+      systeme: { version, ...runtime.snapshot(), node: process.version, base: { taille: dbSize(), fichier: path.basename(DB_PATH) }, sauvegarde: runtime.backupStatus(DB_PATH), disque: runtime.disk(path.dirname(DB_PATH)),
         geoip: require('../../geoip').configured(), proxyDeConfiance: process.env.TRUST_PROXY || null },
     });
   });

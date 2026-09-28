@@ -152,15 +152,14 @@ function createConsoleApp({ mountStatic, sendPage, version }) {
 
   api.use((req, res) => res.status(404).json({ error: 'Action inconnue.', code: 'route_inconnue' }));
   api.use((err, req, res, next) => {
-    require('../runtime').countError();
-    console.error('Erreur console :', err);
+    if (!err.status) require('../runtime').logError(req, err);
     if (res.headersSent) return next(err);
     res.status(err.status || 500).json({ error: err.status ? err.message : 'L’opération n’a pas abouti. Réessayez.', code: err.code || 'erreur_serveur' });
   });
 
   app.use('/api/platform', api);
   app.get('/', (req, res) => sendPage(res, 'console'));
-  app.get('/healthz', (req, res) => res.json({ ok: true }));
+  app.get('/healthz', (req, res) => { res.setHeader('Cache-Control', 'no-store'); res.json({ ok: true }); });
   // Toute autre adresse de l'hôte console : 404 (jamais une page ou une API d'espace).
   app.use((req, res) => {
     if (req.path.startsWith('/api')) return res.status(404).json({ error: 'Action inconnue.', code: 'route_inconnue' });

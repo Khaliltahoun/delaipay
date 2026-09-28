@@ -14,7 +14,7 @@ const tenant = require('../../tenant');
 const views = require('../workspaces');
 const netu = require('../../net');
 
-const upload = multer({ dest: path.join(__dirname, '..', '..', '..', 'uploads'), limits: { fileSize: 1024 * 1024 } });
+const upload = multer({ dest: require('../../paths').UPLOADS_DIR, limits: { fileSize: 1024 * 1024 } });
 const actorLabel = req => `Équipe DelaiPay (${req.padmin.email})`;
 const err = (res, e) => res.status(e.status || 400).json({ error: e.message, code: e.code || 'refuse' });
 const cab = id => db.prepare('SELECT * FROM cabinet WHERE id=?').get(id);
