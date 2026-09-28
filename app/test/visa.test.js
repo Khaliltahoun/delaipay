@@ -60,3 +60,14 @@ test('visa : ville de signature tirée de l’adresse de l’espace (P3-11), rep
   assert.match(text(none), /\nLe \d{2}\/\d{2}\/\d{4}\n/);
   for (const d of [withCity, none]) assert.ok(!text(d).includes('Marrakech'), 'plus aucune ville codée en dur');
 });
+
+test('visa : date de la lettre = jour local de l’espace (23:30 UTC → lendemain au Maroc), jamais celui du serveur', () => {
+  const at = new Date('2026-09-27T23:30:00Z');
+  const ma = visa.buildData({ ...base, conclusion: 'Sans observation', adresseCabinet: '45 rue Ibn Batouta, 90000 Tanger', fuseau: 'Africa/Casablanca', maintenant: at });
+  assert.equal(ma.date, '28/09/2026');
+  assert.match(text(ma), /\nTanger le 28\/09\/2026\n/);
+  assert.equal(visa.buildData({ ...base, conclusion: 'Sans observation', fuseau: 'UTC', maintenant: at }).date, '27/09/2026');
+  assert.equal(visa.buildData({ ...base, conclusion: 'Sans observation', maintenant: at }).date, '28/09/2026', 'défaut Africa/Casablanca');
+  // Ramadan (UTC+0) : 23:30 UTC reste le même jour.
+  assert.equal(visa.buildData({ ...base, conclusion: 'Sans observation', maintenant: new Date('2026-03-01T23:30:00Z') }).date, '01/03/2026');
+});

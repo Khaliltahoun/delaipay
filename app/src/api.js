@@ -1910,8 +1910,9 @@ function visaData(req, e) {
   let data = null, erreur = null;
   if (conclusion) {
     // P3-11 : ville de signature tirée de l'adresse de l'espace (Paramètres → Espace de travail).
-    const adresseCabinet = (db.prepare('SELECT adresse FROM cabinet WHERE id=?').get(req.cabinetId) || {}).adresse || null;
-    try { data = visa.buildData({ e, annee: p.annee, trimestre: p.trimestre, montant: declaration.montant_total_ttc, conclusion, signataire, type: visaOf(e.ca_ht), observations, adresseCabinet }); }
+    const cabV = db.prepare('SELECT adresse, fuseau_horaire FROM cabinet WHERE id=?').get(req.cabinetId) || {};
+    const adresseCabinet = cabV.adresse || null;
+    try { data = visa.buildData({ e, annee: p.annee, trimestre: p.trimestre, montant: declaration.montant_total_ttc, conclusion, signataire, type: visaOf(e.ca_ht), observations, adresseCabinet, fuseau: cabV.fuseau_horaire || 'Africa/Casablanca' }); }
     catch (err) { if (!(err instanceof visa.VisaError)) throw err; erreur = { error: err.message, code: err.code }; }
   }
   return { p, declaration, data, conclusion, signataire, erreur };

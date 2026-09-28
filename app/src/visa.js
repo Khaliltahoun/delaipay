@@ -56,7 +56,7 @@ function periodeDates(annee, trimestre) {
 }
 
 /** Construit les blocs du visa à partir des données de la déclaration. */
-function buildData({ e, annee, trimestre, montant, conclusion, signataire, type, observations, adresseCabinet }) {
+function buildData({ e, annee, trimestre, montant, conclusion, signataire, type, observations, adresseCabinet, fuseau, maintenant }) {
   if (!CONCLUSIONS.includes(conclusion))
     throw new VisaError(`Conclusion du visa ${conclusion ? `« ${conclusion} » non reconnue` : 'manquante'} : choisissez « Sans observation », « Avec observation », « Avec réserve » ou « Refus de visa ».`, 'conclusion_invalide');
   const obs = normalizeObservations(conclusion, observations);
@@ -67,7 +67,9 @@ function buildData({ e, annee, trimestre, montant, conclusion, signataire, type,
   const isCAC = type === 'CAC';
   const roleTitle = isCAC ? 'du commissaire aux comptes' : "de l'expert-comptable";
   const role = isCAC ? 'commissaire aux comptes' : 'expert-comptable';
-  const today = frDate(new Date());
+  // Date de la lettre : jour LOCAL de l'espace (fuseau IANA, module partagé src/time-format.js), jamais celui du serveur
+  // (3B, autorisation du fondateur) — à 23:30 UTC, la lettre porte déjà la date marocaine du lendemain.
+  const today = require('./time-format').formatDate((maintenant || new Date()).toISOString(), fuseau || 'Africa/Casablanca');
   const lieu = cityFromAddress(adresseCabinet);
   const art = "l'article 2.78 de la loi 69-21";
 
