@@ -9,7 +9,8 @@ const app = createApp();
 // les données fictives du staging viennent de `npm run staging:seed`, le 1er administrateur plateforme de la CLI.
 const seed = process.env.DELAIPAY_AUTO_SEED === '0' ? Promise.resolve({ seeded: false }) : ensureSeed();
 seed.then((info) => {
-  app.listen(PORT, () => {
+  // HOST=127.0.0.1 en déploiement : l'application n'écoute que localement, nginx est le seul point d'entrée public.
+  app.listen(PORT, process.env.HOST || undefined, () => {
     console.log('\n  ╭─────────────────────────────────────────────╮');
     console.log('  │   DelaiPay — SaaS délais de paiement 69-21   │');
     console.log('  ╰─────────────────────────────────────────────╯');

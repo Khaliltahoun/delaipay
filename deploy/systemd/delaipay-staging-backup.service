@@ -1,0 +1,21 @@
+# /etc/systemd/system/delaipay-staging-backup.service — sauvegarde chiffrée quotidienne (déclenchée par le .timer).
+[Unit]
+Description=DelaiPay staging — sauvegarde chiffrée
+After=delaipay-staging.service
+
+[Service]
+Type=oneshot
+User=delaipay-staging
+Group=delaipay-staging
+WorkingDirectory=/srv/delaipay-staging/current/app
+EnvironmentFile=/etc/delaipay-staging/staging.env
+ExecStart=/usr/bin/node src/ops/backup.js
+Nice=10
+IOSchedulingClass=idle
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/var/lib/delaipay-staging /var/backups/delaipay-staging
+StandardOutput=append:/var/log/delaipay-staging/backup.log
+StandardError=append:/var/log/delaipay-staging/backup.log

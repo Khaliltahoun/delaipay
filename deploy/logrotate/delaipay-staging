@@ -1,0 +1,15 @@
+# /etc/logrotate.d/delaipay-staging — journaux de l'application, des sauvegardes et des déploiements.
+# copytruncate : systemd écrit en mode « append » sur le fichier, sans signal de réouverture.
+/var/log/delaipay-staging/*.log /srv/delaipay-staging/deploy.log {
+    daily
+    rotate 30
+    maxsize 50M
+    missingok
+    notifempty
+    compress
+    delaycompress
+    copytruncate
+    dateext
+    su delaipay-staging delaipay-staging
+    create 0640 delaipay-staging delaipay-staging
+}

@@ -1,0 +1,49 @@
+# /etc/systemd/system/delaipay-staging.service — DelaiPay STAGING (isolé de la production).
+# Installation : voir docs/STAGING.md §6.  Vérifier : systemd-analyze verify delaipay-staging.service
+[Unit]
+Description=DelaiPay staging (admin.staging / *.staging.delaipay.com)
+After=network-online.target
+Wants=network-online.target
+StartLimitIntervalSec=300
+StartLimitBurst=5
+
+[Service]
+Type=simple
+User=delaipay-staging
+Group=delaipay-staging
+WorkingDirectory=/srv/delaipay-staging/current/app
+# Variables (secrets compris) : fichier root:delaipay-staging 0640, jamais dans le dépôt ni dans les versions.
+EnvironmentFile=/etc/delaipay-staging/staging.env
+ExecStart=/usr/bin/node src/server.js
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=20
+# Limites de ressources (staging : une petite instance)
+MemoryMax=768M
+MemoryHigh=640M
+CPUQuota=150%
+TasksMax=200
+LimitNOFILE=8192
+# Durcissement
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+RestrictNamespaces=true
+LockPersonality=true
+SystemCallArchitectures=native
+CapabilityBoundingSet=
+AmbientCapabilities=
+UMask=0027
+# Seuls répertoires inscriptibles : données (base, téléversements, exports) et journaux.
+ReadWritePaths=/var/lib/delaipay-staging /var/log/delaipay-staging
+StandardOutput=append:/var/log/delaipay-staging/app.log
+StandardError=append:/var/log/delaipay-staging/app.log
+
+[Install]
+WantedBy=multi-user.target
