@@ -4,8 +4,9 @@ const fs = require('fs');
 const { DatabaseSync } = require('node:sqlite');
 
 const DATA_DIR = path.join(__dirname, '..', 'data');
-fs.mkdirSync(DATA_DIR, { recursive: true });
 const DB_PATH = process.env.DB_PATH || path.join(DATA_DIR, 'delaipay.db');
+// Seul le répertoire de la base est créé : sous systemd durci, le code déployé (releases/<id>) est en lecture seule.
+fs.mkdirSync(path.dirname(DB_PATH), { recursive: true });
 
 const db = new DatabaseSync(DB_PATH);
 db.exec('PRAGMA journal_mode = WAL;');
