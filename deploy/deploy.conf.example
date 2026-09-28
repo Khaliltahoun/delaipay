@@ -1,0 +1,8 @@
+# /srv/delaipay-staging/deploy.conf — paramètres NON SECRETS du script de déploiement (propriétaire delaipay-staging, 0600).
+# Aucun secret ici : le fichier d'environnement du service (/etc/delaipay-staging/staging.env) reste lisible par root seul.
+# Dépôt en lecture seule (clé de déploiement GitHub « read-only » de delaipay-staging, ~/.ssh/deploy_key)
+REPO_URL=git@github.com:OWNER/delaipay.git
+# Doit être IDENTIQUE à DB_PATH du fichier d'environnement du service
+DB_PATH=/srv/delaipay-staging/shared/data/delaipay.db
+HEALTH_URL=http://127.0.0.1:4200/healthz
+KEEP_RELEASES=5

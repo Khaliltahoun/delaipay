@@ -109,3 +109,12 @@ test('santé : /healthz sans secret ni donnée d’espace, identifiant de requê
   assert.equal(r.status, 200); assert.equal(r.rid, 'abcdef123456'); assert.equal(r.body.ok, true); assert.equal(r.body.db, 'ok');
   assert.deepEqual(Object.keys(r.body).sort(), ['commit', 'db', 'ok', 'ts', 'uptimeSec', 'version']);
 });
+
+test('déploiement : les migrations de schéma tournent SANS aucun secret (fichier d’environnement illisible par le déployeur)', () => {
+  const dir = fs.mkdtempSync(path.join(ROOT, 'mig-'));
+  const env = { PATH: process.env.PATH, HOME: dir, NODE_ENV: 'production', DB_PATH: path.join(dir, 'x.db') };
+  const out = execFileSync(process.execPath, [path.join(APP, 'src', 'ops', 'migrate-schema.js')], { env, stdio: 'pipe' }).toString();
+  assert.match(out, /Schéma à jour : \d+ tables/);
+  assert.ok(!fs.existsSync(path.join(dir, '.platform-key')), 'aucune clé plateforme générée ni lue');
+  assert.ok(!fs.existsSync(path.join(dir, '.secret')), 'aucun secret JWT généré ni lu');
+});

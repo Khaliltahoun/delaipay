@@ -59,8 +59,9 @@ W="$(cd "$(dirname "$0")" && pwd)"
 ( set -a; . "$W/staging.env"; set +a; cd "$W/root/current/app"; nohup node src/server.js >>"$W/logs/app.log" 2>&1 & echo $! > "$W/app.pid" )
 EOF
 chmod +x restart.sh
-export DEPLOY_ROOT="$WORK/root" REPO_URL="$WORK/origin.git" ENV_FILE="$WORK/staging.env" RESTART_CMD="$WORK/restart.sh" \
-  HEALTH_URL="http://127.0.0.1:$PORT/healthz" HEALTH_TRIES=8 NPM_CI_CMD="cp -R '$REPO/app/node_modules' ."
+# Paramètres NON secrets du déploiement : deploy.sh ne lit jamais staging.env (réservé au « service », ici restart.sh).
+printf 'REPO_URL=%s\nDB_PATH=%s\nHEALTH_URL=%s\n' "$WORK/origin.git" "$WORK/data/delaipay.db" "http://127.0.0.1:$PORT/healthz" > root/deploy.conf
+export DEPLOY_ROOT="$WORK/root" RESTART_CMD="$WORK/restart.sh" HEALTH_TRIES=8 NPM_CI_CMD="cp -R '$REPO/app/node_modules' ."
 
 step "1. Déploiement du commit sain (tests complets, sauvegarde, migrations, santé)"
 "$REPO/deploy/deploy.sh" "$GOOD" | sed 's/^/    /'

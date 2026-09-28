@@ -74,22 +74,25 @@ function loadKey() {
   catch (e) { if (process.env.NODE_ENV === 'production') throw new Error('PLATFORM_SECRET_KEY manquante et impossible à persister (.platform-key).'); }
   return k;
 }
-const KEY = loadKey();
+// Clé chargée à la PREMIÈRE utilisation (et non au chargement du module) : les migrations de schéma lancées par le
+// script de déploiement n'ont pas accès aux secrets (fichier d'environnement root:root 600) et n'en ont pas besoin.
+let _key = null;
+const key = () => (_key || (_key = loadKey()));
 function seal(plain) {
   const iv = crypto.randomBytes(12);
-  const c = crypto.createCipheriv('aes-256-gcm', KEY, iv);
+  const c = crypto.createCipheriv('aes-256-gcm', key(), iv);
   const enc = Buffer.concat([c.update(String(plain), 'utf8'), c.final()]);
   return ['v1', iv.toString('base64url'), c.getAuthTag().toString('base64url'), enc.toString('base64url')].join('.');
 }
 function open(sealed) {
   const [v, iv, tag, enc] = String(sealed || '').split('.');
   if (v !== 'v1') throw new Error('Secret illisible');
-  const d = crypto.createDecipheriv('aes-256-gcm', KEY, Buffer.from(iv, 'base64url'));
+  const d = crypto.createDecipheriv('aes-256-gcm', key(), Buffer.from(iv, 'base64url'));
   d.setAuthTag(Buffer.from(tag, 'base64url'));
   return Buffer.concat([d.update(Buffer.from(enc, 'base64url')), d.final()]).toString('utf8');
 }
 const sha256 = s => crypto.createHash('sha256').update(String(s)).digest('hex');
-const pepper = s => crypto.createHmac('sha256', KEY).update(String(s)).digest('hex');
+const pepper = s => crypto.createHmac('sha256', key()).update(String(s)).digest('hex');
 
 /* ------------------------------------------------------------------ réglages */
 function getSetting(cle, def = null) {

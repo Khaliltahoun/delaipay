@@ -2,22 +2,28 @@
 # =====================================================================================================
 # DelaiPay — déploiement par versions (staging), avec sauvegarde, tests, santé et retour arrière automatique.
 #
-#   sudo -u delaipay-staging /srv/delaipay-staging/deploy.sh <commit|tag|branche>
+#   (connecté en SSH comme delaipay-staging)  /srv/delaipay-staging/deploy.sh <commit|tag|branche>
+#
+# Tourne SANS aucun secret : le fichier d'environnement (root:root 600) n'est lu que par systemd au démarrage du
+# service. Les seules informations nécessaires (chemins, URL de santé, dépôt) sont dans DEPLOY_CONF, non secret.
+# Seule action privilégiée : « sudo -n systemctl restart delaipay-staging.service » (règle sudoers limitée à cette commande).
 #
 # Étapes : verrou → récupération du commit (miroir git local) → nouvelle version dans releases/<date>-<sha>
 #          → npm ci → suite de tests complète (environnement vierge) → sauvegarde de la base (API SQLite)
 #          → migrations additives → bascule du lien « current » → redémarrage → contrôle de santé
 #          (HTTP 200 + commit attendu) → en cas d'échec : retour à la version précédente, redémarrage, contrôle.
-# Aucune donnée n'est dans les versions : base, téléversements et secrets sont dans DATA / ENV_FILE.
+# Aucune donnée n'est dans les versions : base et téléversements dans shared/, secrets dans le fichier d'environnement du service (lu par systemd seul).
 # =====================================================================================================
 set -Eeuo pipefail
 REF="${1:?Usage : deploy.sh <commit|tag|branche>}"
 
 DEPLOY_ROOT="${DEPLOY_ROOT:-/srv/delaipay-staging}"
-REPO_URL="${REPO_URL:?REPO_URL requis (dépôt git en lecture seule, ex. clé de déploiement)}"
-ENV_FILE="${ENV_FILE:-/etc/delaipay-staging/staging.env}"
-SERVICE="${SERVICE:-delaipay-staging}"
-RESTART_CMD="${RESTART_CMD:-sudo /usr/bin/systemctl restart ${SERVICE}}"
+DEPLOY_CONF="${DEPLOY_CONF:-$DEPLOY_ROOT/deploy.conf}"
+# Paramètres non secrets : REPO_URL, DB_PATH, HEALTH_URL… (les variables déjà définies dans l'environnement priment)
+if [ -r "$DEPLOY_CONF" ]; then while IFS='=' read -r k v || [ -n "$k" ]; do case "$k" in ''|\#*) continue;; esac; [ -z "${!k:-}" ] && export "$k=$v"; done < "$DEPLOY_CONF"; fi
+REPO_URL="${REPO_URL:?REPO_URL requis (dépôt git en lecture seule, ex. clé de déploiement) — dans $DEPLOY_CONF}"
+SERVICE="${SERVICE:-delaipay-staging.service}"
+RESTART_CMD="${RESTART_CMD:-sudo -n /usr/bin/systemctl restart ${SERVICE}}"
 HEALTH_URL="${HEALTH_URL:-http://127.0.0.1:4200/healthz}"
 HEALTH_TRIES="${HEALTH_TRIES:-30}"
 KEEP_RELEASES="${KEEP_RELEASES:-5}"
@@ -35,10 +41,8 @@ LOCK="$DEPLOY_ROOT/.deploy.lock"
 if ! mkdir "$LOCK" 2>/dev/null; then say "Un déploiement est déjà en cours ($LOCK)."; exit 1; fi
 trap 'rmdir "$LOCK" 2>/dev/null || true' EXIT
 
-# ---- environnement de l'application (fichier root:delaipay-staging 0640, lu ici pour DB_PATH et la santé)
-[ -r "$ENV_FILE" ] || { say "ENV_FILE illisible : $ENV_FILE"; exit 1; }
-set -a; . "$ENV_FILE"; set +a
-: "${DB_PATH:?DB_PATH absent de $ENV_FILE}"
+# ---- base de données (chemin non secret, identique à celui du fichier d'environnement du service)
+: "${DB_PATH:?DB_PATH absent de $DEPLOY_CONF}"
 
 # ---- 1. récupération du commit
 if [ -d "$MIRROR" ]; then git --git-dir="$MIRROR" fetch --prune --tags origin '+refs/heads/*:refs/heads/*' >/dev/null
@@ -68,7 +72,7 @@ if [ -f "$DB_PATH" ]; then
   ( cd "$NEW/app" && node -e "require('node:sqlite').backup(new (require('node:sqlite').DatabaseSync)(process.argv[1]), process.argv[2]).then(()=>process.exit(0),e=>{console.error(e);process.exit(1)})" "$DB_PATH" "$BK" )
   chmod 600 "$BK"; say "Base sauvegardée avant migration : $BK"
 fi
-( cd "$NEW/app" && node src/ops/migrate-schema.js && node src/migrate.js >/dev/null )
+( cd "$NEW/app" && DB_PATH="$DB_PATH" node src/ops/migrate-schema.js && DB_PATH="$DB_PATH" node src/migrate.js >/dev/null )
 
 # ---- 4. bascule + redémarrage + santé
 switch_to() { ln -sfn "$1" "$CURRENT.tmp" && mv -Tf "$CURRENT.tmp" "$CURRENT" 2>/dev/null || { rm -f "$CURRENT"; ln -s "$1" "$CURRENT"; }; }

@@ -1,19 +1,25 @@
 
 0. Dépôt source local (commit sain + commit volontairement cassé)
-  ✔ sain 7c7dff2 · cassé 9078c1d
+  ✔ sain a00dba2 · cassé f1512fb
 
 1. Déploiement du commit sain (tests complets, sauvegarde, migrations, santé)
     Cloning into bare repository '$WORK/root/repo.git'...
     done.
-    [2026-09-28T18:40:25Z] Déploiement de 7c7dff2d0e36773b8be082b2dcb48f307f3a701c → 7c7dff2d0e36773b8be082b2dcb48f307f3a701c (précédente : aucune)
-    [2026-09-28T18:40:26Z] Suite de tests…
-    [2026-09-28T18:40:38Z] Tests : ℹ pass 318 ℹ fail 0 
+    [2026-09-28T20:04:49Z] Déploiement de a00dba2b97e5681107eb9e9ad26c55192cb27bf1 → a00dba2b97e5681107eb9e9ad26c55192cb27bf1 (précédente : aucune)
+    [2026-09-28T20:04:50Z] Suite de tests…
+    [2026-09-28T20:05:02Z] Tests : ℹ pass 318 ℹ fail 0 
     Schéma à jour : 30 tables · $WORK/data/delaipay.db
-    [2026-09-28T18:40:42Z] Santé OK — version 7c7dff2 en service.
-    [2026-09-28T18:40:42Z] Terminé.
-  ✔ santé : commit 7c7dff2 en service
+    (node:81371) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+    (Use `node --trace-warnings ...` to show where the warning was created)
+    (node:81372) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+    (Use `node --trace-warnings ...` to show where the warning was created)
+    [2026-09-28T20:05:06Z] Santé OK — version a00dba2 en service.
+    [2026-09-28T20:05:06Z] Terminé.
+  ✔ santé : commit a00dba2 en service
 
 2. Données fictives du staging + référence
+(node:81409) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
       (seed) Cabinet HLZ + client de démonstration STE ORYX AUTO SARL · 36 facture(s) importée(s).
     Staging : données FICTIVES créées. Mots de passe affichés UNE seule fois — à conserver dans votre gestionnaire de mots de passe :
       hlz-demo  admin     admin@hlz.demo           ********
@@ -23,18 +29,26 @@
       client2   lecture   lecture@client2.demo     ********
     Factures : hlz-demo 36, client2 36. Administrateurs plateforme : 0 (créez le premier avec npm run platform:admin:create).
   ✔ référence sur le staging : 36 · 16 · 350 964,42 · 7 025,33 · md5 a7d1acaa…
+(node:81415) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
     Administrateur plateforme créé : ops@staging.test
 
 3. Déploiement d'un commit CASSÉ → retour arrière automatique
-    [2026-09-28T18:40:43Z] Déploiement de bad → 9078c1db9aeee4c6e9dca571ff61d00cdde9d96d (précédente : $WORK/root/releases/20260928-184025-7c7dff2)
-    [2026-09-28T18:40:44Z] Suite de tests…
-    [2026-09-28T18:40:56Z] Tests : ℹ pass 318 ℹ fail 0 
-    [2026-09-28T18:40:56Z] Base sauvegardée avant migration : $WORK/root/pre-deploy/20260928-184043-9078c1d.db
+    [2026-09-28T20:05:07Z] Déploiement de bad → f1512fba908c913a94e8ad2115c5dcf23103172e (précédente : $WORK/root/releases/20260928-200449-a00dba2)
+    [2026-09-28T20:05:08Z] Suite de tests…
+    [2026-09-28T20:05:20Z] Tests : ℹ pass 318 ℹ fail 0 
+    (node:81620) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+    (Use `node --trace-warnings ...` to show where the warning was created)
+    [2026-09-28T20:05:20Z] Base sauvegardée avant migration : $WORK/root/pre-deploy/20260928-200507-f1512fb.db
     Schéma à jour : 30 tables · $WORK/data/delaipay.db
-    [2026-09-28T18:41:14Z] ÉCHEC du contrôle de santé de 9078c1d — RETOUR ARRIÈRE.
-    [2026-09-28T18:41:17Z] Retour arrière réussi : 7c7dff2 de nouveau en service.
+    (node:81624) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+    (Use `node --trace-warnings ...` to show where the warning was created)
+    (node:81625) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+    (Use `node --trace-warnings ...` to show where the warning was created)
+    [2026-09-28T20:05:38Z] ÉCHEC du contrôle de santé de f1512fb — RETOUR ARRIÈRE.
+    [2026-09-28T20:05:41Z] Retour arrière réussi : a00dba2 de nouveau en service.
   ✔ deploy.sh a signalé l'échec (code 2)
-  ✔ retour arrière : 7c7dff2 de nouveau en service
+  ✔ retour arrière : a00dba2 de nouveau en service
   ✔ lien current → version saine
   ✔ version cassée conservée pour analyse (.echec)
   ✔ sauvegarde de pré-déploiement présente
@@ -54,9 +68,13 @@
   ✔ /healthz reste ouvert (surveillance externe)
 
 5. Sauvegarde chiffrée → restauration dans un répertoire neuf → référence
-    Sauvegarde réussie : delaipay-staging-20260928-184122Z.tar.gz.gpg (39753 octets, gpg, sha256 445cec40915c836f…) ; 0 ancienne(s) supprimée(s) ; hors site : non configuré.
+(node:81779) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+    Sauvegarde réussie : delaipay-staging-20260928-200546Z.tar.gz.gpg (39726 octets, gpg, sha256 68142be664ca5314…) ; 0 ancienne(s) supprimée(s) ; hors site : non configuré.
     Restauration réussie dans $WORK/restored
-      base : $WORK/restored/delaipay.db (intégrité ok, empreinte conforme au manifeste)
+      base : $TMPDIR/dp-staging-rehearsal/restored/delaipay.db (intégrité ok, empreinte conforme au manifeste)
+(node:81793) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
   ✔ base restaurée : référence et md5 identiques
   ✔ console : dernière sauvegarde réussie enregistrée
 
