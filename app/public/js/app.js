@@ -12,7 +12,14 @@ function money(n, dec = 2) {
   i = i.replace(/\B(?=(\d{3})+(?!\d))/g, ' ');
   return (neg ? '-' : '') + i + (dec ? ',' + f : '');
 }
-function dateFr(iso) { if (!iso) return '—'; const m = String(iso).match(/^(\d{4})-(\d{2})-(\d{2})/); return m ? `${m[3]}/${m[2]}/${m[1]}` : iso; }
+// Date seule : un INSTANT stocké (« AAAA-MM-JJ HH:MM:SS », UTC) est ramené au jour LOCAL de l'espace (src/time-format.js) ;
+// une date calendaire (« AAAA-MM-JJ » : facture, convention, échéance) est affichée telle quelle.
+function dateFr(iso) {
+  if (!iso) return '—';
+  const T = typeof window !== 'undefined' ? window.DPTime : null;
+  if (T && T.isInstant(String(iso))) return T.formatDate(String(iso), (typeof state !== 'undefined' && state.workspace && state.workspace.fuseauHoraire) || 'Africa/Casablanca');
+  const m = String(iso).match(/^(\d{4})-(\d{2})-(\d{2})/); return m ? `${m[3]}/${m[2]}/${m[1]}` : iso;
+}
 function pct(x) { return x == null ? '—' : (x * 100).toFixed(2).replace('.', ',') + ' %'; }
 
 /* Cache lecture (GET) : navigation entre vues instantanée, dédoublonnage des
@@ -239,7 +246,7 @@ const XICO = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-
  * Imposés par DelaiPay : non masquables, sans aucune incidence sur les données. */
 function renderPlatformBanner() {
   const p = state.plateforme; const z = $('#platformBanner'); if (!z || !p) return;
-  const fr = d => d ? String(d).slice(0, 10).split('-').reverse().join('/') : '';
+  const fr = d => dateFr(d);   // même formateur (dates calendaires d'abonnement)
   const hm = iso => tsLocal(iso);   // même fuseau (celui de l'espace) et même format que le journal d'audit
   const notes = [];
   for (const m of p.maintenance || []) notes.push(['info', 'info', m.portee === 'espace' ? 'Maintenance de votre espace' : 'Maintenance DelaiPay', m.message + (m.fin ? ` (fin prévue le ${hm(m.fin)})` : '')]);
@@ -806,7 +813,7 @@ async function renderDash() {
     </div>
     <div class="card"><div class="card-h"><div><h3>Activité récente</h3><div class="sub">journal d'audit du cabinet</div></div><button class="btn btn-quiet btn-sm" data-goto="audit">Tout voir</button></div>
       <div class="card-b py-4">${acts.length ? acts.map(a => `<div class="act"><span class="a-dot" style="background:${/cloture|delete|annulation/.test(a.action) ? 'var(--locked)' : /reouverture/.test(a.action) ? 'var(--warn)' : 'var(--brand-500)'}"></span>
-        <div class="a-body"><b>${esc(ACT[a.action] || a.action)}</b>${a.entite ? ` <span class="dh">· ${esc(a.entite)}</span>` : ''}<div class="dh t-xs">${esc(a.user_nom || '—')}</div></div><span class="a-time">${esc(tsLocal(a.created_at))}</span></div>`).join('')
+        <div class="a-body"><b>${esc(ACT[a.action] || AUDIT_LBL[a.action] || a.action)}</b>${a.entite ? ` <span class="dh">· ${esc(ENTITE_LBL[a.entite] || a.entite)}</span>` : ''}<div class="dh t-xs">${esc(a.user_nom || '—')}</div></div><span class="a-time">${esc(tsLocal(a.created_at))}</span></div>`).join('')
         : '<div class="empty p-24"><p>Aucune activité enregistrée.</p></div>'}</div>
     </div>
   </div>`;
@@ -2156,7 +2163,7 @@ function anoFacts(a) {
   const cell = (k, v) => `<div><span>${esc(k)}</span><b>${v}</b></div>`;
   return `<div class="ano-facts">${cell('Facture', f.date_facture ? dateFr(f.date_facture) : '—')}${cell('Paiement', f.date_paiement ? dateFr(f.date_paiement) : 'non payée')}
     ${cell('Signature', c.date_signature ? dateFr(c.date_signature) : '—')}${cell('Effet', c.date_debut ? dateFr(c.date_debut) : '—')}
-    ${cell('Enregistrée le', c.enregistree_le ? dateFr(String(c.enregistree_le).slice(0, 10)) : '—')}${cell('Justificatif', c.justificatif ? 'Présent' : '<span class="c-late">Manquant</span>')}</div>
+    ${cell('Enregistrée le', c.enregistree_le ? dateFr(String(c.enregistree_le)) : '—')}${cell('Justificatif', c.justificatif ? 'Présent' : '<span class="c-late">Manquant</span>')}</div>
     ${(c.avertissements || []).length ? `<div class="ano-warns">${c.avertissements.map(w => `<span class="pill pill-sm pill-warn">${svgI('warn', '')}${esc(w)}</span>`).join('')}</div>` : ''}`;
 }
 // Validation d'une levée : convention et facture nommées, justificatif consultable, signature rétroactive à accuser explicitement.
@@ -2196,8 +2203,8 @@ async function renderAnomalies() {
     const lock = a.periode_verrouillee && (verif || levee) ? `<div class="m ano-lock">${svgI('lock', '')}T${a.trimestre} ${a.annee} est clôturée : lecture seule, la levée ne peut être ni validée ni annulée.</div>` : '';
     const resolu = st === 'resolue' ? (a.sans_justification
       ? `<div class="m"><span class="pill pill-sm pill-warn">${svgI('warn', '')}Résolue sans justification</span> <span class="dh t-sm">résolution antérieure, sans motif enregistré — à revoir</span></div>`
-      : `<div class="m levee-m">${svgI('checkc', '')}Résolue${a.resolue_le ? ' le ' + dateFr(String(a.resolue_le).slice(0, 10)) : ''}${a.resolue_par_nom ? ' par ' + esc(a.resolue_par_nom) : ''} — « ${esc(a.motif_resolution)} »</div>`) : '';
-    const valid = levee ? `<div class="m levee-m">${svgI('checkc', '')}Levée validée le ${dateFr(String(a.levee_validee_le).slice(0, 10))} par ${esc(a.levee_validee_par_nom || '—')}${a.levee_commentaire ? ` — « ${esc(a.levee_commentaire)} »` : ''}.</div>` : '';
+      : `<div class="m levee-m">${svgI('checkc', '')}Résolue${a.resolue_le ? ' le ' + dateFr(String(a.resolue_le)) : ''}${a.resolue_par_nom ? ' par ' + esc(a.resolue_par_nom) : ''} — « ${esc(a.motif_resolution)} »</div>`) : '';
+    const valid = levee ? `<div class="m levee-m">${svgI('checkc', '')}Levée validée le ${dateFr(String(a.levee_validee_le))} par ${esc(a.levee_validee_par_nom || '—')}${a.levee_commentaire ? ` — « ${esc(a.levee_commentaire)} »` : ''}.</div>` : '';
     const acts = [];
     if (verif && !a.periode_verrouillee && can('manage_conventions')) acts.push(conv && conv.justificatif
       ? `<button class="btn btn-primary btn-sm" data-lever="${a.id}">Valider la levée</button>`
@@ -2211,7 +2218,7 @@ async function renderAnomalies() {
         ${a.type === 'convention_absente' && !verif && !levee && a.situation ? `<div class="m ano-sit">${esc(anoSituation(a))}</div>` : ''}
         ${(verif || levee) && conv ? anoFacts(a) + `<div class="m"><button class="btn-link" data-conv-ent="${a.ent_id}" data-conv-id="${conv.id}">Voir la convention (${conv.delai} j)</button>${conv.justificatif ? ` · <a href="/api/conventions/${conv.id}/file" target="_blank" rel="noopener">${svgI('doc')} Ouvrir le justificatif signé</a>` : ''}</div>` : ''}
         ${maintenus}${valid}${resolu}${lock}
-        <div class="d">${esc(a.ent || '—')} · ${esc(String(a.created_at || '').slice(0, 10))}${a.annee ? ` · T${a.trimestre} ${a.annee}` : ''}</div></div>
+        <div class="d">${esc(a.ent || '—')} · ${esc(dateFr(a.created_at))}${a.annee ? ` · T${a.trimestre} ${a.annee}` : ''}</div></div>
       ${acts.length ? `<div class="al-acts">${acts.join('')}</div>` : ''}</div>`;
   };
   $('#view').innerHTML = `
@@ -2581,7 +2588,9 @@ function detVal(k, v) {
   if (k === 'trimestre') return 'T' + v;
   if (k === 'type' && typeof ANO_LBL !== 'undefined' && ANO_LBL[v]) return ANO_LBL[v];
   if (k === 'factures' && Array.isArray(v)) return v.map(facLine).join(' ; ') || '—';
-  if (Array.isArray(v)) return v.join(' ; ');
+  if (Array.isArray(v)) return v.map(x => x && typeof x === 'object' ? (x.cidr ? [x.cidr, x.label].filter(Boolean).join(' · ') : detVal(k, x)) : detVal(k, x)).join(' ; ') || 'aucune';
+  // Horodatages (début, fin prévue, expiration…) : heure locale de l'espace avec fuseau — TZ-1.
+  if (typeof v === 'string' && typeof window !== 'undefined' && window.DPTime && window.DPTime.isInstant(v)) return tsLocal(v);
   if (/^date_|^le$/.test(k) && /^\d{4}-\d{2}-\d{2}/.test(String(v))) return dateFr(String(v));
   if (typeof v === 'object') return Object.entries(v).filter(([kk, vv]) => !HIDDEN_DET.has(kk) && !(typeof vv === 'string' && INTERNAL_ID.test(vv))).map(([kk, vv]) => `${DET_KEY[kk] || kk.replace(/_/g, ' ')} : ${detVal(kk, vv)}`).join(', ');
   return String(v);

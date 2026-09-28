@@ -115,9 +115,10 @@ const SOURCE_FR = { standard: 'Délai enregistré sur le fournisseur (importé �
 function sourceLabel(r, src) {
   if (r.sourceRegle !== 'standard') return SOURCE_FR[r.sourceRegle] || r.sourceRegle;
   return src
-    ? `Délai de ${r.delaiAutorise} j repris de la colonne « Convention » du fichier client « ${src.fichier} » (importé le ${src.le.split('-').reverse().join('/')}) — aucune convention signée enregistrée`
+    ? `Délai de ${r.delaiAutorise} j repris de la colonne « Convention » du fichier client « ${src.fichier} » (importé le ${require('./time-format').formatDate(src.le, src.tz)}) — aucune convention signée enregistrée`
     : `Délai de ${r.delaiAutorise} j enregistré sur la fiche du fournisseur — aucune convention signée enregistrée`;
 }
+function tzOf(cabinetId) { const c = cabinetId ? db.prepare('SELECT fuseau_horaire FROM cabinet WHERE id=?').get(cabinetId) : null; return (c && c.fuseau_horaire) || 'Africa/Casablanca'; }
 function conventionsManquantes(scope) {
   const reseau = require('./reseau');
   const fours = db.prepare(`SELECT fo.*, e.raison_sociale ent, e.id ent_id FROM fournisseur fo JOIN entreprise e ON e.id=fo.entreprise_id
@@ -125,7 +126,7 @@ function conventionsManquantes(scope) {
   const agg = db.prepare(`SELECT COUNT(*) nb, COALESCE(SUM(a_declarer),0) nb_decl, ROUND(COALESCE(SUM(ttc),0),2) ttc,
     ROUND(COALESCE(SUM(CASE WHEN a_declarer=1 THEN ttc ELSE 0 END),0),2) ttc_decl FROM facture WHERE fournisseur_id=?`);
   // Fichier d'où provient le délai (import le plus ancien des factures du fournisseur) — l'import écrit ce délai (importer.js).
-  const srcQ = db.prepare(`SELECT source_import fichier, substr(MIN(created_at),1,10) le FROM facture WHERE fournisseur_id=? AND source_import IS NOT NULL GROUP BY source_import ORDER BY le LIMIT 1`);
+  const srcQ = db.prepare(`SELECT source_import fichier, MIN(created_at) le FROM facture WHERE fournisseur_id=? AND source_import IS NOT NULL GROUP BY source_import ORDER BY le LIMIT 1`);
   const out = [];
   for (const fo of fours) {
     const conv = require('./db').activeConventionFor(fo.entreprise_id, fo.id);
@@ -133,6 +134,7 @@ function conventionsManquantes(scope) {
     if (r.sourceRegle === 'convention' || r.delaiAutorise <= 60) continue;
     const a = agg.get(fo.id);
     const src = srcQ.get(fo.id);
+    if (src) src.tz = tzOf(scope.cabinetId);   // jour d'import dans le fuseau de l'espace (TZ-1)
     out.push({ id: fo.id, four: fo.raison_sociale, ice: fo.ice, if_fiscal: fo.if_fiscal, ent_id: fo.ent_id, ent: fo.ent,
       delai: r.delaiAutorise, source: r.sourceRegle, source_label: sourceLabel(r, src), source_fichier: src ? src.fichier : null, source_date: src ? src.le : null,
       nb: a.nb, nb_decl: a.nb_decl, ttc: a.ttc, ttc_decl: a.ttc_decl });

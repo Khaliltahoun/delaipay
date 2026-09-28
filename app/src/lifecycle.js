@@ -202,7 +202,7 @@ function exportWorkspace(cabinetId, actorLabel) {
   const json = JSON.stringify(out);
   fs.mkdirSync(EXPORT_DIR(), { recursive: true, mode: 0o700 });
   const stamp = new Date().toISOString().replace(/[-:]/g, '').replace('T', '-').slice(0, 15);
-  const name = `${cab.slug || cab.id}-${stamp}.json`;
+  const name = `${cab.slug || cab.id}-${stamp}-UTC.json`;   // horodatage du nom de fichier en UTC, dit explicitement
   const file = path.join(EXPORT_DIR(), name);
   fs.writeFileSync(file, json, { mode: 0o600 });
   const sha = crypto.createHash('sha256').update(json).digest('hex');

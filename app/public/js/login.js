@@ -18,7 +18,7 @@ fetch('/api/tenant', { credentials: 'same-origin' }).then(r => r.ok ? r.json() :
   // Bandeaux de maintenance (plateforme / espace) — information, la connexion reste possible.
   if (t.maintenance && t.maintenance.length) {
     const box = document.createElement('div');
-    box.innerHTML = t.maintenance.map(m => `<div class="note note-info mb-14"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="9"/><path d="M12 11v5M12 8h.01"/></svg><div><div class="note-t">${m.portee === 'espace' ? 'Maintenance de votre espace' : 'Maintenance DelaiPay'}</div>${esc(m.message)}${m.fin ? ` (fin prévue le ${esc(new Date(m.fin).toLocaleString('fr-FR', { dateStyle: 'short', timeStyle: 'short' }))})` : ''}</div></div>`).join('');
+    box.innerHTML = t.maintenance.map(m => `<div class="note note-info mb-14"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="9"/><path d="M12 11v5M12 8h.01"/></svg><div><div class="note-t">${m.portee === 'espace' ? 'Maintenance de votre espace' : 'Maintenance DelaiPay'}</div>${esc(m.message)}${m.fin ? ` (fin prévue le ${esc(window.DPTime ? window.DPTime.formatLocal(m.fin, t.fuseau) : m.fin)})` : ''}</div></div>`).join('');
     const n = document.getElementById('notice'); n.parentNode.insertBefore(box, n);
   }
   if (t.deleted) {

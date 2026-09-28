@@ -99,6 +99,7 @@ function publicBranding(cab) {
     // Variantes accessibles de la couleur d'espace (texte du monogramme ≥ 4,5:1, repère actif ≥ 3:1).
     palette: tenantPalette(COLOR_RE.test(cab.couleur_primaire || '') ? cab.couleur_primaire : null),
     locale: cab.locale || 'fr-MA',
+    fuseau: cab.fuseau_horaire || 'Africa/Casablanca',   // affichage des heures (pages publiques) — src/time-format.js
     active: cab.actif !== 0,
     // Logo servi par /api/tenant/logo (public, hôte) ; le suffixe ?v= change à chaque remplacement.
     logoUrl: cab.logo ? `/api/tenant/logo?v=${encodeURIComponent(String(cab.logo).slice(5, 13))}` : null,

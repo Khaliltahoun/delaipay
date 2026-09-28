@@ -270,7 +270,7 @@ tab('cycle', 'Cycle de vie', async (el, ws, reload) => {
       { name: 'message', label: 'Message affiché aux utilisateurs', type: 'textarea', required: true, value: ws.maintenance ? ws.maintenance.message : '', max: 300 },
       { name: 'fin', label: 'Fin (le bandeau disparaît automatiquement)', type: 'datetime-local' }], confirm: 'Afficher' });
     if (!v) return;
-    try { await C.api('PUT', `/workspaces/${ws.id}/maintenance`, { message: v.message, fin: v.fin ? new Date(v.fin).toISOString() : null }); C.toast('Bandeau affiché.'); reload(); } catch (e) { C.toast(e.message, 'err'); }
+    try { await C.api('PUT', `/workspaces/${ws.id}/maintenance`, { message: v.message, fin: C.fromLocalInput(v.fin) }); C.toast('Bandeau affiché.'); reload(); } catch (e) { C.toast(e.message, 'err'); }
   });
   if ($('#mDel')) $('#mDel').addEventListener('click', async () => { await C.api('DELETE', `/workspaces/${ws.id}/maintenance`); C.toast('Bandeau retiré.'); reload(); });
   if ($('#susp')) $('#susp').addEventListener('click', async () => {
@@ -289,7 +289,7 @@ tab('cycle', 'Cycle de vie', async (el, ws, reload) => {
   if ($('#exp')) $('#exp').addEventListener('click', async () => {
     try { const r = await C.api('POST', `/workspaces/${ws.id}/export`, {}); C.toast('Export écrit sur le serveur.');
       $('#expOut').innerHTML = `<div class="note note-ok mt-14">${IC.ok}<div><div class="note-t">Export prêt</div><span class="mono t-xs">${esc(r.export.chemin)}</span><br>${C.bytes(r.export.taille)} · sha256 <span class="mono t-xs">${esc(r.export.sha256)}</span></div></div>`;
-      ws.dernierExport = { id: r.export.id, fichier: r.export.fichier, sha256: r.export.sha256, taille: r.export.taille, le: new Date().toISOString().replace('T', ' ').slice(0, 19) };
+      ws.dernierExport = { id: r.export.id, fichier: r.export.fichier, sha256: r.export.sha256, taille: r.export.taille, le: new Date().toISOString() };
       $('#del').disabled = false; $('#del').removeAttribute('title'); }
     catch (e) { C.toast(e.message, 'err'); }
   });

@@ -24,7 +24,7 @@ else post('/api/invitations/lookup', { token }).then(r => {
   if (w.logoUrl) { m.innerHTML = ''; const img = new Image(); img.src = w.logoUrl; img.alt = ''; img.className = 'ws-logo-img'; m.appendChild(img); m.classList.add('has-logo'); }
   else { m.textContent = w.initials || 'DP'; if (w.palette) { m.style.background = w.palette.tenant; m.style.color = w.palette.tenantInk; } }
   $('#invMail').textContent = d.email; $('#invRole').textContent = d.roleLabel || d.role;
-  $('#expires').textContent = `Invitation valable jusqu’au ${String(d.expiresAt || '').slice(0, 10).split('-').reverse().join('/')}.`;
+  $('#expires').textContent = `Invitation valable jusqu’au ${window.DPTime.formatLocal(d.expiresAt, w.fuseau)}.`;   // même affichage que la console (TZ-1)
   document.title = `Invitation — ${w.displayName || ''} · DelaiPay`;
   setTimeout(() => $('#nom').focus(), 30);
 }).catch(() => fail('Service momentanément indisponible', 'Réessayez dans quelques instants. Aucune donnée n’a été modifiée.'));

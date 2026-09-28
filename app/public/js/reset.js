@@ -20,7 +20,7 @@ else post('/api/password-reset/lookup', { token }).then(r => {
   $('#wsName').textContent = w.displayName || 'Espace';
   const m = $('#wsMono'); m.textContent = w.initials || 'DP'; if (w.palette) { m.style.background = w.palette.tenant; m.style.color = w.palette.tenantInk; }
   $('#rsMail').textContent = d.email;
-  $('#expires').textContent = `Lien valable jusqu’au ${String(d.expiresAt || '').slice(0, 16).replace(/^(\d{4})-(\d{2})-(\d{2})/, '$3/$2/$1')} (heure UTC).`;
+  $('#expires').textContent = `Lien valable jusqu’au ${window.DPTime.formatLocal(d.expiresAt, w.fuseau)}.`;
   setTimeout(() => $('#pw').focus(), 30);
 }).catch(() => fail('Service momentanément indisponible', 'Réessayez dans quelques instants. Aucune donnée n’a été modifiée.'));
 

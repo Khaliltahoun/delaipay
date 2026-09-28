@@ -23,7 +23,7 @@ C.settingsCard(10, async (box, reload) => {
       { name: 'message', label: 'Message', type: 'textarea', required: true, value: m ? m.message : '', max: 300 },
       { name: 'fin', label: 'Fin (le bandeau disparaît automatiquement)', type: 'datetime-local' }], confirm: 'Afficher partout' });
     if (!v) return;
-    try { await C.api('PUT', '/maintenance', { message: v.message, fin: v.fin ? new Date(v.fin).toISOString() : null }); C.toast('Bandeau global affiché.'); reload(); } catch (e) { C.toast(e.message, 'err'); }
+    try { await C.api('PUT', '/maintenance', { message: v.message, fin: C.fromLocalInput(v.fin) }); C.toast('Bandeau global affiché.'); reload(); } catch (e) { C.toast(e.message, 'err'); }
   });
   const d = $('#gmDel', box); if (d) d.addEventListener('click', async () => { await C.api('DELETE', '/maintenance'); C.toast('Bandeau retiré.'); reload(); });
 });

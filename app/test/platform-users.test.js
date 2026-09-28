@@ -109,3 +109,18 @@ test('utilisateurs : un nouveau lien annule le précédent', async () => {
   assert.equal((await H.request('POST', '/api/password-reset/lookup', { host: 'usr6.localhost', body: { token: a.body.lien.split('#t=')[1] } })).status, 410);
   assert.equal((await H.request('POST', '/api/password-reset/lookup', { host: 'usr6.localhost', body: { token: b.body.lien.split('#t=')[1] } })).status, 200);
 });
+
+test('TZ-1 : échéance d’invitation identique sur la page d’invitation et dans la console', async () => {
+  const c = await con();
+  const w = await createWs(c, 'tzinv');
+  const lookup = await H.request('POST', '/api/invitations/lookup', { host: 'tzinv.localhost', body: { token: w.invitation.lien.split('#t=')[1] } });
+  const inv = (await c.get(`/api/platform/workspaces/${w.id}/users`)).body.invitations[0];
+  const me = (await c.get('/api/platform/me')).body;
+  const T = require('../src/time-format');
+  assert.equal(lookup.body.workspace.fuseau, 'Africa/Casablanca');
+  assert.equal(T.formatLocal(lookup.body.expiresAt, lookup.body.workspace.fuseau), T.formatLocal(inv.expires_at, me.fuseau));
+  assert.match(T.formatLocal(inv.expires_at, me.fuseau), /\(UTC\+[01]\)$/);
+  const invJs = fs.readFileSync(path.join(__dirname, '..', 'public', 'js', 'invite.js'), 'utf8');
+  assert.match(invJs, /DPTime\.formatLocal\(d\.expiresAt, w\.fuseau\)/);
+  assert.match(fs.readFileSync(path.join(__dirname, '..', 'public', 'js', 'console-users.js'), 'utf8'), /C\.fdt\(i\.expires_at\)/);
+});

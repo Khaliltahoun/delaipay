@@ -24,9 +24,14 @@ const pad = n => String(n).padStart(2, '0');
 function toDate(s) { if (!s) return null; const d = new Date(/Z$|[+-]\d\d:\d\d$/.test(s) ? s : String(s).replace(' ', 'T') + 'Z'); return isNaN(d) ? null : d; }
 // Horodatages stockés en UTC, affichés dans le fuseau de la plateforme (src/time-format.js) ; fdtz = avec le fuseau.
 C.tz = 'Africa/Casablanca';
-C.fdt = s => window.DPTime ? window.DPTime.formatLocal(s, C.tz, { withZone: false }).replace(' à ', ' ') : (toDate(s) ? toDate(s).toISOString().slice(0, 16).replace('T', ' ') : '—');
-C.fdtz = s => window.DPTime ? window.DPTime.formatLocal(s, C.tz) : C.fdt(s);
-C.fd = s => { if (!s) return '—'; const m = String(s).match(/^(\d{4})-(\d{2})-(\d{2})/); return m ? `${m[3]}/${m[2]}/${m[1]}` : '—'; };
+// TZ-1 : UN seul formateur (src/time-format.js) — instants stockés en UTC, affichés dans le fuseau de la plateforme
+// (IANA, jamais un décalage fixe) avec le fuseau réel à cette date (« UTC+1 », « UTC+0 » pendant le Ramadan).
+C.fdt = s => window.DPTime.formatLocal(s, C.tz);
+C.fdtz = C.fdt;
+// Date seule : instant → jour local (jamais un jour de décalage) ; date calendaire (abonnement, purge) → telle quelle.
+C.fd = s => window.DPTime.formatDate(s, C.tz);
+// Saisie datetime-local interprétée dans le fuseau de la plateforme, pas celui du navigateur.
+C.fromLocalInput = v => (v ? window.DPTime.fromLocalInput(v, C.tz) : null);
 C.money = n => n == null || isNaN(n) ? '—' : Number(n).toLocaleString('fr-FR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).replace(/\u202f|\u00a0/g, ' ') + ' <span class="dh">DH</span>';
 C.int = n => n == null ? '—' : Number(n).toLocaleString('fr-FR').replace(/\u202f|\u00a0/g, ' ');
 C.ago = s => { const d = toDate(s); if (!d) return '—'; const m = Math.round((Date.now() - d) / 60000); if (m < 1) return 'à l’instant'; if (m < 60) return `il y a ${m} min`; const h = Math.round(m / 60); if (h < 48) return `il y a ${h} h`; return C.fdt(s); };
