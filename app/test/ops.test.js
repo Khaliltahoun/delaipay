@@ -15,7 +15,9 @@ const DB = path.join(ROOT, 'live', 'delaipay.db'); fs.mkdirSync(path.dirname(DB)
 const UP = path.join(ROOT, 'live', 'uploads');
 
 // Trousseau gpg JETABLE (clé sans phrase de passe, uniquement pour le test) : le serveur n'a besoin que de la clé publique.
-const GNUPGHOME = path.join(ROOT, 'gnupg'); fs.mkdirSync(GNUPGHOME, { mode: 0o700 });
+// Chemin COURT : la socket de gpg-agent est limitée (~100 caractères) — un TMPDIR profond la ferait échouer.
+const GNUPGHOME = fs.mkdtempSync(path.join(ROOT.length > 40 && fs.existsSync('/tmp') ? '/tmp' : ROOT, 'dpg-')); fs.chmodSync(GNUPGHOME, 0o700);
+process.on('exit', () => { try { execFileSync('gpgconf', ['--kill', 'gpg-agent'], { env: { ...process.env, GNUPGHOME }, stdio: 'ignore' }); } catch (_) {} try { fs.rmSync(GNUPGHOME, { recursive: true, force: true }); } catch (_) {} });
 const genv = { ...process.env, GNUPGHOME };
 execFileSync('gpg', ['--batch', '--passphrase', '', '--quick-gen-key', 'Sauvegarde DelaiPay (test) <backup@delaipay.test>', 'default', 'default', '1d'], { env: genv, stdio: 'pipe' });
 

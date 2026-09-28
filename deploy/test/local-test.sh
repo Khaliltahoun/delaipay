@@ -110,7 +110,7 @@ if command -v docker >/dev/null && docker info >/dev/null 2>&1; then
 else echo "  (Docker indisponible : étape nginx non jouée)"; fi
 
 step "5. Sauvegarde chiffrée → restauration dans un répertoire neuf → référence"
-export GNUPGHOME="$WORK/gnupg"; mkdir -p "$GNUPGHOME"; chmod 700 "$GNUPGHOME"
+export GNUPGHOME="$(mktemp -d /tmp/dpg-XXXXXX)"; chmod 700 "$GNUPGHOME"   # chemin court (socket gpg-agent)
 gpg --batch --passphrase '' --quick-gen-key 'Répétition <backup@staging.test>' default default 1d 2>/dev/null
 ( set -a; . ./staging.env; set +a; export BACKUP_GPG_RECIPIENT=backup@staging.test; cd root/current/app && node src/ops/backup.js | sed 's/^/    /' )
 F="$(ls backups/*.gpg | head -1)"
