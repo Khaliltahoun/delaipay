@@ -1,4 +1,5 @@
 # /etc/systemd/system/delaipay-staging-backup.service — sauvegarde chiffrée quotidienne (déclenchée par le .timer).
+# Même isolement que le service principal ; réseau sortant autorisé UNIQUEMENT pour la copie hors site.
 [Unit]
 Description=DelaiPay staging — sauvegarde chiffrée
 After=delaipay-staging.service
@@ -10,12 +11,40 @@ Group=delaipay-staging
 WorkingDirectory=/srv/delaipay-staging/current/app
 EnvironmentFile=/etc/delaipay-staging/staging.env
 ExecStart=/usr/bin/node src/ops/backup.js
+UMask=0077
 Nice=10
 IOSchedulingClass=idle
-NoNewPrivileges=true
-PrivateTmp=true
+MemoryMax=512M
+
 ProtectSystem=strict
-ProtectHome=read-only
-ReadWritePaths=/var/lib/delaipay-staging /var/backups/delaipay-staging
-StandardOutput=append:/var/log/delaipay-staging/backup.log
-StandardError=append:/var/log/delaipay-staging/backup.log
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ReadWritePaths=/srv/delaipay-staging/shared /srv/delaipay-staging/backups -/srv/delaipay-staging/.gnupg -/srv/delaipay-staging/.config/rclone
+ReadOnlyPaths=/srv/delaipay-staging
+InaccessiblePaths=-/srv/delaipay-staging/.ssh -/srv/delaipay-staging/repo.git
+ProtectProc=invisible
+ProcSubset=pid
+PrivateUsers=yes
+RemoveIPC=yes
+KeyringMode=private
+NoNewPrivileges=yes
+CapabilityBoundingSet=
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+RestrictSUIDSGID=yes
+RestrictRealtime=yes
+RestrictNamespaces=yes
+LockPersonality=yes
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallFilter=~@privileged @resources @mount @debug @cpu-emulation @obsolete @raw-io @reboot @swap @module @clock
+SystemCallErrorNumber=EPERM
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=delaipay-staging-backup

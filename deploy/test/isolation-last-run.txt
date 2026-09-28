@@ -1,0 +1,70 @@
+
+A1. Utilisateur système delaipay-staging (runbook §A1)
+  ✔ aucun groupe supplémentaire (ni sudo ni docker)
+  ✔ mot de passe verrouillé
+
+A2. Arborescence /srv/delaipay-staging (0700)
+  ✔ delaipay-staging:delaipay-staging 700 /srv/delaipay-staging
+
+A3. Secrets : /etc/delaipay-staging/staging.env root:root 0600
+  ✔ root:root 600 staging.env
+
+A4. Version déployée (comme deploy.sh : releases/<id>, lien current, npm ci par delaipay-staging)
+  ✔ npm ci (delaipay-staging)
+
+A5. Unités systemd durcies + règle sudoers unique
+  ✔ systemd-analyze verify : aucune remarque
+  ✔ visudo -c
+  ✔ service démarré sous le bac à sable, /healthz : {"ok":true,"version":"0f61bc3e73","commit":"0000000","uptimeSec":1,"db":"ok","ts":1790625855786}
+  ✔ base créée dans shared/data (delaipay-staging 600)
+  ✔ NoNewPrivs=1
+  ✔ aucune capacité (effective et limite)
+  ✔ filtre d'appels système actif (seccomp)
+  ✔ écoute sur 127.0.0.1:4200 uniquement
+
+A6. Déploiement : redémarrage par la règle sudoers, et RIEN d'autre
+  ✔ delaipay-staging : sudo -n systemctl restart delaipay-staging.service
+  ✔ delaipay-staging : sudo -n systemctl stop delaipay-staging.service — refusé
+  ✔ delaipay-staging : sudo -n systemctl edit delaipay-staging.service — refusé
+  ✔ delaipay-staging : sudo -n systemctl restart ssh.service — refusé
+  ✔ delaipay-staging : sudo -n cat /etc/shadow — refusé
+  ✔ delaipay-staging : lire staging.env (secrets) — refusé
+  ✔ delaipay-staging : modifier l'unité systemd — refusé
+
+A7. Sauvegarde chiffrée sous le même bac à sable (clé PUBLIQUE seule dans /srv/delaipay-staging/.gnupg)
+  ✔ clé publique importée par delaipay-staging
+  ✔ sauvegarde : delaipay-staging-20260928-200416Z.tar.gz.gpg (delaipay-staging 600)
+  ✔ déchiffrable par la clé privée hors ligne
+
+A8. Autres comptes : khalil (sans sudo ni docker) et un compte d'agent
+  ✔ khalil : lister /srv/delaipay-staging — refusé
+  ✔ khalil : lire la base — refusé
+  ✔ khalil : lire une sauvegarde — refusé
+  ✔ khalil : lire staging.env — refusé
+  ✔ khalil : écrire dans releases/ — refusé
+  ✔ khalil : redémarrer le service — refusé
+  ✔ openclaw : lister /srv/delaipay-staging — refusé
+  ✔ openclaw : lire la base — refusé
+  ✔ openclaw : lire une sauvegarde — refusé
+  ✔ openclaw : lire staging.env — refusé
+  ✔ openclaw : écrire dans releases/ — refusé
+  ✔ openclaw : redémarrer le service — refusé
+  ✔ delaipay-staging : lire /home/khalil — refusé
+
+A9. Sonde avec le bac à sable EXACT du service (unité copiée, seule la commande change)
+  ✔ service : fermé   /home visible
+  ✔ service : fermé   écrire dans current/
+  ✔ service : fermé   écrire dans /etc
+  ✔ service : fermé   lire .ssh (clé de déploiement)
+  ✔ service : fermé   lire repo.git
+  ✔ service : fermé   lire backups/
+  ✔ service : fermé   lire staging.env
+  ✔ service : fermé   réseau sortant (1.1.1.1:443)
+  ✔ service : fermé   processus de root (PID 1)
+  ✔ service : OUVERT  écrire dans shared/data (seul répertoire inscriptible)
+
+A10. systemd-analyze security (unités chargées)
+  ✔ delaipay-staging.service : 0.9 SAFE :-}
+  ✔ delaipay-staging-backup.service : 1.1 OK :-)
+
+RÉPÉTITION DE L’ISOLEMENT : AUCUN ÉCHEC

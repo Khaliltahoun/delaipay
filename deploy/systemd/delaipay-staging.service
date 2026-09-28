@@ -1,5 +1,5 @@
-# /etc/systemd/system/delaipay-staging.service — DelaiPay STAGING (isolé de la production).
-# Installation : voir docs/STAGING.md §6.  Vérifier : systemd-analyze verify delaipay-staging.service
+# /etc/systemd/system/delaipay-staging.service — DelaiPay STAGING, isolé (docs/VPS_ISOLATION.md §2).
+# Vérifier :  systemd-analyze verify delaipay-staging.service   et   systemd-analyze security delaipay-staging.service
 [Unit]
 Description=DelaiPay staging (admin.staging / *.staging.delaipay.com)
 After=network-online.target
@@ -12,38 +12,67 @@ Type=simple
 User=delaipay-staging
 Group=delaipay-staging
 WorkingDirectory=/srv/delaipay-staging/current/app
-# Variables (secrets compris) : fichier root:delaipay-staging 0640, jamais dans le dépôt ni dans les versions.
+# Secrets : root:root 0600, lu par systemd (PID 1) AVANT de passer à l'utilisateur — ni le déployeur ni aucun autre compte ne le lit.
 EnvironmentFile=/etc/delaipay-staging/staging.env
 ExecStart=/usr/bin/node src/server.js
 Restart=on-failure
 RestartSec=5
 TimeoutStopSec=20
-# Limites de ressources (staging : une petite instance)
+UMask=0077
+
+# ---- Ressources
 MemoryMax=768M
 MemoryHigh=640M
 CPUQuota=150%
 TasksMax=200
 LimitNOFILE=8192
-# Durcissement
-NoNewPrivileges=true
-PrivateTmp=true
-PrivateDevices=true
+
+# ---- Système de fichiers : tout en lecture seule sauf les données de CE service
 ProtectSystem=strict
-ProtectHome=true
-ProtectKernelTunables=true
-ProtectKernelModules=true
-ProtectControlGroups=true
-RestrictSUIDSGID=true
-RestrictNamespaces=true
-LockPersonality=true
-SystemCallArchitectures=native
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+DevicePolicy=closed
+ReadWritePaths=/srv/delaipay-staging/shared
+# Les versions et le reste de /srv/delaipay-staging : lecture seule pour le service lui-même
+ReadOnlyPaths=/srv/delaipay-staging
+InaccessiblePaths=-/srv/delaipay-staging/.ssh -/srv/delaipay-staging/repo.git -/srv/delaipay-staging/pre-deploy -/srv/delaipay-staging/backups
+ProtectProc=invisible
+ProcSubset=pid
+
+# ---- Noyau, privilèges, espaces de noms
+NoNewPrivileges=yes
 CapabilityBoundingSet=
 AmbientCapabilities=
-UMask=0027
-# Seuls répertoires inscriptibles : données (base, téléversements, exports) et journaux.
-ReadWritePaths=/var/lib/delaipay-staging /var/log/delaipay-staging
-StandardOutput=append:/var/log/delaipay-staging/app.log
-StandardError=append:/var/log/delaipay-staging/app.log
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+RestrictSUIDSGID=yes
+RestrictRealtime=yes
+RestrictNamespaces=yes
+LockPersonality=yes
+RemoveIPC=yes
+KeyringMode=private
+PrivateUsers=yes
+# V8 (JIT) a besoin de pages écrivables ET exécutables : MemoryDenyWriteExecute est impossible pour Node.js.
+MemoryDenyWriteExecute=no
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallFilter=~@privileged @resources @mount @debug @cpu-emulation @obsolete @raw-io @reboot @swap @module @clock
+SystemCallErrorNumber=EPERM
+
+# ---- Réseau : n'écoute que sur 127.0.0.1 (HOST dans staging.env) ; aucun trafic hors de la machine (pas d'appel externe)
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+IPAddressDeny=any
+IPAddressAllow=localhost
+
+# ---- Journaux : journald (journalctl -u delaipay-staging) — aucune donnée d'espace, ni corps de requête, ni secret
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=delaipay-staging
 
 [Install]
 WantedBy=multi-user.target
