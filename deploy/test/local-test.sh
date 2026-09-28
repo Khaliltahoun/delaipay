@@ -17,8 +17,11 @@ rm -rf "$WORK"; mkdir -p "$WORK"/{root,data,uploads,backups,logs}
 # Instance locale d'une répétition précédente encore active sur le port : arrêtée.
 for p in $(lsof -nP -iTCP:"$PORT" -sTCP:LISTEN -t 2>/dev/null); do kill "$p" 2>/dev/null || true; done; sleep 1
 cd "$WORK"
+FAILS=0
 ok() { printf '  \033[32m✔\033[0m %s\n' "$*"; }
-ko() { printf '  \033[31m✘\033[0m %s\n' "$*"; exit 1; }
+ko() { printf '  \033[31m✘\033[0m %s\n' "$*"; FAILS=$((FAILS + 1)); }
+# check "libellé" "texte" "motif" : le texte contient le motif (grep sur une variable : pas de SIGPIPE avec pipefail)
+check() { if grep -Eq -- "$3" <<<"$2"; then ok "$1"; else ko "$1 — obtenu : $(head -c 160 <<<"$2")"; fi; }
 step() { printf '\n\033[1m%s\033[0m\n' "$*"; }
 
 step "0. Dépôt source local (commit sain + commit volontairement cassé)"
@@ -61,53 +64,58 @@ export DEPLOY_ROOT="$WORK/root" REPO_URL="$WORK/origin.git" ENV_FILE="$WORK/stag
 
 step "1. Déploiement du commit sain (tests complets, sauvegarde, migrations, santé)"
 "$REPO/deploy/deploy.sh" "$GOOD" | sed 's/^/    /'
-curl -fsS "http://127.0.0.1:$PORT/healthz" | grep -q "\"commit\":\"${GOOD:0:7}\"" && ok "santé : commit ${GOOD:0:7} en service" || ko "santé"
+check "santé : commit ${GOOD:0:7} en service" "$(curl -fsS "http://127.0.0.1:$PORT/healthz")" "\"commit\":\"${GOOD:0:7}\""
 
 step "2. Données fictives du staging + référence"
 ( set -a; . ./staging.env; set +a; cd root/current/app && node src/ops/staging-seed.js | sed -E 's/ [A-Za-z0-9_-]{10,}-7a$/ ********/; s/^/    /' )
-( set -a; . ./staging.env; set +a; cd root/current/app && node src/ops/verify-baseline.js --slug hlz-demo --expect "36,16,350964.42,7025.33,a7d1acaac0688170ef95fce6b7bb2082" | tail -1 | sed 's/^/    /' )
+check "référence sur le staging : 36 · 16 · 350 964,42 · 7 025,33 · md5 a7d1acaa…" "$( set -a; . ./staging.env; set +a; cd root/current/app && node src/ops/verify-baseline.js --slug hlz-demo --expect "36,16,350964.42,7025.33,a7d1acaac0688170ef95fce6b7bb2082" 2>/dev/null)" "CONFORME à la référence"
 ( set -a; . ./staging.env; set +a; cd root/current/app && PLATFORM_ADMIN_PASSWORD='Repetition-Staging-2026!' DP_PLATFORM_CLI_MODE=create node src/platform/cli.js --email ops@staging.test --nom "Répétition" | head -1 | sed 's/^/    /' )
 
 step "3. Déploiement d'un commit CASSÉ → retour arrière automatique"
 set +e; "$REPO/deploy/deploy.sh" bad | sed 's/^/    /'; RC=${PIPESTATUS[0]}; set -e
 [ "$RC" = "2" ] && ok "deploy.sh a signalé l'échec (code 2)" || ko "code de sortie inattendu : $RC"
-curl -fsS "http://127.0.0.1:$PORT/healthz" | grep -q "\"commit\":\"${GOOD:0:7}\"" && ok "retour arrière : ${GOOD:0:7} de nouveau en service" || ko "retour arrière"
-[ "$(readlink root/current)" != "" ] && basename "$(readlink root/current)" | grep -q "${GOOD:0:7}" && ok "lien current → version saine" || ko "lien current"
-ls root/releases | grep -q "${BAD:0:7}.echec" && ok "version cassée conservée pour analyse (.echec)"
-ls root/pre-deploy/*.db >/dev/null && ok "sauvegardes de pré-déploiement présentes : $(ls root/pre-deploy | wc -l | tr -d ' ')"
+check "retour arrière : ${GOOD:0:7} de nouveau en service" "$(curl -fsS "http://127.0.0.1:$PORT/healthz")" "\"commit\":\"${GOOD:0:7}\""
+check "lien current → version saine" "$(readlink root/current)" "${GOOD:0:7}$"
+check "version cassée conservée pour analyse (.echec)" "$(ls root/releases)" "${BAD:0:7}\\.echec"
+check "sauvegarde de pré-déploiement présente" "$(ls root/pre-deploy)" "\\.db$"
 
 step "4. nginx devant l'application (conteneur nginx:1.27-alpine)"
 if command -v docker >/dev/null && docker info >/dev/null 2>&1; then
-  mkdir -p nginx/snippets nginx/certs
+  mkdir -p nginx/conf.d nginx/snippets nginx/certs
   openssl req -x509 -newkey rsa:2048 -nodes -days 2 -subj "/CN=staging.localhost" \
     -addext "subjectAltName=DNS:*.staging.localhost,DNS:staging.localhost" -keyout nginx/certs/privkey.pem -out nginx/certs/fullchain.pem 2>/dev/null
   cp "$REPO"/deploy/nginx/snippets/*.conf nginx/snippets/
   sed -e 's/staging\.delaipay\.com/staging.localhost/g' -e "s#127.0.0.1:4200#host.docker.internal:$PORT#" \
       -e 's#/etc/letsencrypt/live/staging.localhost/#/etc/nginx/certs/#' -e 's#snippets/#/etc/nginx/snippets/#' \
-      "$REPO/deploy/nginx/delaipay-staging.conf" > nginx/site.conf
+      "$REPO/deploy/nginx/delaipay-staging.conf" > nginx/conf.d/default.conf
   printf 'fondateur:%s\n' "$(openssl passwd -apr1 'Staging-Basic-2026')" > nginx/htpasswd
   docker rm -f dp-stg-nginx >/dev/null 2>&1 || true
+  # Répertoires montés (et non des fichiers seuls) : une modification locale est vue par nginx au rechargement.
   docker run -d --name dp-stg-nginx -p 18080:80 -p 18443:443 --add-host host.docker.internal:host-gateway \
-    -v "$WORK/nginx/site.conf:/etc/nginx/conf.d/default.conf:ro" -v "$WORK/nginx/snippets:/etc/nginx/snippets:ro" \
+    -v "$WORK/nginx/conf.d:/etc/nginx/conf.d:ro" -v "$WORK/nginx/snippets:/etc/nginx/snippets:ro" \
     -v "$WORK/nginx/certs:/etc/nginx/certs:ro" -v "$WORK/nginx/htpasswd:/etc/nginx/delaipay-staging.htpasswd:ro" nginx:1.27-alpine >/dev/null
   sleep 2
-  docker exec dp-stg-nginx nginx -t 2>&1 | grep -q "syntax is ok" && ok "nginx -t : configuration valide" || ko "nginx -t"
-  C="curl -sk --resolve admin.staging.localhost:18443:127.0.0.1 --resolve hlz-demo.staging.localhost:18443:127.0.0.1 --resolve client2.staging.localhost:18443:127.0.0.1"
-  [ "$(curl -s -o /dev/null -w '%{http_code}' -H 'Host: hlz-demo.staging.localhost' http://127.0.0.1:18080/login)" = "301" ] && ok "HTTP → HTTPS (301)"
-  $C -D - -o /dev/null https://admin.staging.localhost:18443/ | grep -qi 'strict-transport-security: max-age=31536000' && ok "HSTS présent"
-  $C https://admin.staging.localhost:18443/ | grep -q 'Console plateforme' && ok "admin.staging.localhost → console"
-  $C https://hlz-demo.staging.localhost:18443/api/tenant | grep -q '"known":true' && ok "hlz-demo.staging.localhost → espace (fictif)"
-  $C https://admin.staging.localhost:18443/api/me | grep -q 'route_inconnue' && ok "aucune API d'espace sur l'hôte console"
-  [ "$($C -o /dev/null -w '%{http_code}' -X POST -H 'Content-Type: application/octet-stream' --data-binary @<(head -c 27000000 /dev/zero) https://client2.staging.localhost:18443/api/clients/x/import)" = "413" ] && ok "requête > 26 Mo refusée par nginx (413)"
+  check "nginx -t : configuration valide" "$(docker exec dp-stg-nginx nginx -t 2>&1)" "syntax is ok"
+  C=(curl -sk --resolve admin.staging.localhost:18443:127.0.0.1 --resolve hlz-demo.staging.localhost:18443:127.0.0.1 --resolve client2.staging.localhost:18443:127.0.0.1)
+  check "HTTP → HTTPS (301)" "$(curl -s -o /dev/null -w '%{http_code} %{redirect_url}' -H 'Host: hlz-demo.staging.localhost' http://127.0.0.1:18080/login)" "^301 https://hlz-demo.staging.localhost/login"
+  check "HSTS présent" "$("${C[@]}" -D - -o /dev/null https://admin.staging.localhost:18443/)" "[Ss]trict-[Tt]ransport-[Ss]ecurity: max-age=31536000; includeSubDomains"
+  check "admin.staging.localhost → console" "$("${C[@]}" https://admin.staging.localhost:18443/)" "Console plateforme"
+  check "hlz-demo.staging.localhost → espace fictif" "$("${C[@]}" https://hlz-demo.staging.localhost:18443/api/tenant)" '"known":true'
+  check "aucune API d'espace sur l'hôte console" "$("${C[@]}" https://admin.staging.localhost:18443/api/me)" "route_inconnue"
+  head -c 27000000 /dev/zero > big.bin
+  check "requête > 26 Mo refusée par nginx (413)" "$("${C[@]}" -o /dev/null -w '%{http_code}' -X POST -H 'Content-Type: application/octet-stream' --data-binary @big.bin https://client2.staging.localhost:18443/api/clients/x/import)" "^413$"
+  rm -f big.bin
   # X-Forwarded-For forgé par le client : nginx le REMPLACE par l'adresse réelle — l'application ne voit jamais 203.0.113.99.
-  $C -s -o /dev/null -H 'X-Forwarded-For: 203.0.113.99' -H 'Content-Type: application/json' -d '{"email":"x@y.z","password":"faux"}' https://hlz-demo.staging.localhost:18443/api/auth/login
-  sqlite3 "$WORK/data/delaipay.db" "select ip from login_event order by created_at desc limit 1" | grep -qv '203.0.113.99' && ok "X-Forwarded-For forgé ignoré (IP enregistrée : $(sqlite3 "$WORK/data/delaipay.db" "select ip from login_event order by created_at desc limit 1"))"
-  # Authentification basique nginx (facultative) : activée → 401 sans identifiants, 200 avec, /healthz toujours ouvert.
-  sed -i.bak 's|# include /etc/nginx/snippets/delaipay-staging-basic-auth.conf;|include /etc/nginx/snippets/delaipay-staging-basic-auth.conf;|' nginx/site.conf
+  "${C[@]}" -o /dev/null -H 'X-Forwarded-For: 203.0.113.99' -H 'Content-Type: application/json' -d '{"email":"x@y.z","password":"faux-mot-de-passe"}' https://hlz-demo.staging.localhost:18443/api/auth/login
+  IPREC="$(sqlite3 "$WORK/data/delaipay.db" "select ip from login_event order by created_at desc limit 1")"
+  if [ -n "$IPREC" ] && [ "$IPREC" != "203.0.113.99" ]; then ok "X-Forwarded-For forgé ignoré (IP enregistrée : $IPREC)"; else ko "X-Forwarded-For : $IPREC"; fi
+  check "X-Request-Id transmis par nginx" "$("${C[@]}" -D - -o /dev/null https://hlz-demo.staging.localhost:18443/healthz)" "[Xx]-[Rr]equest-[Ii]d: [0-9a-f]{32}"
+  # Authentification basique nginx (facultative) : activée → 401 sans identifiants, 200 avec ; /healthz toujours ouvert.
+  sed -i.bak 's|# include /etc/nginx/snippets/delaipay-staging-basic-auth.conf;|include /etc/nginx/snippets/delaipay-staging-basic-auth.conf;|' nginx/conf.d/default.conf && rm -f nginx/conf.d/default.conf.bak
   docker exec dp-stg-nginx nginx -s reload >/dev/null 2>&1; sleep 1
-  [ "$($C -o /dev/null -w '%{http_code}' https://hlz-demo.staging.localhost:18443/login)" = "401" ] && ok "basique activée : 401 sans identifiants"
-  [ "$($C -o /dev/null -w '%{http_code}' -u fondateur:Staging-Basic-2026 https://hlz-demo.staging.localhost:18443/login)" = "200" ] && ok "basique : 200 avec identifiants"
-  [ "$($C -o /dev/null -w '%{http_code}' https://hlz-demo.staging.localhost:18443/healthz)" = "200" ] && ok "/healthz reste ouvert (surveillance externe)"
+  check "basique activée : 401 sans identifiants" "$("${C[@]}" -o /dev/null -w '%{http_code}' https://hlz-demo.staging.localhost:18443/login)" "^401$"
+  check "basique : 200 avec identifiants" "$("${C[@]}" -o /dev/null -w '%{http_code}' -u fondateur:Staging-Basic-2026 https://hlz-demo.staging.localhost:18443/login)" "^200$"
+  check "/healthz reste ouvert (surveillance externe)" "$("${C[@]}" -w ' %{http_code}' https://hlz-demo.staging.localhost:18443/healthz)" '"ok":true.* 200$'
   docker rm -f dp-stg-nginx >/dev/null
 else echo "  (Docker indisponible : étape nginx non jouée)"; fi
 
@@ -117,9 +125,10 @@ gpg --batch --passphrase '' --quick-gen-key 'Répétition <backup@staging.test>'
 ( set -a; . ./staging.env; set +a; export BACKUP_GPG_RECIPIENT=backup@staging.test; cd root/current/app && node src/ops/backup.js | sed 's/^/    /' )
 F="$(ls backups/*.gpg | head -1)"
 ( cd root/current/app && node src/ops/restore.js --from "$F" --to "$WORK/restored" | head -2 | sed 's/^/    /' )
-( cd root/current/app && DB_PATH="$WORK/restored/delaipay.db" UPLOADS_DIR="$WORK/restored/uploads" TENANT_BASE_DOMAINS=staging.localhost JWT_SECRET=x \
-  node src/ops/verify-baseline.js --slug hlz-demo --expect "36,16,350964.42,7025.33,a7d1acaac0688170ef95fce6b7bb2082" | tail -1 | sed 's/^/    /' )
+check "base restaurée : référence et md5 identiques" "$( cd root/current/app && DB_PATH="$WORK/restored/delaipay.db" UPLOADS_DIR="$WORK/restored/uploads" TENANT_BASE_DOMAINS=staging.localhost JWT_SECRET=x \
+  node src/ops/verify-baseline.js --slug hlz-demo --expect "36,16,350964.42,7025.33,a7d1acaac0688170ef95fce6b7bb2082" 2>/dev/null)" "CONFORME à la référence"
+check "console : dernière sauvegarde réussie enregistrée" "$(cat "$WORK/data/backup-status.json")" '"ok": true'
 
 step "Fin — arrêt de l'instance locale"
 kill "$(cat app.pid)" 2>/dev/null || true
-ok "Répétition terminée (répertoire : $WORK)"
+if [ "$FAILS" = 0 ]; then ok "Répétition terminée sans échec (répertoire : $WORK)"; else ko "$FAILS vérification(s) en échec"; exit 1; fi
