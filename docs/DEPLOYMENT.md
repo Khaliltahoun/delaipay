@@ -12,6 +12,9 @@ Ce document décrit l'installation, la configuration, la sauvegarde et la mise �
 
 ## 0. Avant la mise en ligne de la version « console plateforme » (Incrément 3A) — liste de contrôle
 
+> Environnement de **staging** (répétition de ces étapes sur `*.staging.delaipay.com`, données fictives) : voir **docs/STAGING.md**,
+> artefacts `deploy/`, plan de test `docs/STAGING_TEST_PLAN.md`. Sauvegardes : `npm run backup` / `npm run restore` / `npm run verify:baseline`.
+
 À cocher **toutes** avant d'exposer la version issue de la branche `feature/saas-productization` (console
 `admin.<domaine>`, sessions serveur, appareils, politique d'accès). Aucune de ces étapes n'est automatique.
 
@@ -31,8 +34,8 @@ Ce document décrit l'installation, la configuration, la sauvegarde et la mise �
       certificat TLS couvrant `*.delaipay.com`, `COOKIE_SECURE=1`. Optionnel : liste d'IP de la console (`PLATFORM_ALLOWED_IPS`).
 - [ ] **Tous les utilisateurs devront se reconnecter** après ce déploiement : les jetons émis avant (sans session serveur)
       sont refusés. Prévenir les cabinets (une reconnexion, aucune donnée perdue).
-- [ ] **Sauvegardes configurées AVANT l'arrivée de données clients réelles** : sauvegarde automatique de la base SQLite
-      (`VACUUM INTO`, cf. §7), de `uploads/`, de `PLATFORM_SECRET_KEY` et du secret JWT, hors du serveur, testée par une
+- [ ] **Sauvegardes configurées AVANT l'arrivée de données clients réelles** : `npm run backup` (API de sauvegarde SQLite, chiffrement age / gpg,
+      rotation, copie hors site — docs/STAGING.md §9) planifiée par un timer, de `uploads/`, de `PLATFORM_SECRET_KEY` et du secret JWT, hors du serveur, testée par une
       restauration ; `BACKUP_DIR` renseigné pour que le tableau de bord de la console affiche la dernière sauvegarde.
 - [ ] **Données personnelles (loi 09-08)** : conditions d'utilisation et déclaration CNDP à jour (sessions, appareils,
       activité de connexion) ; rétention 12 mois par défaut, purge par `npm run platform:purge -- --confirmer`.
