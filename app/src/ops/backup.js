@@ -58,7 +58,11 @@ function encrypt(input, output) {
     return 'age';
   }
   if (env.BACKUP_GPG_RECIPIENT) {
-    execFileSync(env.BACKUP_GPG_BIN || 'gpg', ['--batch', '--yes', '--trust-model', 'always', '--encrypt', '--recipient', env.BACKUP_GPG_RECIPIENT, '--output', output, input], { stdio: 'pipe' });
+    // Destinataire = fichier de clé publique (--recipient-file, sans trousseau) ou identité du trousseau local.
+    // Jamais de recherche de clé sur le réseau (WKD, serveurs de clés) : --auto-key-locate local.
+    const r = env.BACKUP_GPG_RECIPIENT;
+    const who = fs.existsSync(r) ? ['--recipient-file', r] : ['--auto-key-locate', 'local', '--recipient', r];
+    execFileSync(env.BACKUP_GPG_BIN || 'gpg', ['--batch', '--yes', '--trust-model', 'always', '--encrypt', ...who, '--output', output, input], { stdio: 'pipe' });
     return 'gpg';
   }
   throw new Error('Aucune clé de chiffrement : définissez BACKUP_AGE_RECIPIENT (recommandé) ou BACKUP_GPG_RECIPIENT. Une sauvegarde n’est jamais écrite en clair.');
