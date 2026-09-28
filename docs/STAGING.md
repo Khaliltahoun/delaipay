@@ -3,6 +3,26 @@
 > Statut : **préparé et répété localement** (Incrément 3B). Aucun accès au VPS, aucune modification DNS, aucune mise en ligne.
 > Artefacts : `deploy/` · répétition locale : `deploy/test/local-test.sh` · plan de test du fondateur : `docs/STAGING_TEST_PLAN.md`.
 
+## 0. FOUNDER INPUTS — ce dont j'ai besoin de vous avant l'installation
+1. **VPS** : distribution et version (`cat /etc/os-release`), CPU / RAM / disque libre (`nproc; free -h; df -h /`), méthode d'accès
+   (utilisateur SSH, clé, port, `sudo` disponible), version de Node.js déjà installée (`node -v`, ou aucune).
+2. **Production sur le même VPS ?** Si oui : comment elle tourne (systemd, PM2, Docker ?), son port local, l'emplacement de sa configuration
+   nginx (`ls /etc/nginx/sites-enabled/`), et si nginx est déjà installé — pour garantir que le staging ne partage ni port, ni fichier, ni utilisateur.
+3. **DNS de delaipay.com** : fournisseur (Cloudflare, OVH, Gandi, Route 53, registrar local…) et s'il offre une **API** utilisable par certbot
+   pour DNS-01 (sinon : acceptez-vous de déléguer `staging.delaipay.com` à un fournisseur qui en a une, ex. Cloudflare gratuit ?). Il faudra un
+   jeton d'API **limité à la zone** (édition DNS uniquement), créé par vous.
+4. **E-mail pour Let's Encrypt** (alertes d'expiration du certificat).
+5. **Sauvegardes hors site** : destination (Backblaze B2, Scaleway, OVH Object Storage, Wasabi, NAS, second serveur…) et identifiants
+   **en écriture seule** créés par vous ; et la **clé publique age** (`age1…`) issue de `age-keygen` sur VOTRE poste (la clé privée ne me
+   parvient jamais et ne va jamais sur le serveur).
+6. **Accès git du serveur** : URL du dépôt et une **clé de déploiement en lecture seule** (GitHub / GitLab : « Deploy key », sans écriture),
+   et le commit / tag à déployer en premier.
+7. **Préférences** : authentification basique nginx devant le staging (recommandé : oui) ; restreindre la console à certaines IP (optionnel) ;
+   compte de surveillance externe (UptimeRobot / Better Stack) sous quelle adresse e-mail.
+8. **Qui exécute** : vous (pas à pas de CODE_HANDOFF.md), ou un accès **limité** pour Code : utilisateur `delaipay-staging` uniquement
+   (clé SSH dédiée, `sudo` restreint à `systemctl restart|status delaipay-staging`, `nginx -t`, `systemctl reload nginx`), jamais l'accès aux
+   fichiers ni au service de la production.
+
 ## 1. Hôtes
 | Rôle | Hôte |
 |---|---|
