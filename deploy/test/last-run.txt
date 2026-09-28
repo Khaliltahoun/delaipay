@@ -1,0 +1,64 @@
+
+0. Dépôt source local (commit sain + commit volontairement cassé)
+  ✔ sain 7c7dff2 · cassé 9078c1d
+
+1. Déploiement du commit sain (tests complets, sauvegarde, migrations, santé)
+    Cloning into bare repository '$WORK/root/repo.git'...
+    done.
+    [2026-09-28T18:40:25Z] Déploiement de 7c7dff2d0e36773b8be082b2dcb48f307f3a701c → 7c7dff2d0e36773b8be082b2dcb48f307f3a701c (précédente : aucune)
+    [2026-09-28T18:40:26Z] Suite de tests…
+    [2026-09-28T18:40:38Z] Tests : ℹ pass 318 ℹ fail 0 
+    Schéma à jour : 30 tables · $WORK/data/delaipay.db
+    [2026-09-28T18:40:42Z] Santé OK — version 7c7dff2 en service.
+    [2026-09-28T18:40:42Z] Terminé.
+  ✔ santé : commit 7c7dff2 en service
+
+2. Données fictives du staging + référence
+      (seed) Cabinet HLZ + client de démonstration STE ORYX AUTO SARL · 36 facture(s) importée(s).
+    Staging : données FICTIVES créées. Mots de passe affichés UNE seule fois — à conserver dans votre gestionnaire de mots de passe :
+      hlz-demo  admin     admin@hlz.demo           ********
+      premium   admin     admin@premium.demo       ********
+      client2   admin     admin@client2.demo       ********
+      client2   comptable comptable@client2.demo   ********
+      client2   lecture   lecture@client2.demo     ********
+    Factures : hlz-demo 36, client2 36. Administrateurs plateforme : 0 (créez le premier avec npm run platform:admin:create).
+  ✔ référence sur le staging : 36 · 16 · 350 964,42 · 7 025,33 · md5 a7d1acaa…
+    Administrateur plateforme créé : ops@staging.test
+
+3. Déploiement d'un commit CASSÉ → retour arrière automatique
+    [2026-09-28T18:40:43Z] Déploiement de bad → 9078c1db9aeee4c6e9dca571ff61d00cdde9d96d (précédente : $WORK/root/releases/20260928-184025-7c7dff2)
+    [2026-09-28T18:40:44Z] Suite de tests…
+    [2026-09-28T18:40:56Z] Tests : ℹ pass 318 ℹ fail 0 
+    [2026-09-28T18:40:56Z] Base sauvegardée avant migration : $WORK/root/pre-deploy/20260928-184043-9078c1d.db
+    Schéma à jour : 30 tables · $WORK/data/delaipay.db
+    [2026-09-28T18:41:14Z] ÉCHEC du contrôle de santé de 9078c1d — RETOUR ARRIÈRE.
+    [2026-09-28T18:41:17Z] Retour arrière réussi : 7c7dff2 de nouveau en service.
+  ✔ deploy.sh a signalé l'échec (code 2)
+  ✔ retour arrière : 7c7dff2 de nouveau en service
+  ✔ lien current → version saine
+  ✔ version cassée conservée pour analyse (.echec)
+  ✔ sauvegarde de pré-déploiement présente
+
+4. nginx devant l'application (conteneur nginx:1.27-alpine)
+  ✔ nginx -t : configuration valide
+  ✔ HTTP → HTTPS (301)
+  ✔ HSTS présent
+  ✔ admin.staging.localhost → console
+  ✔ hlz-demo.staging.localhost → espace fictif
+  ✔ aucune API d'espace sur l'hôte console
+  ✔ requête > 26 Mo refusée par nginx (413)
+  ✔ X-Forwarded-For forgé ignoré (IP enregistrée : 192.168.65.1)
+  ✔ X-Request-Id transmis par nginx
+  ✔ basique activée : 401 sans identifiants
+  ✔ basique : 200 avec identifiants
+  ✔ /healthz reste ouvert (surveillance externe)
+
+5. Sauvegarde chiffrée → restauration dans un répertoire neuf → référence
+    Sauvegarde réussie : delaipay-staging-20260928-184122Z.tar.gz.gpg (39753 octets, gpg, sha256 445cec40915c836f…) ; 0 ancienne(s) supprimée(s) ; hors site : non configuré.
+    Restauration réussie dans $WORK/restored
+      base : $WORK/restored/delaipay.db (intégrité ok, empreinte conforme au manifeste)
+  ✔ base restaurée : référence et md5 identiques
+  ✔ console : dernière sauvegarde réussie enregistrée
+
+Fin — arrêt de l'instance locale
+  ✔ Répétition terminée sans échec (répertoire : $WORK)

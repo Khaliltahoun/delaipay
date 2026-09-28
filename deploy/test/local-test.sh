@@ -102,7 +102,7 @@ if command -v docker >/dev/null && docker info >/dev/null 2>&1; then
   check "admin.staging.localhost → console" "$("${C[@]}" https://admin.staging.localhost:18443/)" "Console plateforme"
   check "hlz-demo.staging.localhost → espace fictif" "$("${C[@]}" https://hlz-demo.staging.localhost:18443/api/tenant)" '"known":true'
   check "aucune API d'espace sur l'hôte console" "$("${C[@]}" https://admin.staging.localhost:18443/api/me)" "route_inconnue"
-  head -c 27000000 /dev/zero > big.bin
+  head -c 28000000 /dev/zero > big.bin   # 26,7 Mio > 26 Mio
   check "requête > 26 Mo refusée par nginx (413)" "$("${C[@]}" -o /dev/null -w '%{http_code}' -X POST -H 'Content-Type: application/octet-stream' --data-binary @big.bin https://client2.staging.localhost:18443/api/clients/x/import)" "^413$"
   rm -f big.bin
   # X-Forwarded-For forgé par le client : nginx le REMPLACE par l'adresse réelle — l'application ne voit jamais 203.0.113.99.
@@ -123,7 +123,7 @@ step "5. Sauvegarde chiffrée → restauration dans un répertoire neuf → réf
 export GNUPGHOME="$(mktemp -d /tmp/dpg-XXXXXX)"; chmod 700 "$GNUPGHOME"   # chemin court (socket gpg-agent)
 gpg --batch --passphrase '' --quick-gen-key 'Répétition <backup@staging.test>' default default 1d 2>/dev/null
 ( set -a; . ./staging.env; set +a; export BACKUP_GPG_RECIPIENT=backup@staging.test; cd root/current/app && node src/ops/backup.js | sed 's/^/    /' )
-F="$(ls backups/*.gpg | head -1)"
+F="$(ls "$WORK"/backups/*.gpg | head -1)"
 ( cd root/current/app && node src/ops/restore.js --from "$F" --to "$WORK/restored" | head -2 | sed 's/^/    /' )
 check "base restaurée : référence et md5 identiques" "$( cd root/current/app && DB_PATH="$WORK/restored/delaipay.db" UPLOADS_DIR="$WORK/restored/uploads" TENANT_BASE_DOMAINS=staging.localhost JWT_SECRET=x \
   node src/ops/verify-baseline.js --slug hlz-demo --expect "36,16,350964.42,7025.33,a7d1acaac0688170ef95fce6b7bb2082" 2>/dev/null)" "CONFORME à la référence"
