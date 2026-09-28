@@ -58,7 +58,7 @@ echo "$SHA" > "$NEW/REVISION"
 if [ "$RUN_TESTS" = "1" ]; then
   say "Suite de tests…"
   ( cd "$NEW/app" && env -i PATH="$PATH" HOME="$(mktemp -d)" TMPDIR="$(mktemp -d)" npm test >"$NEW/test.log" 2>&1 ) \
-    || { say "ÉCHEC des tests — rien n'est modifié (voir $NEW/test.log)."; rm -rf "$NEW"; exit 1; }
+    || { cp "$NEW/test.log" "$DEPLOY_ROOT/tests-echec-$SHORT.log"; say "ÉCHEC des tests — rien n'est modifié (journal : $DEPLOY_ROOT/tests-echec-$SHORT.log)."; grep -E '^(ℹ (pass|fail)|✖)' "$NEW/test.log" | head -10; rm -rf "$NEW"; exit 1; }
   say "Tests : $(grep -E '^ℹ (pass|fail)' "$NEW/test.log" | tr '\n' ' ')"
 fi
 
