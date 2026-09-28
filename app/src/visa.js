@@ -13,7 +13,12 @@ const { fmtMoney } = require('./util');
 const CONCLUSIONS = ['Sans observation', 'Avec observation', 'Avec réserve', 'Refus de visa'];
 // « Avec observation » et « Avec réserve » : le texte renvoie aux observations / réserves « mentionnées ci-dessus »
 // → au moins UNE est exigée et elles sont imprimées juste avant la conclusion (VISA-2).
-const NEEDS_OBS = { 'Avec observation': { titre: 'Observations :', mot: 'observation' }, 'Avec réserve': { titre: 'Réserves :', mot: 'réserve' } };
+// « Refus de visa » (3A.1, autorisation du fondateur) : un refus expose ses motifs, imprimés avant la conclusion.
+const NEEDS_OBS = {
+  'Avec observation': { titre: 'Observations :', mot: 'observation', un: 'une', pluriel: 'observations' },
+  'Avec réserve': { titre: 'Réserves :', mot: 'réserve', un: 'une', pluriel: 'réserves' },
+  'Refus de visa': { titre: 'Motifs du refus :', mot: 'motif', un: 'un', pluriel: 'motifs' },
+};
 const OBS_MAX = 20, OBS_LEN = 1000;
 /** Normalise la liste (tableau ou texte, une par ligne) ; lève une erreur si requise et vide. */
 function normalizeObservations(conclusion, observations) {
@@ -21,10 +26,10 @@ function normalizeObservations(conclusion, observations) {
     .map(o => String(o == null ? '' : o).replace(/^\s*(?:[-•*]|\d+[.)])\s*/, '').trim()).filter(Boolean);
   const need = NEEDS_OBS[conclusion];
   if (!need) return [];
-  if (!list.length) throw new VisaError(`La conclusion « ${conclusion} » exige au moins une ${need.mot} : le texte du visa renvoie aux ${need.mot}s « mentionnées ci-dessus ».`, 'observations_requises');
-  if (list.length > OBS_MAX) throw new VisaError(`${OBS_MAX} ${need.mot}s au maximum.`, 'observations_trop_nombreuses');
+  if (!list.length) throw new VisaError(`La conclusion « ${conclusion} » exige au moins ${need.un} ${need.mot} : le texte du visa renvoie aux ${need.pluriel} ${need.mot === 'motif' ? 'exposés' : 'mentionnées'} ci-dessus.`, 'observations_requises');
+  if (list.length > OBS_MAX) throw new VisaError(`${OBS_MAX} ${need.pluriel} au maximum.`, 'observations_trop_nombreuses');
   const long = list.find(o => o.length > OBS_LEN);
-  if (long) throw new VisaError(`Chaque ${need.mot} est limitée à ${OBS_LEN} caractères.`, 'observation_trop_longue');
+  if (long) throw new VisaError(`Chaque ${need.mot} est limité${need.un === 'une' ? 'e' : ''} à ${OBS_LEN} caractères.`, 'observation_trop_longue');
   return list;
 }
 /**
@@ -109,8 +114,8 @@ function buildData({ e, annee, trimestre, montant, conclusion, signataire, type,
 function conclusionBlock(conclusion, suffix) {
   const LEADS = {
     'Avec réserve': "Sur la base de nos travaux, et en raison des réserves mentionnées ci-dessus, nous exprimons une conclusion avec réserve sur la concordance des informations figurant dans l'état joint à la déclaration des délais de paiement, avec les justificatifs des informations figurant sur les factures non payées dans les délais prévus à l'article 2.78 de la loi 69-21",
-    'Refus de visa': "Sur la base de nos travaux, nous ne sommes pas en mesure de nous prononcer sur la concordance des informations figurant dans l'état joint à la déclaration des délais de paiement, avec les justificatifs des informations figurant sur les factures non payées dans les délais prévus à l'article 2.78 de la loi 69-21",
-    'Avec observation': "Sur la base de nos travaux, et sous réserve des observations mentionnées ci-dessus, nous n'avons pas d'autres observations sur la concordance des informations figurant dans l'état joint à la déclaration des délais de paiement, avec les justificatifs des informations figurant sur les factures non payées dans les délais prévus à l'article 2.78 de la loi 69-21",
+    'Refus de visa': "Sur la base de nos travaux, et pour les motifs exposés ci-dessus, nous ne sommes pas en mesure de nous prononcer sur la concordance des informations figurant dans l'état joint à la déclaration des délais de paiement, avec les justificatifs des informations figurant sur les factures non payées dans les délais prévus à l'article 2.78 de la loi 69-21",
+    'Avec observation': "Sur la base de nos travaux, et compte tenu des observations mentionnées ci-dessus, nous n'avons pas d'autres observations à formuler sur la concordance des informations figurant dans l'état joint à la déclaration des délais de paiement, avec les justificatifs des informations figurant sur les factures non payées dans les délais prévus à l'article 2.78 de la loi 69-21",
     'Sans observation': "Sur la base de nos travaux, nous n'avons pas d'observations sur la concordance des informations figurant dans l'état joint à la déclaration des délais de paiement, avec les justificatifs des informations figurant sur les factures non payées dans les délais prévus à l'article 2.78 de la loi 69-21",
   };
   const lead = LEADS[conclusion];
