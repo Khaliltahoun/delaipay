@@ -39,8 +39,8 @@ module.exports = function (api) {
 
   api.get('/workspaces/check-slug', (req, res) => {
     const slug = String(req.query.slug || '').trim().toLowerCase();
+    if (tenant.RESERVED.has(slug)) return res.json({ ok: false, error: `Cet identifiant est réservé : « ${slug} » est utilisé par la plateforme.` });
     if (!tenant.SLUG_RE.test(slug)) return res.json({ ok: false, error: '2 à 40 caractères : lettres minuscules, chiffres et tirets (ni au début ni à la fin).' });
-    if (tenant.RESERVED.has(slug)) return res.json({ ok: false, error: `« ${slug} » est réservé à la plateforme.` });
     if (db.prepare('SELECT 1 FROM cabinet WHERE lower(slug)=?').get(slug)) return res.json({ ok: false, error: `« ${slug} » est déjà utilisé.` });
     res.json({ ok: true, adresse: workspaceOrigin(req, slug) });
   });

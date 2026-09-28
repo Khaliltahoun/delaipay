@@ -135,3 +135,10 @@ test('VER-2b : le journal AFFICHE le(s) numéro(s) de facture des levées, annul
   const clo = auditDetails(JSON.stringify({ verifications_en_attente: { ouvertes: 26, aVerifier: 12, convManquantes: 8, horsValidite: 1, total: 47 }, accuse_verifications: true }));
   assert.match(clo, /anomalies ouvertes : 26, à vérifier : 12, sans convention justificative : 8/); assert.ok(!/aVerifier|convManquantes/.test(clo));
 });
+test('P3-3 (3A.1) : listes d’IP lisibles dans le journal de l’espace (jamais « [object Object] »)', () => {
+  const { auditDetails } = fromApp(['money', 'dateFr', 'ROLE_FR', 'DET_KEY', 'HIDDEN_DET', 'INTERNAL_ID', 'facLine', 'detVal', 'auditDetails']);
+  const out = auditDetails('{"apres":{"ipAutorisees":true,"listeIp":[{"cidr":"203.0.113.0/24","label":"Bureau test QA"}],"ipBloquees":[]}}');
+  assert.match(out, /203\.0\.113\.0\/24 · Bureau test QA/);
+  assert.ok(!/object Object/.test(out));
+  assert.match(out, /ipBloquees : aucune|IP bloquées : aucune/);
+});

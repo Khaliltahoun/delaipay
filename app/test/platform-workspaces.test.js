@@ -73,7 +73,7 @@ test('espaces : création « Prime » depuis la console → lien d’invitation 
 
 test('espaces : identifiant validé, unique, réservé refusé', async () => {
   const c = await con();
-  for (const [slug, re] of [['admin', /réservé/], ['support', /réservé/], ['Pr ime', /2 à 40/], ['-x', /2 à 40/]]) {
+  for (const [slug, re] of [['admin', /Cet identifiant est réservé/], ['support', /Cet identifiant est réservé/], ['Pr ime', /2 à 40/], ['-x', /2 à 40/]]) {
     const r = await c.get('/api/platform/workspaces/check-slug?slug=' + encodeURIComponent(slug));
     assert.equal(r.body.ok, false, slug); assert.match(r.body.error, re, slug);
   }

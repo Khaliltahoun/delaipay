@@ -32,7 +32,13 @@ $('#resetForm').addEventListener('submit', async e => {
   if (pw !== pw2) return show('Les deux mots de passe ne correspondent pas.');
   const b = $('#submitBtn'); b.disabled = true; b.textContent = 'Enregistrement…';
   const r = await post('/api/password-reset/complete', { token, password: pw }).catch(() => null);
-  if (r && r.ok) { $('#formBox').innerHTML = '<h1>Mot de passe enregistré</h1><p class="lead">Vos sessions précédentes ont été fermées. Connectez-vous avec votre nouveau mot de passe.</p><a class="btn btn-primary login-submit" href="/login">Se connecter</a>'; return; }
+  if (r && r.ok) {
+    // P3-12 : confirmation affichée à la place du formulaire, annoncée aux lecteurs d'écran, sans ambiguïté.
+    $('#resetForm').innerHTML = `<div class="note note-ok" role="status"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12l5 5L20 7"/></svg><div><div class="note-t">Mot de passe enregistré</div>Votre nouveau mot de passe est actif. Vos sessions précédentes ont été fermées.</div></div>
+      <a class="btn btn-primary login-submit mt-14" href="/login">Se connecter avec le nouveau mot de passe</a>`;
+    document.title = 'Mot de passe enregistré — DelaiPay';
+    return;
+  }
   show((r && r.data && r.data.error) || 'L’enregistrement a échoué. Aucune modification n’a été faite ; réessayez.');
   b.disabled = false; b.textContent = 'Enregistrer le mot de passe';
 });

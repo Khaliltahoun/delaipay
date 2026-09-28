@@ -43,7 +43,7 @@ async function enrolled(email = newAdmin(), b = consoleBrowser()) {
 
 test('console : slugs réservés refusés à la création d’espace', () => {
   for (const s of ['admin', 'www', 'api', 'app', 'mail', 'status', 'support', 'static']) {
-    assert.throws(() => workspace.createWorkspace({ slug: s, nom: 'X', admin: { email: `a@${s}.ma`, nom: 'A', password: 'Secret-1234' } }), /Identifiant d’espace invalide/, s);
+    assert.throws(() => workspace.createWorkspace({ slug: s, nom: 'X', admin: { email: `a@${s}.ma`, nom: 'A', password: 'Secret-1234' } }), /Cet identifiant est réservé/, s);
   }
 });
 

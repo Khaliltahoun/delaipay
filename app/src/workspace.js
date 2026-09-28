@@ -35,7 +35,8 @@ function initialsOfName(nom) { return (String(nom || 'U').trim().split(/\s+/).ma
 function createWorkspace(input) {
   const i = input || {};
   const slug = String(i.slug || '').trim().toLowerCase();
-  if (!tenant.SLUG_RE.test(slug) || RESERVED.has(slug)) throw new WorkspaceError('Identifiant d’espace invalide : 2 à 40 caractères, lettres minuscules, chiffres et tirets (ex. « premium »).');
+  if (RESERVED.has(slug)) throw new WorkspaceError(`Cet identifiant est réservé : « ${slug} » est utilisé par la plateforme. Choisissez-en un autre.`);
+  if (!tenant.SLUG_RE.test(slug)) throw new WorkspaceError('Identifiant d’espace invalide : 2 à 40 caractères, lettres minuscules, chiffres et tirets (ex. « premium »).');
   const nom = String(i.nom || '').trim();
   if (!nom || nom.length > 120) throw new WorkspaceError('Nom du cabinet requis (120 caractères maximum).');
   const a = i.admin || {};

@@ -2398,7 +2398,7 @@ test('saas1/création : espace + premier admin en une transaction ; aucun espace
   assert.equal(db.prepare("SELECT COUNT(*) n FROM cabinet WHERE slug='crea-rb'").get().n, 0, 'rollback : aucun espace');
   assert.equal(db.prepare("SELECT COUNT(*) n FROM utilisateur WHERE email='rb@ex.ma'").get().n, 0, 'rollback : aucun utilisateur');
   assert.throws(() => workspaceMod.createWorkspace({ slug: 'crea-ok', nom: 'Doublon', admin: { email: 'x@ex.ma', nom: 'X', password: 'Motdepasse1!' } }), /déjà utilisé/);
-  assert.throws(() => workspaceMod.createWorkspace({ slug: 'www', nom: 'Réservé', admin: { email: 'x@ex.ma', nom: 'X', password: 'Motdepasse1!' } }), /invalide/);
+  assert.throws(() => workspaceMod.createWorkspace({ slug: 'www', nom: 'Réservé', admin: { email: 'x@ex.ma', nom: 'X', password: 'Motdepasse1!' } }), /Cet identifiant est réservé/);
   assert.throws(() => workspaceMod.createWorkspace({ slug: 'faible', nom: 'Faible', admin: { email: 'x@ex.ma', nom: 'X', password: 'court' } }), /10 caractères/);
 });
 

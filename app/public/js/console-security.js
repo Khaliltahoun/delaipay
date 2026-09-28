@@ -28,9 +28,10 @@ function devicesTable(rows, { showWs = true } = {}) {
       <td data-l="Statut">${devPill(d.statut)}${d.expireLe ? ` <span class="muted t-xs">→ ${C.fdt(d.expireLe)}</span>` : ''}</td>
       <td class="mono" data-l="1re IP">${esc(d.premiereIp || '—')}</td><td class="mono" data-l="IP">${esc(d.derniereIp || '—')}</td><td data-l="Pays">${esc(d.pays || '—')}</td>
       <td class="mono" data-l="Depuis">${C.fdt(d.firstSeen)}</td><td data-l="Vu">${C.ago(d.lastSeen)}</td>
-      <td class="col-act"><div class="row-12" style="gap:4px">${d.statut !== 'approuve' && d.statut !== 'revoque' ? `<button class="btn btn-primary btn-xs" data-dev="approve" data-id="${esc(d.id)}">Approuver</button>` : ''}
-        ${d.statut === 'en_attente' ? `<button class="btn btn-ghost btn-xs" data-dev="refuse" data-id="${esc(d.id)}">Refuser</button>` : ''}
-        ${['approuve', 'connu'].includes(d.statut) ? `<button class="btn btn-ghost btn-xs" data-dev="revoke" data-id="${esc(d.id)}">Révoquer</button>` : ''}</div></td></tr>`),
+      <td class="col-act">${(() => { const lbl = esc(`${devLabel(d)}${d.modele ? ' · ' + d.modele : ''}|${(d.utilisateur && (d.utilisateur.nom || d.utilisateur.email)) || '—'}|${(d.utilisateur && d.utilisateur.email) || ''}|${d.derniereIp || '—'}`);
+        return `<div class="row-12" style="gap:4px">${d.statut !== 'approuve' && d.statut !== 'revoque' ? `<button class="btn btn-primary btn-xs" data-dev="approve" data-id="${esc(d.id)}" data-lbl="${lbl}">Approuver</button>` : ''}
+        ${d.statut === 'en_attente' ? `<button class="btn btn-ghost btn-xs" data-dev="refuse" data-id="${esc(d.id)}" data-lbl="${lbl}">Refuser</button>` : ''}
+        ${['approuve', 'connu'].includes(d.statut) ? `<button class="btn btn-ghost btn-xs" data-dev="revoke" data-id="${esc(d.id)}" data-lbl="${lbl}">Révoquer</button>` : ''}</div>`; })()}</td></tr>`),
     { empty: 'Aucun appareil.', compact: !showWs });
 }
 function wireRows(el, reload) {
@@ -41,7 +42,11 @@ function wireRows(el, reload) {
   }));
   $$('[data-dev]', el).forEach(b => b.addEventListener('click', async () => {
     const act = b.dataset.dev, L = { approve: 'Approuver', refuse: 'Refuser', revoke: 'Révoquer' }[act];
-    const v = await C.dialog({ title: `${L} cet appareil ?`, danger: act !== 'approve', body: act === 'revoke' ? '<p class="t-sm">Ses sessions sont fermées immédiatement.</p>' : '', confirm: L });
+    // P3-5 : le dialogue nomme l'appareil et l'utilisateur (comme dans l'espace).
+    const [dev, nom, mail, ip] = String(b.dataset.lbl || '').split('|');
+    const v = await C.dialog({ title: `${L} l’appareil de ${nom || 'cet utilisateur'} ?`, danger: act !== 'approve', confirm: L,
+      body: `<dl class="dl-ops"><dt>Utilisateur</dt><dd>${esc(nom || '—')} <span class="muted">${esc(mail || '')}</span></dd><dt>Appareil</dt><dd>${esc(dev || '—')}</dd><dt>Dernière IP</dt><dd class="mono">${esc(ip || '—')}</dd></dl>`
+        + (act === 'revoke' ? '<p class="t-sm mt-14">Ses sessions sur cet appareil sont fermées immédiatement.</p>' : act === 'approve' ? '<p class="t-sm mt-14">L’utilisateur pourra se connecter depuis cet appareil.</p>' : '') });
     if (!v) return;
     try { await C.api('POST', `/devices/${b.dataset.id}/${act}`, {}); C.toast('Décision enregistrée.'); reload(); } catch (e) { C.toast(e.message, 'err'); }
   }));

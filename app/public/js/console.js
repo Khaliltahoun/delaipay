@@ -263,10 +263,34 @@ const ACTION_FR = {
   enrolement_2fa_refuse: 'Enrôlement 2FA refusé', codes_de_secours_regeneres: 'Codes de secours régénérés', reinitialisation_2fa: 'Double authentification réinitialisée (CLI)',
   admin_plateforme_desactive: 'Administrateur plateforme désactivé', admin_plateforme_active: 'Administrateur plateforme réactivé',
   mot_de_passe_admin_plateforme: 'Mot de passe administrateur remplacé (CLI)', liste_ip_console: 'Liste d’IP de la console modifiée',
+  espace_cree: 'Espace créé', espace_modifie: 'Espace modifié', espace_logo: 'Logo de l’espace', abonnement_modifie: 'Abonnement modifié',
+  espace_suspendu: 'Espace suspendu', espace_reactive: 'Espace réactivé', espace_exporte: 'Export des données de l’espace', espace_supprime: 'Espace supprimé',
+  espace_restaure: 'Espace restauré', invitation_admin: 'Invitation d’administrateur', maintenance_espace: 'Bandeau de maintenance (espace)',
+  maintenance_globale: 'Bandeau de maintenance (global)', utilisateur_modifie: 'Utilisateur modifié', utilisateur_desactive: 'Utilisateur désactivé',
+  utilisateur_reactive: 'Utilisateur réactivé', deconnexion_forcee: 'Déconnexion forcée', lien_reinitialisation: 'Lien de réinitialisation créé',
+  appareils_revoques: 'Appareils révoqués', session_revoquee: 'Session fermée', appareil_approuve: 'Appareil approuvé', appareil_refuse: 'Appareil refusé',
+  appareil_revoque: 'Appareil révoqué', politique_acces: 'Politique d’accès modifiée', ip_bloquees_globales: 'IP bloquées (plateforme) modifiées',
+  acces_support_ouvert: 'Accès d’assistance ouvert', acces_support_termine: 'Accès d’assistance terminé', retention_modifiee: 'Rétention modifiée',
+  purge_retention: 'Purge de rétention (CLI)',
 };
+const KEY_FR = { statut: 'Statut', motif: 'Motif', details: 'Détails', appareils: 'Appareils', ipAutorisees: 'Liste d’IP active', listeIp: 'IP autorisées',
+  ipBloquees: 'IP bloquées', appareils_approuves: 'Appareils approuvés', dureeApprobationJours: 'Durée d’approbation (j)', avertissements: 'Avertissements',
+  coupure_confirmee: 'Coupure confirmée', sessions_fermees: 'Sessions fermées', debut: 'Début', fin: 'Fin', fin_effective: 'Fin effective', expire: 'Expire le',
+  lecture_seule: 'Lecture seule', email: 'E-mail', nom: 'Nom', plan: 'Formule', role: 'Rôle', actif: 'Actif', message: 'Message', date_debut: 'Début', date_fin: 'Fin',
+  montant: 'Montant', statut_paiement: 'Paiement', grace_jours: 'Grâce (j)', fichier: 'Fichier', taille: 'Taille', methode: 'Méthode', codes_restants: 'Codes restants' };
+/** Valeur lisible : heures locales avec fuseau, listes d'IP « plage · libellé », objets en « clé : valeur ». */
+function readable(v) {
+  if (v == null || v === '') return '—';
+  if (typeof v === 'boolean') return v ? 'Oui' : 'Non';
+  if (typeof v === 'string') return window.DPTime.formatValue(v, C.tz);
+  if (Array.isArray(v)) return v.length ? v.map(x => x && typeof x === 'object' && x.cidr ? [x.cidr, x.label].filter(Boolean).join(' · ') : readable(x)).join(' ; ') : 'aucune';
+  if (typeof v === 'object') return Object.entries(v).map(([k, x]) => `${KEY_FR[k] || k.replace(/_/g, ' ')} : ${readable(x)}`).join(' · ');
+  return String(v);
+}
+C.readable = readable;
 C.ACTION_FR = ACTION_FR;
 function diffHtml(r) {
-  const fmt = v => esc(typeof v === 'string' ? v : JSON.stringify(v, null, 1));
+  const fmt = v => esc(readable(v));
   const parts = [];
   if (r.avant != null) parts.push(`<div><span class="k">avant :</span> ${fmt(r.avant)}</div>`);
   if (r.apres != null) parts.push(`<div><span class="k">après :</span> ${fmt(r.apres)}</div>`);

@@ -97,7 +97,10 @@ function checkSessionFingerprint(fp) {
   }
 }
 // Retour sur l'onglet : vérification immédiate de la session (pas d'attente d'une action).
-document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible' && state.me) api('/me', { noCache: true }).catch(() => {}); });
+document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible' && state.me) refreshPlatformNotices(); });
+// P3-2 : abonnement, lecture seule, maintenance, assistance — relus au retour sur l'onglet et toutes les 5 minutes.
+function refreshPlatformNotices() { return api('/me', { noCache: true }).then(me => { state.plateforme = me.plateforme || null; renderPlatformBanner(); }).catch(() => {}); }
+setInterval(() => { if (state.me && document.visibilityState === 'visible') refreshPlatformNotices(); }, 5 * 60e3);
 
 /* Rendu paginé pour les grands tableaux : n'injecte qu'une tranche de lignes à la fois
    (évite de figer l'onglet sur des milliers de <tr>). La vue doit contenir un
@@ -1154,16 +1157,16 @@ function editClientModal(e) {
 function clientModal() {
   modal(`<div class="modal-h"><h3>Nouveau client</h3><button class="x" onclick="closeOverlay()">${XICO}</button></div>
   <div class="modal-b"><div class="form-grid">
-    <div class="full"><label class="fld-lbl">Raison sociale *</label><input class="input-fld" id="c_rs"></div>
-    <div><label class="fld-lbl">ICE</label><input class="input-fld" id="c_ice"></div>
-    <div><label class="fld-lbl">Identifiant fiscal</label><input class="input-fld" id="c_if"></div>
-    <div><label class="fld-lbl">RC</label><input class="input-fld" id="c_rc"></div>
-    <div><label class="fld-lbl">Ville</label><input class="input-fld" id="c_ville"></div>
-    <div><label class="fld-lbl">CA HT (DH)</label><input class="input-fld" id="c_ca" type="number"></div>
-    <div><label class="fld-lbl">Exercice</label><input class="input-fld" id="c_ex" type="number" value="2026"></div>
-    <div class="full"><label class="fld-lbl">Adresse</label><input class="input-fld" id="c_adr"></div>
-    <div><label class="fld-lbl">Secteur</label><input class="input-fld" id="c_sec"></div>
-    <div><label class="fld-lbl">Expert responsable</label><input class="input-fld" id="c_exp"></div>
+    <div class="full"><label class="fld-lbl" for="c_rs">Raison sociale *</label><input class="input-fld" id="c_rs"></div>
+    <div><label class="fld-lbl" for="c_ice">ICE</label><input class="input-fld" id="c_ice"></div>
+    <div><label class="fld-lbl" for="c_if">Identifiant fiscal</label><input class="input-fld" id="c_if"></div>
+    <div><label class="fld-lbl" for="c_rc">RC</label><input class="input-fld" id="c_rc"></div>
+    <div><label class="fld-lbl" for="c_ville">Ville</label><input class="input-fld" id="c_ville"></div>
+    <div><label class="fld-lbl" for="c_ca">CA HT (DH)</label><input class="input-fld" id="c_ca" type="number"></div>
+    <div><label class="fld-lbl" for="c_ex">Exercice</label><input class="input-fld" id="c_ex" type="number" value="2026"></div>
+    <div class="full"><label class="fld-lbl" for="c_adr">Adresse</label><input class="input-fld" id="c_adr"></div>
+    <div><label class="fld-lbl" for="c_sec">Secteur</label><input class="input-fld" id="c_sec"></div>
+    <div><label class="fld-lbl" for="c_exp">Expert responsable</label><input class="input-fld" id="c_exp"></div>
   </div></div>
   <div class="modal-f"><button class="btn btn-ghost" onclick="closeOverlay()">Annuler</button><button class="btn btn-primary" id="c_save">Créer</button></div>`);
   $('#c_save').onclick = async () => {
@@ -2070,7 +2073,13 @@ async function renderVisa() {
   wireClientBar(renderVisa);
   $('#conclSel').onchange = e => { state._concl = { key, value: e.target.value }; renderVisa(); };
   const si = $('#signInp'); si.onchange = () => { state._sign = si.value; renderVisa(); };
-  const oi = $('#obsInp'); if (oi) oi.onchange = () => { state._obs = { key, value: oi.value }; renderVisa(); };
+  const oi = $('#obsInp');
+  if (oi) {
+    const apply = () => { clearTimeout(state._obsT); if ((state._obs || {}).value === oi.value) return; state._obs = { key, value: oi.value, caret: oi.selectionStart }; state._obsFocus = true; renderVisa(); };
+    oi.oninput = () => { clearTimeout(state._obsT); state._obsT = setTimeout(apply, 700); };
+    oi.onchange = apply;
+    if (state._obsFocus) { state._obsFocus = false; oi.focus(); const c = (state._obs && state._obs.caret) != null ? state._obs.caret : oi.value.length; oi.setSelectionRange(c, c); }
+  }
 }
 
 /* ============================== ALERTES ============================== */
@@ -2228,7 +2237,7 @@ async function renderAnomalies() {
   $$('#view [data-res]').forEach(b => b.onclick = async () => {
     const a = rows.find(x => x.id === b.dataset.res);
     const motif = await ui.prompt({ tone: 'warn', title: `Marquer résolue : ${ANO_LBL[a.type] || 'anomalie'} ?`, html: `<p>${esc(anoMessage(a))}</p>`,
-      facts: [['Factures', (a.factures_concernees || []).map(f => f.numero).join(', ') || '—'], ['Fournisseur', a.fournisseur_nom || '—'], ['Client', a.ent || '—'], ['Période', a.annee ? `T${a.trimestre} ${a.annee}` : 'non renseignée']], label: 'Motif de la résolution', required: true,
+      facts: [['Factures', (a.factures_concernees || []).map(facLine).join(' ; ') || '—'], ['Fournisseur', a.fournisseur_nom || '—'], ['Client', a.ent || '—'], ['Période', a.annee ? `T${a.trimestre} ${a.annee}` : 'non renseignée']], label: 'Motif de la résolution', required: true,
       placeholder: 'Ex. paiement partiel confirmé par le relevé bancaire', confirmLabel: 'Marquer résolue' });
     if (!motif) return;
     try { await api(`/anomalies/${a.id}/resolve`, { method: 'POST', body: { motif } }); toast('Anomalie résolue — motif inscrit au journal d’audit.', 'ok'); refreshAlertsBadge(); renderAnomalies(); }
