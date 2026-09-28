@@ -58,7 +58,7 @@ function showNotice(kind, title, msg) {
 }
 const REASONS = {
   expired: ['info', 'Session expirée', 'Pour votre sécurité, votre session a pris fin. Reconnectez-vous pour reprendre là où vous en étiez — aucune donnée n’a été perdue.'],
-  expired_stale: ['info', 'Session expirée', 'Votre session n’est plus valide (elle a peut-être expiré ou l’espace a été réinitialisé). Reconnectez-vous.'],
+  expired_stale: ['info', 'Session expirée', 'Votre session n’est plus valide : elle a expiré, ou DelaiPay a été mis à jour. Reconnectez-vous — aucune donnée n’a été perdue.'],
   user_inactive: ['warn', 'Compte désactivé', 'Votre accès a été désactivé par l’administrateur de votre espace.'],
   workspace_inactive: ['warn', 'Espace désactivé', 'Cet espace de travail est suspendu. Contactez DelaiPay pour le réactiver.'],
   wrong_workspace: ['info', 'Autre espace de travail', 'Vous étiez connecté·e à un autre espace. Connectez-vous avec un compte de cet espace.'],
@@ -69,6 +69,14 @@ const REASONS = {
   espace_suspendu: ['warn', 'Espace suspendu', 'Cet espace de travail est suspendu. Contactez DelaiPay pour le réactiver.'],
   espace_supprime: ['warn', 'Espace indisponible', 'Cet espace de travail n’est plus disponible.'],
   compte_desactive: ['warn', 'Compte désactivé', 'Votre accès a été désactivé par l’administrateur de votre espace.'],
+  // Coupure par la politique d'accès de l'espace (INC 3A.1) : la raison réelle, jamais une page de connexion muette.
+  ip_non_autorisee: ['warn', 'Réseau non autorisé', 'Connexion impossible depuis ce réseau : votre espace n’autorise que certaines adresses IP. Contactez l’administrateur de votre espace.'],
+  ip_bloquee: ['warn', 'Adresse IP bloquée', 'Connexion refusée depuis cette adresse IP. Contactez l’administrateur de votre espace.'],
+  appareil_en_attente: ['warn', 'Appareil à approuver', 'Cet appareil doit être approuvé par l’administrateur de votre espace.'],
+  appareil_refuse: ['warn', 'Appareil refusé', 'L’accès depuis cet appareil a été refusé par l’administrateur de votre espace.'],
+  appareil_expire: ['warn', 'Approbation expirée', 'L’approbation de cet appareil a expiré : elle doit être renouvelée par l’administrateur de votre espace.'],
+  fin_support: ['info', 'Accès d’assistance terminé', 'L’accès d’assistance DelaiPay est terminé.'],
+  mot_de_passe_reinitialise: ['info', 'Mot de passe modifié', 'Votre mot de passe a été réinitialisé : reconnectez-vous avec le nouveau mot de passe.'],
 };
 const reason = new URLSearchParams(location.search).get('reason');
 if (REASONS[reason]) showNotice(...REASONS[reason]);

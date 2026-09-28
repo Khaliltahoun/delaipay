@@ -174,7 +174,7 @@ test('IP bloquées : par espace et globale (console)', async () => {
   const selfBlock = await t.admin.put('/api/security/policy', { ipBloquees: ['203.0.113.10'] });
   assert.equal(selfBlock.status, 400, 'on ne bloque pas sa propre IP');
   const t2 = await team();
-  assert.equal((await t.c.put('/api/platform/ip-blocklist', { rows: [{ cidr: '192.0.2.128/25', label: 'Plage abusive' }] })).status, 200);
+  assert.equal((await t.c.put('/api/platform/ip-blocklist', { rows: [{ cidr: '192.0.2.128/25', label: 'Plage abusive' }], confirmation: 'BLOQUER' })).status, 200);
   try {
     for (const tt of [t, t2]) assert.equal((await nav(tt.host, '192.0.2.200').post('/api/auth/login', { email: tt.comptaEmail, password: PW })).body.code, 'ip_bloquee');
     const pa = (await t.c.get('/api/platform/audit')).body.rows.find(r => r.action === 'ip_bloquees_globales');
@@ -184,7 +184,9 @@ test('IP bloquées : par espace et globale (console)', async () => {
 
 test('console : politique d’un espace (avertissement IP des administrateurs), appareils et sessions, révocation', async () => {
   const t = await team();
-  const r = await t.c.put(`/api/platform/workspaces/${t.w.id}/security/policy`, { ipAutorisees: true, listeIp: ['192.0.2.0/24'] });
+  const r0 = await t.c.put(`/api/platform/workspaces/${t.w.id}/security/policy`, { ipAutorisees: true, listeIp: ['192.0.2.0/24'] });
+  assert.equal(r0.status, 409, 'CONS-IP : coupure sans confirmation refusée'); assert.equal(r0.body.code, 'confirmation_requise');
+  const r = await t.c.put(`/api/platform/workspaces/${t.w.id}/security/policy`, { ipAutorisees: true, listeIp: ['192.0.2.0/24'], confirmation: t.slug });
   assert.equal(r.status, 200);
   assert.ok(r.body.avertissements.some(a => a.includes(`admin@${t.slug}.ma`)), 'avertit : IP de l’administrateur hors liste');
   assert.equal((await t.c.put(`/api/platform/workspaces/${t.w.id}/security/policy`, { ipAutorisees: false, appareils: true, approuverAppareilsConnus: true })).status, 200);
@@ -239,4 +241,53 @@ test('activité de connexion : succès, échecs, verrouillage, refus, attente �
     assert.ok(d.signaux.some(s => s.type === 'nouveau_pays' && /FR/.test(s.message)), 'signal nouveau pays');
     assert.ok(d.rows.some(r => r.pays === 'MA'));
   } finally { delete process.env.GEOIP_DB; fs.rmSync(csv, { force: true }); }
+});
+
+test('CONS-IP : aperçu AVANT enregistrement (qui serait coupé, dernier accès admin), confirmation saisie, plage invalide refusée', async () => {
+  const t = await team();
+  const base = `/api/platform/workspaces/${t.w.id}/security`;
+  // Plage invalide : refusée dès l'aperçu, rien d'enregistré.
+  for (const bad of ['203.0.113.0/33', '300.1.1.1', 'abc', '10.0.0.0/4']) {
+    const r = await t.c.post(base + '/preview', { ipAutorisees: true, listeIp: [bad] });
+    assert.equal(r.status, 400, bad); assert.match(r.body.error, /Liste d’IP autorisées/);
+  }
+  const pv = await t.c.post(base + '/preview', { ipAutorisees: true, listeIp: [{ cidr: '203.0.113.0/24', label: 'Bureau' }] });
+  assert.equal(pv.status, 200);
+  assert.equal(pv.body.coupure, true);
+  assert.deepEqual(pv.body.sessions.map(x => [x.email, x.ip, x.raison]), [[t.comptaEmail, '198.51.100.20', 'ip_non_autorisee']], 'le comptable (198.51.100.20) serait coupé, pas l’admin (203.0.113.10)');
+  assert.ok(pv.body.utilisateurs.some(u => u.email === t.comptaEmail && u.ip === '198.51.100.20'));
+  assert.equal(pv.body.dernierAccesAdmin.email, `admin@${t.slug}.ma`); assert.equal(pv.body.dernierAccesAdmin.horsListe, false);
+  assert.equal(db.prepare('SELECT acces_json FROM cabinet WHERE id=?').get(t.w.id).acces_json, null, 'l’aperçu n’enregistre rien');
+  // Enregistrement : confirmation exacte exigée.
+  assert.equal((await t.c.put(base + '/policy', { ipAutorisees: true, listeIp: ['203.0.113.0/24'], confirmation: 'PRIME' })).status, 409);
+  assert.equal((await t.c.put(base + '/policy', { ipAutorisees: true, listeIp: ['203.0.113.0/24'], confirmation: t.slug })).status, 200);
+  // Coupure : la session du comptable renvoie à la connexion AVEC le message réseau — rechargement de page…
+  const jar = { ...t.compta.jar };
+  const page = await H.request('GET', '/', { host: t.host, raw: true, headers: { 'X-Forwarded-For': '198.51.100.20' }, cookies: jar });
+  assert.equal(page.status, 302); assert.match(page.headers.location, /\/login\?reason=ip_non_autorisee/);
+  // … ou action dans l'application (l'interface redirige vers /login?reason=<raison>).
+  const api = await H.request('GET', '/api/me', { host: t.host, headers: { 'X-Forwarded-For': '198.51.100.20' }, cookies: jar });
+  assert.equal(api.status, 401); assert.equal(api.body.reason, 'ip_non_autorisee'); assert.match(api.body.error, /Connexion impossible depuis ce réseau/);
+  const appJs = fs.readFileSync(path.join(__dirname, '..', 'public', 'js', 'app.js'), 'utf8');
+  assert.match(appJs, /data\.reason \|\| data\.code/, 'redirection avec la raison');
+  const login = fs.readFileSync(path.join(__dirname, '..', 'public', 'js', 'login.js'), 'utf8');
+  assert.match(login, /ip_non_autorisee: \['warn', 'Réseau non autorisé', 'Connexion impossible depuis ce réseau/, 'la page de connexion affiche le message');
+  // Sans coupure : pas de confirmation.
+  assert.equal((await t.c.put(base + '/policy', { ipAutorisees: false })).status, 200);
+});
+
+test('CONS-IP : même aperçu pour les IP bloquées (espace et plateforme)', async () => {
+  const t = await team();
+  const base = `/api/platform/workspaces/${t.w.id}/security`;
+  const pv = (await t.c.post(base + '/preview', { ipBloquees: ['198.51.100.20'] })).body;
+  assert.equal(pv.coupure, true); assert.equal(pv.sessions[0].raison, 'ip_bloquee');
+  assert.equal((await t.c.put(base + '/policy', { ipBloquees: ['198.51.100.20'] })).status, 409);
+  assert.equal((await t.c.post(base + '/preview', { ipBloquees: ['198.51.100.0/99'] })).status, 400);
+  const g = (await t.c.post('/api/platform/ip-blocklist/preview', { rows: [{ cidr: '198.51.100.20' }] })).body;
+  assert.ok(g.coupure && g.sessions.some(x => x.slug === t.slug));
+  assert.equal((await t.c.put('/api/platform/ip-blocklist', { rows: [{ cidr: '198.51.100.20' }] })).status, 409);
+  assert.equal((await t.c.post('/api/platform/ip-blocklist/preview', { rows: [{ cidr: 'x.y' }] })).status, 400);
+  assert.equal((await t.c.put('/api/platform/ip-blocklist', { rows: [{ cidr: '198.51.100.20' }], confirmation: 'BLOQUER' })).status, 200);
+  assert.equal((await t.compta.get('/api/me')).body.reason, 'ip_bloquee');
+  await t.c.put('/api/platform/ip-blocklist', { rows: [] });
 });

@@ -73,20 +73,37 @@ module.exports = function (api) {
     res.json({ politique: p, mode: accessPolicy.modeLabel(p), ipConsole: netu.clientIp(req), ipBloqueesGlobales: accessPolicy.globalBlocklist(),
       appareils: deviceRows({ cabinetId: cab.id }), sessions: sessionRows({ cabinetId: cab.id }), geoip: geo.configured() });
   });
+  // CONS-IP : aperçu AVANT enregistrement — sessions et utilisateurs qui seraient coupés (dernière IP vue).
+  api.post('/workspaces/:id/security/preview', (req, res) => {
+    const cab = db.prepare('SELECT * FROM cabinet WHERE id=?').get(req.params.id);
+    if (!cab) return res.status(404).json({ error: 'Espace introuvable.', code: 'espace_introuvable' });
+    try { res.json({ slug: cab.slug, ...accessPolicy.previewImpact(cab.id, req.body || {}) }); } catch (e) { err(res, e); }
+  });
   api.put('/workspaces/:id/security/policy', (req, res) => {
     const cab = db.prepare('SELECT * FROM cabinet WHERE id=?').get(req.params.id);
     if (!cab) return res.status(404).json({ error: 'Espace introuvable.', code: 'espace_introuvable' });
     try {
+      // Si quelqu'un serait coupé : confirmation explicite = saisie exacte de l'identifiant de l'espace.
+      const impact = accessPolicy.previewImpact(cab.id, req.body || {});
+      if (impact.coupure && String((req.body || {}).confirmation || '').trim() !== cab.slug)
+        return res.status(409).json({ error: `Cette politique couperait ${impact.sessions.length} session(s) et ${impact.utilisateurs.length} utilisateur(s) : saisissez l’identifiant « ${cab.slug} » pour confirmer.`, code: 'confirmation_requise', impact });
       const r = accessPolicy.savePolicy(cab.id, req.body || {}, { actorLabel: actorLabel(req), currentIp: netu.clientIp(req), requireCurrentIp: false });
       lifecycle.tenantAudit(cab.id, 'politique_acces', { avant: r.avant, apres: r.apres, appareils_approuves: r.approuves }, actorLabel(req), netu.clientIp(req));
-      store.paudit(req.padmin, 'politique_acces', { type: 'espace', id: cab.id, libelle: cab.slug, avant: r.avant, apres: r.apres, details: { appareils_approuves: r.approuves, avertissements: r.avertissements } }, req);
+      store.paudit(req.padmin, 'politique_acces', { type: 'espace', id: cab.id, libelle: cab.slug, avant: r.avant, apres: r.apres, details: { appareils_approuves: r.approuves, avertissements: r.avertissements,
+        coupure_confirmee: impact.coupure ? { sessions: impact.sessions.length, utilisateurs: impact.utilisateurs.map(u => `${u.email} (${u.ip})`) } : null } }, req);
       res.json({ ok: true, avertissements: r.avertissements, approuves: r.approuves });
     } catch (e) { err(res, e); }
   });
 
   api.get('/ip-blocklist', (req, res) => res.json({ rows: accessPolicy.globalBlocklist(), ip: netu.clientIp(req) }));
+  api.post('/ip-blocklist/preview', (req, res) => {
+    try { res.json(accessPolicy.previewGlobalBlock((req.body || {}).rows || [])); } catch (e) { err(res, e); }
+  });
   api.put('/ip-blocklist', (req, res) => {
     try {
+      const pv = accessPolicy.previewGlobalBlock((req.body || {}).rows || []);
+      if (pv.coupure && String((req.body || {}).confirmation || '') !== 'BLOQUER')
+        return res.status(409).json({ error: `Cette liste couperait ${pv.sessions.length} session(s) active(s) : saisissez BLOQUER pour confirmer.`, code: 'confirmation_requise', impact: pv });
       const next = accessPolicy.normalizeList((req.body || {}).rows || [], 'IP bloquées (plateforme)');
       const avant = accessPolicy.globalBlocklist();
       store.setSetting('ip_bloquees', next, req.padmin.email);

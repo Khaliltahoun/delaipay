@@ -93,7 +93,8 @@ function checkSession(req) {
       deconnexion_forcee: 'Votre session a été fermée par un administrateur. Reconnectez-vous.',
       appareil_revoque: 'L’accès depuis cet appareil a été retiré par un administrateur.',
       compte_desactive: 'Votre compte a été désactivé par l’administrateur de votre espace.',
-      fin_support: 'L’accès d’assistance DelaiPay est terminé.' }[sess.end_reason];
+      fin_support: 'L’accès d’assistance DelaiPay est terminé.',
+      ...require('./access-policy').MSG }[sess.end_reason];
     return { ok: false, code: 'session_ended', reason: sess.end_reason, error: msg || 'Votre session a expiré. Reconnectez-vous.' };
   }
   let dbUser;

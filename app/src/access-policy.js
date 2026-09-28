@@ -104,6 +104,43 @@ function checkRequest(req, sess, cab) {
 }
 
 /**
+ * APERÇU avant enregistrement (CONS-IP) : qui serait coupé par la politique proposée (listes d'IP autorisées et bloquées,
+ * IP bloquées globales), d'après la DERNIÈRE IP vue de chaque session active et de chaque utilisateur actif.
+ * Valide les plages (erreur claire si invalide). Ne modifie rien.
+ */
+function previewImpact(cabinetId, body) {
+  const cab = db.prepare('SELECT * FROM cabinet WHERE id=?').get(cabinetId);
+  const next = validatePolicy(body || {}, policyOf(cab));
+  const blockedBy = ip => ipDecision(ip, next);
+  const sessions = db.prepare(`SELECT s.id, s.type, s.ip_derniere ip, s.last_seen_at vu, u.nom, u.email, u.role FROM user_session s
+      LEFT JOIN utilisateur u ON u.id=s.user_id WHERE s.cabinet_id=? AND s.ended_at IS NULL AND s.expires_at > datetime('now')`).all(cabinetId)
+    .map(x => ({ ...x, raison: blockedBy(x.ip) })).filter(x => x.raison)
+    .map(x => ({ id: x.id, type: x.type, nom: x.nom || (x.type === 'support' ? 'Assistance DelaiPay' : null), email: x.email, role: x.role, ip: x.ip, vu: x.vu, raison: x.raison }));
+  const users = db.prepare(`SELECT u.id, u.nom, u.email, u.role,
+        (SELECT s.ip_derniere FROM user_session s WHERE s.user_id=u.id ORDER BY s.last_seen_at DESC LIMIT 1) ip,
+        (SELECT s.last_seen_at FROM user_session s WHERE s.user_id=u.id ORDER BY s.last_seen_at DESC LIMIT 1) vu
+      FROM utilisateur u WHERE u.cabinet_id=? AND u.actif=1`).all(cabinetId);
+  const cutUsers = users.filter(u => u.ip && blockedBy(u.ip)).map(u => ({ nom: u.nom, email: u.email, role: u.role, ip: u.ip, vu: u.vu, raison: blockedBy(u.ip) }));
+  const admins = users.filter(u => u.role === 'admin' && u.ip).sort((a, b) => String(b.vu).localeCompare(String(a.vu)));
+  const lastAdmin = admins[0] || null;
+  return {
+    politique: next, sessions, utilisateurs: cutUsers,
+    dernierAccesAdmin: lastAdmin ? { email: lastAdmin.email, ip: lastAdmin.ip, vu: lastAdmin.vu, horsListe: !!blockedBy(lastAdmin.ip) } : null,
+    aucunAdminDansLaListe: !!admins.length && admins.every(a => blockedBy(a.ip)),
+    coupure: sessions.length > 0 || cutUsers.length > 0,
+  };
+}
+
+/** Aperçu de la liste GLOBALE d'IP bloquées : sessions actives de tous les espaces qui seraient coupées. */
+function previewGlobalBlock(list) {
+  const next = normalizeList(list || [], 'IP bloquées (plateforme)');
+  const sessions = db.prepare(`SELECT s.id, s.ip_derniere ip, s.type, u.email, c.slug FROM user_session s LEFT JOIN utilisateur u ON u.id=s.user_id
+      LEFT JOIN cabinet c ON c.id=s.cabinet_id WHERE s.ended_at IS NULL AND s.expires_at > datetime('now')`).all()
+    .filter(x => netu.ipInList(x.ip, next));
+  return { liste: next, sessions, coupure: sessions.length > 0 };
+}
+
+/**
  * Enregistre une nouvelle politique. Protection contre l'auto-blocage :
  *  - activation des « appareils approuvés » : l'appareil COURANT de l'administrateur qui l'active est approuvé
  *    (et, sur demande, tous les appareils déjà connus des utilisateurs actifs) ;
@@ -139,4 +176,4 @@ function savePolicy(cabinetId, body, { actorLabel, currentIp = null, currentDevi
   return { avant, apres, approuves, avertissements };
 }
 
-module.exports = { policyOf, modeLabel, validatePolicy, evaluateLogin, checkRequest, savePolicy, normalizeList, globalBlocklist, MSG, DEFAULT };
+module.exports = { previewGlobalBlock, previewImpact, policyOf, modeLabel, validatePolicy, evaluateLogin, checkRequest, savePolicy, normalizeList, globalBlocklist, MSG, DEFAULT };

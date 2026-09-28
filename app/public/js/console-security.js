@@ -98,6 +98,20 @@ C.wsTab('securite', 'Sécurité et appareils', async (el, ws, reload) => {
   $('#p_save').addEventListener('click', async () => {
     const body = { appareils: $('#p_dev').checked, approuverAppareilsConnus: $('#p_known').checked, dureeApprobationJours: $('#p_days').value || null,
       ipAutorisees: $('#p_ip').checked, listeIp: readList('p_allow'), ipBloquees: readList('p_block') };
+    // CONS-IP : aperçu AVANT d'enregistrer (plages validées par le serveur), confirmation saisie si quelqu'un serait coupé.
+    let pv;
+    try { pv = await C.api('POST', `/workspaces/${ws.id}/security/preview`, body); } catch (e) { $('#p_warn').innerHTML = `<div class="note note-danger mt-14">${IC.warn}<div>${esc(e.message)}</div></div>`; return; }
+    const RAISON = { ip_non_autorisee: 'hors liste autorisée', ip_bloquee: 'IP bloquée' };
+    const rows = [...pv.sessions.map(x => `<li><b>${esc(x.nom || x.email || '—')}</b> <span class="muted">${esc(x.email || '')}</span> — session active, dernière IP <span class="mono">${esc(x.ip || '—')}</span> (${esc(RAISON[x.raison] || x.raison)})</li>`),
+      ...pv.utilisateurs.filter(u => !pv.sessions.some(x => x.email === u.email)).map(u => `<li><b>${esc(u.nom || u.email)}</b> <span class="muted">${esc(u.email)}</span> — dernière IP <span class="mono">${esc(u.ip)}</span> vue ${C.ago(u.vu)} (${esc(RAISON[u.raison] || u.raison)})</li>`)];
+    const adm = pv.dernierAccesAdmin;
+    const admLine = adm ? `<p class="t-sm">Dernier accès d’un administrateur : ${esc(adm.email)} depuis <span class="mono">${esc(adm.ip)}</span> — ${adm.horsListe ? '<b class="c-late">en dehors de la politique</b>' : 'autorisé'}.</p>` : '';
+    const v = await C.dialog({ title: pv.coupure ? `Cette politique couperait ${pv.sessions.length} session(s) et ${pv.utilisateurs.length} utilisateur(s)` : 'Enregistrer la politique d’accès ?', danger: pv.coupure, wide: true,
+      typed: pv.coupure ? pv.slug : null, confirm: pv.coupure ? 'Couper ces accès et enregistrer' : 'Enregistrer',
+      body: pv.coupure ? `<div class="note note-danger">${IC.warn}<div><div class="note-t">Accès coupés dès leur prochaine action</div><ul>${rows.join('')}</ul></div></div>${admLine}${pv.aucunAdminDansLaListe ? '<p class="t-sm c-late">Aucun administrateur de l’espace ne s’est connecté récemment depuis une adresse autorisée : l’espace risque de ne plus pouvoir s’administrer lui-même.</p>' : ''}`
+        : `<p class="t-sm">Aucune session active ni aucun utilisateur ne serait coupé d’après les dernières IP vues.</p>${admLine}` });
+    if (!v) return;
+    body.confirmation = pv.coupure ? pv.slug : undefined;
     try {
       const r = await C.api('PUT', `/workspaces/${ws.id}/security/policy`, body);
       if (r.avertissements.length) { $('#p_warn').innerHTML = `<div class="note note-warn mt-14">${IC.warn}<div><div class="note-t">Enregistrée — à vérifier</div>${r.avertissements.map(esc).join('<br>')}</div></div>`; C.toast('Politique enregistrée avec avertissements.', 'warn'); }
@@ -119,7 +133,13 @@ C.settingsCard(20, async (box, reload) => {
   $('#gbAdd', box).addEventListener('click', () => { const l = $('#gb', box); const r = l.querySelector('.ip-row').cloneNode(true); r.querySelectorAll('input').forEach(i => { i.value = ''; }); l.appendChild(r); wireRm(); });
   $('#gbSave', box).addEventListener('click', async () => {
     const rows = [...$('#gb', box).querySelectorAll('.ip-row')].map(r => { const [c, l] = r.querySelectorAll('input'); return { cidr: c.value.trim(), label: l.value.trim() }; }).filter(e => e.cidr);
-    try { await C.api('PUT', '/ip-blocklist', { rows }); C.toast('Liste enregistrée.'); reload(); } catch (e) { C.toast(e.message, 'err'); }
+    let pv; try { pv = await C.api('POST', '/ip-blocklist/preview', { rows }); } catch (e) { return C.toast(e.message, 'err'); }
+    if (pv.coupure) {
+      const v = await C.dialog({ title: `Couper ${pv.sessions.length} session(s) active(s) ?`, danger: true, typed: 'BLOQUER', wide: true, confirm: 'Bloquer et couper ces sessions',
+        body: `<div class="note note-danger">${IC.warn}<div><ul>${pv.sessions.map(x => `<li><b>${esc(x.slug || '—')}</b> · ${esc(x.email || 'assistance')} — dernière IP <span class="mono">${esc(x.ip)}</span></li>`).join('')}</ul></div></div>` });
+      if (!v) return;
+    }
+    try { await C.api('PUT', '/ip-blocklist', { rows, confirmation: pv.coupure ? 'BLOQUER' : undefined }); C.toast('Liste enregistrée.'); reload(); } catch (e) { C.toast(e.message, 'err'); }
   });
 });
 C.settingsCard(30, async (box) => {
