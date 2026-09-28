@@ -14,6 +14,8 @@ REPO="$(cd "$(dirname "$0")/../.." && pwd)"
 WORK="${WORK:-${TMPDIR:-/tmp}/dp-staging-rehearsal}"
 PORT="${PORT_APP:-4291}"
 rm -rf "$WORK"; mkdir -p "$WORK"/{root,data,uploads,backups,logs}
+# Instance locale d'une répétition précédente encore active sur le port : arrêtée.
+for p in $(lsof -nP -iTCP:"$PORT" -sTCP:LISTEN -t 2>/dev/null); do kill "$p" 2>/dev/null || true; done; sleep 1
 cd "$WORK"
 ok() { printf '  \033[32m✔\033[0m %s\n' "$*"; }
 ko() { printf '  \033[31m✘\033[0m %s\n' "$*"; exit 1; }
