@@ -2281,7 +2281,7 @@ async function renderWorkspace(box) {
   const ro = isAdmin ? '' : 'readonly disabled';
   const opt = (arr, v, lbl = x => x) => arr.map(x => `<option value="${esc(x)}" ${x === v ? 'selected' : ''}>${esc(lbl(x))}</option>`).join('');
   const LOC = { 'fr-MA': 'Français (Maroc)', 'fr-FR': 'Français (France)', 'ar-MA': 'العربية (المغرب)', 'en-US': 'English (US)' };
-  const TZ = { 'Africa/Casablanca': 'Casablanca (GMT+1)', 'Europe/Paris': 'Paris', UTC: 'UTC' };
+  const TZ = { 'Africa/Casablanca': 'Casablanca (heure légale du Maroc)', 'Europe/Paris': 'Paris', UTC: 'UTC' };
   const monoHtml = (bg) => w.logoUrl ? `<div class="ws-mono has-logo" style="width:56px;height:56px;border-radius:12px;background:${bg}"><img class="ws-logo-img" src="${esc(w.logoUrl)}" alt="Logo actuel"></div>`
     : `<div class="ws-mono" style="width:56px;height:56px;border-radius:12px;font-size:var(--fs-xl);background:var(--tenant);color:var(--tenant-ink)">${esc(w.initials || 'DP')}</div>`;
   box.innerHTML = `<div class="settings-grid">
