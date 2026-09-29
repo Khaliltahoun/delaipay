@@ -23,7 +23,7 @@ rm -rf "$WORK"; mkdir -p "$WORK/ctx"
 cat > "$WORK/ctx/Dockerfile" <<'EOF'
 FROM debian:trixie-slim
 RUN apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends \
-      systemd systemd-sysv sudo gnupg curl ca-certificates xz-utils procps acl iproute2 >/dev/null && rm -rf /var/lib/apt/lists/*
+      systemd systemd-sysv sudo gnupg curl ca-certificates xz-utils procps acl iproute2 dbus >/dev/null && rm -rf /var/lib/apt/lists/*
 RUN set -e; A="$(dpkg --print-architecture)"; [ "$A" = amd64 ] && A=x64; \
     F="$(curl -fsSL https://nodejs.org/dist/latest-v24.x/SHASUMS256.txt | awk -v a="linux-$A.tar.xz" '$2 ~ a {print $2}')"; \
     curl -fsSL "https://nodejs.org/dist/latest-v24.x/$F" | tar -xJ -C /usr/local --strip-components=1; \
@@ -123,6 +123,15 @@ systemctl start delaipay-staging-backup.service
 F="$(ls /srv/delaipay-staging/backups/*.gpg 2>/dev/null | head -1)"
 [ -n "$F" ] && ok "sauvegarde : $(basename "$F") ($(stat -c '%U %a' "$F"))" || { ko "sauvegarde absente"; journalctl -u delaipay-staging-backup --no-pager | tail -15; }
 [ -n "$F" ] && gpg --homedir "$G" --batch --pinentry-mode loopback --passphrase "" --decrypt "$F" 2>/dev/null | tar -tz 2>/dev/null | grep -c "delaipay.db" | grep -q "^[1-9]" && ok "déchiffrable par la clé privée hors ligne" || ko "déchiffrement"
+
+step "A7b. Commandes d'administration par root via delaipay-staging-run (secrets jamais exposés)"
+install -o root -g root -m 0755 /root/src/deploy/vps/delaipay-staging-run /usr/local/sbin/delaipay-staging-run
+SEED="$(delaipay-staging-run node src/ops/staging-seed.js 2>&1 || true)"
+grep -q 'hlz-demo' <<<"$SEED" && ok "seed fictif sous l'utilisateur du service" || ko "seed : $(tail -3 <<<"$SEED")"
+VB="$(delaipay-staging-run node src/ops/verify-baseline.js --slug hlz-demo --expect "36,16,350964.42,7025.33,a7d1acaac0688170ef95fce6b7bb2082" 2>&1 || true)"
+grep -q 'a7d1acaac0688170ef95fce6b7bb2082' <<<"$VB" && ! grep -qi 'différ\|erreur' <<<"$VB" && ok "référence 36 · 16 · 350 964,42 · 7 025,33 · md5 vérifiée" || ko "référence : $(tail -3 <<<"$VB")"
+[ ! -e /srv/delaipay-staging/shared/data/.secret ] && [ ! -e /srv/delaipay-staging/shared/data/.platform-key ] && ok "aucun secret écrit sur disque (tout vient de staging.env)" || ko "secret écrit sur disque"
+denied "delaipay-staging : sudo delaipay-staging-run" sudo -u delaipay-staging sudo -n /usr/local/sbin/delaipay-staging-run true
 
 step "A8. Autres comptes : khalil (sans sudo ni docker) et un compte d'agent"
 useradd -m -s /bin/bash khalil; useradd -m -s /bin/bash openclaw

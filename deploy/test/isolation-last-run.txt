@@ -15,7 +15,7 @@ A4. Version déployée (comme deploy.sh : releases/<id>, lien current, npm ci pa
 A5. Unités systemd durcies + règle sudoers unique
   ✔ systemd-analyze verify : aucune remarque
   ✔ visudo -c
-  ✔ service démarré sous le bac à sable, /healthz : {"ok":true,"version":"0f61bc3e73","commit":"0000000","uptimeSec":1,"db":"ok","ts":1790625855786}
+  ✔ service démarré sous le bac à sable, /healthz : {"ok":true,"version":"0f61bc3e73","commit":"0000000","uptimeSec":1,"db":"ok","ts":1790626110761}
   ✔ base créée dans shared/data (delaipay-staging 600)
   ✔ NoNewPrivs=1
   ✔ aucune capacité (effective et limite)
@@ -33,8 +33,14 @@ A6. Déploiement : redémarrage par la règle sudoers, et RIEN d'autre
 
 A7. Sauvegarde chiffrée sous le même bac à sable (clé PUBLIQUE seule dans /srv/delaipay-staging/.gnupg)
   ✔ clé publique importée par delaipay-staging
-  ✔ sauvegarde : delaipay-staging-20260928-200416Z.tar.gz.gpg (delaipay-staging 600)
+  ✔ sauvegarde : delaipay-staging-20260928-200831Z.tar.gz.gpg (delaipay-staging 600)
   ✔ déchiffrable par la clé privée hors ligne
+
+A7b. Commandes d'administration par root via delaipay-staging-run (secrets jamais exposés)
+  ✔ seed fictif sous l'utilisateur du service
+  ✔ référence 36 · 16 · 350 964,42 · 7 025,33 · md5 vérifiée
+  ✔ aucun secret écrit sur disque (tout vient de staging.env)
+  ✔ delaipay-staging : sudo delaipay-staging-run — refusé
 
 A8. Autres comptes : khalil (sans sudo ni docker) et un compte d'agent
   ✔ khalil : lister /srv/delaipay-staging — refusé
