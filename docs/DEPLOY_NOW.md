@@ -192,9 +192,9 @@ sudo certbot renew --cert-name staging.delaipay.com --dry-run
 cd /tmp
 ls /etc/nginx/snippets/delaipay-*.conf /etc/nginx/sites-available/delaipay-staging.conf /etc/nginx/sites-enabled/delaipay-staging.conf 2>&1 | grep -v 'No such file'   # doit être vide
 grep -q 'sites-enabled' /etc/nginx/nginx.conf && echo 'sites-enabled : OK'
-sudo cp -n ~/dp-deploy/nginx/snippets/delaipay-*.conf /etc/nginx/snippets/
-sudo cp -n ~/dp-deploy/nginx/delaipay-staging.conf /etc/nginx/sites-available/delaipay-staging.conf
-V=$(nginx -v 2>&1 | grep -oE '[0-9]+\.[0-9]+\.[0-9]+'); dpkg --compare-versions "$V" lt 1.25.1 && sudo sed -i -e '/^    http2 on;$/d' -e 's/listen 443 ssl;/listen 443 ssl http2;/' -e 's/listen \[::\]:443 ssl;/listen [::]:443 ssl http2;/' /etc/nginx/sites-available/delaipay-staging.conf   # nginx < 1.25.1
+sudo cp --update=none ~/dp-deploy/nginx/snippets/delaipay-*.conf /etc/nginx/snippets/
+sudo cp --update=none ~/dp-deploy/nginx/delaipay-staging.conf /etc/nginx/sites-available/delaipay-staging.conf
+V=$(nginx -v 2>&1 | grep -oE '[0-9]+\.[0-9]+\.[0-9]+'); dpkg --compare-versions "$V" lt 1.25.1 && sudo sed -i '/^    http2 on;$/d' /etc/nginx/sites-available/delaipay-staging.conf   # nginx < 1.25.1 : pas de http2 (option partagée par tous les sites du port 443)
 sudo ln -s ../sites-available/delaipay-staging.conf /etc/nginx/sites-enabled/delaipay-staging.conf
 sudo nginx -t && sudo systemctl reload nginx
 ```
