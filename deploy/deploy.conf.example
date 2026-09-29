@@ -2,6 +2,8 @@
 # Aucun secret ici : le fichier d'environnement du service (/etc/delaipay-staging/staging.env) reste lisible par root seul.
 # Dépôt en lecture seule (clé de déploiement GitHub « read-only » de delaipay-staging, ~/.ssh/deploy_key)
 REPO_URL=git@github.com:OWNER/delaipay.git
+# Miroir superficiel limité à une branche (+ étiquettes) ; laisser vide pour un miroir complet
+GIT_BRANCH=feature/saas-productization
 # Doit être IDENTIQUE à DB_PATH du fichier d'environnement du service
 DB_PATH=/srv/delaipay-staging/shared/data/delaipay.db
 HEALTH_URL=http://127.0.0.1:4200/healthz

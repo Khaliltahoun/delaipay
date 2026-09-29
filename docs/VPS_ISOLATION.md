@@ -111,6 +111,7 @@ Sinon : STOP, envoyez-moi la sortie. **Retour arrière** : aucun (rien n'est mod
 ```bash
 sudo useradd --system --user-group --home-dir /srv/delaipay-staging --no-create-home --shell /bin/bash delaipay-staging
 sudo passwd -l delaipay-staging
+sudo sshd -T | grep -qi '^usepam yes' || sudo usermod -p '*' delaipay-staging   # sshd sans PAM refuse les clés d'un compte « ! » verrouillé
 ```
 - Compte **système** (UID < 1000), **aucun mot de passe utilisable** (verrouillé), **aucun groupe supplémentaire** (ni `sudo` ni `docker`).
 - Shell `bash` uniquement parce que le déploiement se fait en SSH (clé seulement, A4). Répertoire personnel **hors de `/home`**.
@@ -163,7 +164,7 @@ sudo sshd -T | grep -Ei '^(allowusers|allowgroups) '     # si une ligne existe :
 sudo install -o root -g root -m 0644 ~/dp-deploy/vps/sshd-50-delaipay-staging.conf /etc/ssh/sshd_config.d/50-delaipay-staging.conf
 printf 'restrict,pty %s\n' "$(cat ~/code.pub)" | sudo tee /srv/delaipay-staging/.ssh/authorized_keys >/dev/null
 sudo chown delaipay-staging:delaipay-staging /srv/delaipay-staging/.ssh/authorized_keys && sudo chmod 0600 /srv/delaipay-staging/.ssh/authorized_keys
-sudo sshd -t && sudo systemctl reload ssh      # reload : les sessions ouvertes restent ouvertes
+sudo sshd -t && { systemctl is-active --quiet ssh && sudo systemctl reload ssh || echo 'ssh activé par socket : rien à recharger'; }   # sessions ouvertes conservées
 ```
 - Le fichier sshd (bloc `Match User delaipay-staging`) : clé publique **seule**, pas de mot de passe, **aucun transfert de port ni
   d'agent, ni X11, ni tunnel** — le compte ne peut pas servir de rebond vers `127.0.0.1:3200` (production) ou d'autres services locaux.

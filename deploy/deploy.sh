@@ -47,7 +47,11 @@ trap 'rmdir "$LOCK" 2>/dev/null || true' EXIT
 : "${DB_PATH:?DB_PATH absent de $DEPLOY_CONF}"
 
 # ---- 1. récupération du commit
-if [ -d "$MIRROR" ]; then git --git-dir="$MIRROR" fetch --prune --tags origin '+refs/heads/*:refs/heads/*' >/dev/null
+# GIT_BRANCH (deploy.conf) : miroir superficiel limité à cette branche (+ étiquettes) ; sinon miroir complet.
+if [ -n "${GIT_BRANCH:-}" ]; then
+  [ -d "$MIRROR" ] || git clone --bare --depth 1 --single-branch --branch "$GIT_BRANCH" "$REPO_URL" "$MIRROR" >/dev/null
+  git --git-dir="$MIRROR" fetch --depth 1 --prune --tags origin "+refs/heads/${GIT_BRANCH}:refs/heads/${GIT_BRANCH}" >/dev/null
+elif [ -d "$MIRROR" ]; then git --git-dir="$MIRROR" fetch --prune --tags origin '+refs/heads/*:refs/heads/*' >/dev/null
 else git clone --mirror "$REPO_URL" "$MIRROR" >/dev/null; fi
 SHA="$(git --git-dir="$MIRROR" rev-parse --verify "${REF}^{commit}")"
 SHORT="${SHA:0:7}"
