@@ -1,0 +1,24 @@
+#!/usr/bin/env bash
+# /usr/local/sbin/delaipay-run (root:root 0755) — lance UNE commande d'administration de l'application
+# (seed fictif, admin plateforme, contrôle de la référence, purge…) sous l'utilisateur delaipay, avec le
+# fichier d'environnement du service et le même bac à sable. Personne d'autre que root ne lit les secrets.
+#   sudo delaipay-run node src/platform/cli.js --help
+#   sudo delaipay-run env DP_PLATFORM_CLI_MODE=create node src/platform/cli.js --email … --nom "…"
+#   sudo delaipay-run node src/ops/verify-baseline.js --slug hlz-demo --expect "36,16,350964.42,7025.33,a7d1acaac0688170ef95fce6b7bb2082"
+set -euo pipefail
+[ "$(id -u)" = 0 ] || { echo "À lancer avec sudo (root)." >&2; exit 1; }
+[ $# -gt 0 ] || { sed -n '2,7p' "$0"; exit 1; }
+export PATH="/opt/node-24/bin:$PATH"   # Node.js propre à DelaiPay (résolu ici, avant systemd-run)
+if [ -t 0 ] && [ -t 1 ]; then IO=--pty; else IO=--pipe; fi
+exec systemd-run --quiet --wait --collect "$IO" \
+  --uid=delaipay --gid=delaipay \
+  -p EnvironmentFile=/etc/delaipay/production.env -p Environment=PATH=/opt/node-24/bin:/usr/bin:/bin \
+  -p WorkingDirectory=/srv/delaipay/current/app \
+  -p UMask=0077 -p NoNewPrivileges=yes -p CapabilityBoundingSet= \
+  -p ProtectSystem=strict -p ProtectHome=yes -p PrivateTmp=yes -p PrivateDevices=yes \
+  -p ReadWritePaths=/srv/delaipay/shared \
+  -p "InaccessiblePaths=-/srv/delaipay/.ssh -/srv/delaipay/repo.git" \
+  -p ProtectKernelTunables=yes -p ProtectKernelModules=yes -p ProtectControlGroups=yes \
+  -p RestrictSUIDSGID=yes -p RestrictNamespaces=yes -p LockPersonality=yes \
+  -p "IPAddressDeny=any" -p "IPAddressAllow=localhost" \
+  -- "$@"

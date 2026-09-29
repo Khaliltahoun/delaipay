@@ -17,7 +17,8 @@
 set -Eeuo pipefail
 REF="${1:?Usage : deploy.sh <commit|tag|branche>}"
 
-DEPLOY_ROOT="${DEPLOY_ROOT:-/srv/delaipay-staging}"
+# Racine = répertoire du script (/srv/delaipay-staging/deploy.sh → staging ; /srv/delaipay/deploy.sh → production)
+DEPLOY_ROOT="${DEPLOY_ROOT:-$(cd "$(dirname "$(readlink -f "$0")")" && pwd)}"
 DEPLOY_CONF="${DEPLOY_CONF:-$DEPLOY_ROOT/deploy.conf}"
 # Paramètres non secrets : REPO_URL, DB_PATH, HEALTH_URL… (les variables déjà définies dans l'environnement priment)
 if [ -r "$DEPLOY_CONF" ]; then while IFS='=' read -r k v || [ -n "$k" ]; do case "$k" in ''|\#*) continue;; esac; [ -z "${!k:-}" ] && export "$k=$v"; done < "$DEPLOY_CONF"; fi

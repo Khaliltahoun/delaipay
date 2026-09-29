@@ -19,7 +19,10 @@ const DEFAULT_BASE_DOMAINS = ['localhost', 'delaipay.local'];
 // Sous-domaines techniques qui ne désignent jamais un espace client (liste UNIQUE, partagée avec workspace.js).
 // « admin » est l'hôte de la console plateforme (admin.delaipay.com) ; les autres sont réservés à l'infrastructure.
 const RESERVED = new Set(['admin', 'www', 'api', 'app', 'mail', 'status', 'support', 'static',
-  'assets', 'demo', 'login', 'console', 'platform']);
+  'assets', 'demo', 'login', 'console', 'platform',
+  // environnements et services d'infrastructure (staging.delaipay.com = environnement de test)
+  'staging', 'prod', 'production', 'preprod', 'test', 'dev', 'sandbox', 'backup', 'backups',
+  'mx', 'smtp', 'imap', 'pop', 'webmail', 'ftp', 'ns', 'ns1', 'ns2', 'dns', 'cdn', 'docs', 'blog', 'help', 'billing']);
 const SLUG_RE = /^[a-z0-9](?:[a-z0-9-]{0,38}[a-z0-9])?$/;
 
 const LOCALES = ['fr-MA', 'fr-FR', 'ar-MA', 'en-US'];

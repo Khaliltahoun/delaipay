@@ -1,0 +1,8 @@
+# /srv/delaipay/deploy.conf — paramètres NON SECRETS du déploiement de PRODUCTION (propriétaire delaipay, 0600).
+REPO_URL=git@github.com:Khaliltahoun/delaipay.git
+GIT_BRANCH=feature/saas-productization
+DB_PATH=/srv/delaipay/shared/data/delaipay.db
+HEALTH_URL=http://127.0.0.1:4300/healthz
+SERVICE=delaipay.service
+KEEP_RELEASES=5
+NODE_DIR=/opt/node-24

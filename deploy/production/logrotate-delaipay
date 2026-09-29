@@ -1,0 +1,13 @@
+# /etc/logrotate.d/delaipay — journal des déploiements (l'application et les sauvegardes écrivent dans journald :
+#   journalctl -u delaipay   /   journalctl -u delaipay-backup).
+/srv/delaipay/deploy.log {
+    weekly
+    rotate 12
+    maxsize 20M
+    missingok
+    notifempty
+    compress
+    delaycompress
+    copytruncate
+    su delaipay delaipay
+}

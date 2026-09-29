@@ -1,0 +1,69 @@
+
+P1. Utilisateur delaipay + /srv/delaipay (0700)
+  ✔ aucun groupe supplémentaire
+
+P2. Dépôt git de test (joue GitHub) + deploy.conf
+  ✔ deploy.conf : GIT_BRANCH=feature/saas-productization HEALTH_URL=http://127.0.0.1:4300/healthz SERVICE=delaipay.service 
+
+P3. Secrets production.env + backup.env (root:root 0600)
+  ✔ production.env : DELAIPAY_ENV=production, PORT=4300, TENANT_BASE_DOMAINS=delaipay.com
+
+P4. Unités, sudoers, lanceur, sshd
+  ✔ visudo
+  ✔ sshd -t
+  ✔ sshd : delaipay sans tunnel
+  ✔ sudoers :     (root) NOPASSWD: /usr/bin/systemctl restart delaipay.service
+
+P5. VRAI deploy.sh (miroir superficiel, npm ci, 320 tests, migrations, redémarrage sudo, santé)
+     [2026-09-29T21:18:30Z] Tests : ℹ pass 320 ℹ fail 0 
+     [2026-09-29T21:18:32Z] Santé OK — version c612b2a en service.
+  ✔ déploiement réussi
+  ✔ miroir : une seule branche
+  ✔ /healthz : {"ok":true,"version":"4aba4870ad","commit":"c612b2a","uptimeSec":2,"db":"ok","ts":1790716712724}
+  ✔ écoute 127.0.0.1:4300
+  ✔ NoNewPrivs 1 · aucune capacité · seccomp
+
+P6. Production : seed fictif REFUSÉ ; premier administrateur plateforme par delaipay-run
+  ✔ seed fictif refusé en production
+  ✔ admin plateforme créé (2FA exigée à la première connexion)
+  ✔ cli list : actif 2FA:non ops@delaipay.test (Ops Test) dernière connexion : —
+  ✔ aucun secret écrit sur disque
+
+P7. Sauvegarde age + copie hors site rclone (même bac à sable ; identifiants dans backup.env seul)
+  ✔ sauvegarde : delaipay-20260929-211833Z.tar.gz.age
+  ✔ copie hors site (rclone) : archive + .sha256
+  ✔ déchiffrable par la clé privée hors ligne
+  ✔ journal : hors site : ok
+  ✔ l'application ne voit pas backup.env (clé B2) — refusé
+
+P8. Autres comptes
+  ✔ khalil : lister /srv/delaipay — refusé
+  ✔ khalil : lire la base — refusé
+  ✔ khalil : lire production.env — refusé
+  ✔ khalil : lire backup.env (clé B2) — refusé
+  ✔ openclaw : lister /srv/delaipay — refusé
+  ✔ openclaw : lire la base — refusé
+  ✔ openclaw : lire production.env — refusé
+  ✔ openclaw : lire backup.env (clé B2) — refusé
+  ✔ delaipay : lire production.env — refusé
+  ✔ delaipay : lire backup.env (clé B2) — refusé
+  ✔ delaipay : sudo delaipay-run — refusé
+  ✔ delaipay : sudo systemctl stop delaipay.service — refusé
+
+P9. Sonde avec le bac à sable exact de delaipay.service
+  ✔ service : fermé   /home visible
+  ✔ service : fermé   écrire dans current/
+  ✔ service : fermé   écrire dans /etc
+  ✔ service : fermé   lire .ssh
+  ✔ service : fermé   lire backups/
+  ✔ service : fermé   lire production.env
+  ✔ service : fermé   lire backup.env
+  ✔ service : fermé   réseau sortant
+  ✔ service : fermé   PID 1
+  ✔ service : OUVERT  écrire dans shared/data (seul inscriptible)
+
+P10. systemd-analyze security
+  ✔ delaipay.service : 0.9 SAFE :-}
+  ✔ delaipay-backup.service : 1.1 OK :-)
+
+RÉPÉTITION PRODUCTION : AUCUN ÉCHEC
