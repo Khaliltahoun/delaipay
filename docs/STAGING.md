@@ -1,7 +1,9 @@
 # DelaiPay — Staging (architecture cible et procédure)
 
 > Statut : **préparé et répété localement** (Incrément 3B). Aucun accès au VPS, aucune modification DNS, aucune mise en ligne.
-> Artefacts : `deploy/` · répétition locale : `deploy/test/local-test.sh` · plan de test du fondateur : `docs/STAGING_TEST_PLAN.md`.
+> Artefacts : `deploy/` · répétitions locales : `deploy/test/local-test.sh` (déploiement, nginx, sauvegardes) et
+> `deploy/test/isolation-test.sh` (isolement, 62/62) · plan de test du fondateur : `docs/STAGING_TEST_PLAN.md`.
+> **Isolement sur le VPS partagé (utilisateur dédié, service durci, comptes des agents) : `docs/VPS_ISOLATION.md` — à dérouler AVANT §7.**
 
 ## 0. FOUNDER INPUTS — ce dont j'ai besoin de vous avant l'installation
 1. **VPS** : distribution et version (`cat /etc/os-release`), CPU / RAM / disque libre (`nproc; free -h; df -h /`), méthode d'accès
@@ -19,9 +21,10 @@
    et le commit / tag à déployer en premier.
 7. **Préférences** : authentification basique nginx devant le staging (recommandé : oui) ; restreindre la console à certaines IP (optionnel) ;
    compte de surveillance externe (UptimeRobot / Better Stack) sous quelle adresse e-mail.
-8. **Qui exécute** : vous (pas à pas de CODE_HANDOFF.md), ou un accès **limité** pour Code : utilisateur `delaipay-staging` uniquement
-   (clé SSH dédiée, `sudo` restreint à `systemctl restart|status delaipay-staging`, `nginx -t`, `systemctl reload nginx`), jamais l'accès aux
-   fichiers ni au service de la production.
+8. **Qui exécute** : vous, toutes les commandes privilégiées (Code n'utilise jamais le compte `khalil`) ; Code reçoit **seulement** une
+   connexion SSH `delaipay-staging` (clé dédiée, sans tunnel), dont la seule commande sudo est
+   `systemctl restart delaipay-staging.service` — ni nginx, ni les secrets, ni la production (`docs/VPS_ISOLATION.md` A4, A6).
+9. **Diagnostic du VPS** : la sortie de `deploy/vps/diagnose.sh` (lecture seule, secrets masqués) — `docs/VPS_ISOLATION.md` §1.
 
 ## 1. Hôtes
 | Rôle | Hôte |
@@ -38,23 +41,25 @@ La production actuelle (`delaipay.hlzconsulting.ma`) n'est **ni lue, ni modifié
 
 | Élément | Staging | Production (inchangée) |
 |---|---|---|
-| Utilisateur système | `delaipay-staging` (sans shell interactif, sans sudo sauf `systemctl restart delaipay-staging`) | existant |
-| Code (versions) | `/srv/delaipay-staging/releases/<date>-<sha>/`, lien `current` | existant |
-| Données (base, téléversements, exports) | `/var/lib/delaipay-staging/{data,uploads}` | existant |
-| Secrets / environnement | `/etc/delaipay-staging/staging.env` (root:delaipay-staging 0640) | existant |
-| Port local | `127.0.0.1:4200` (jamais public) | existant |
-| Processus | `delaipay-staging.service` (systemd) | existant |
-| Journaux | `/var/log/delaipay-staging/` + `nginx/delaipay-staging.*.log` | existant |
-| Sauvegardes | `/var/backups/delaipay-staging/` + copie hors site | existant |
+| Utilisateur système | `delaipay-staging` (mot de passe verrouillé, SSH par clé seule, ni sudo ni docker ; une seule commande sudo : `systemctl restart delaipay-staging.service`) | conteneur `:3200` |
+| Tout DelaiPay | `/srv/delaipay-staging/` **0700** (hors de `/home`) | existant |
+| Code (versions) | `/srv/delaipay-staging/releases/<date>-<sha>/`, lien `current` (lecture seule pour le service) | existant |
+| Données (base, téléversements, exports) | `/srv/delaipay-staging/shared/{data,uploads}` (seul répertoire inscriptible par le service) | existant |
+| Secrets / environnement | `/etc/delaipay-staging/staging.env` (**root:root 0600**, lu par systemd seul) | existant |
+| Node.js | `/opt/node-24` (propre à DelaiPay ; le Node du système n'est pas touché) | — |
+| Port local | `127.0.0.1:4200` (jamais public) | `:3200` |
+| Processus | `delaipay-staging.service` (systemd, durci : exposition **0.9 SAFE**) | existant |
+| Journaux | journald (`journalctl -u delaipay-staging`) + `/srv/delaipay-staging/deploy.log` + `nginx/delaipay-staging.*.log` | existant |
+| Sauvegardes | `/srv/delaipay-staging/backups/` (zone d'attente, chiffrées) + copie hors site | existant |
 | nginx | `/etc/nginx/sites-available/delaipay-staging.conf` (server_name `*.staging.delaipay.com`) | ses propres fichiers |
 
-**Données du staging : fictives uniquement** (`npm run staging:seed`), jamais une copie d'une base réelle.
+**Données du staging : fictives uniquement** (`sudo delaipay-staging-run node src/ops/staging-seed.js`), jamais une copie d'une base réelle.
 
 ## 3. Chaîne de requête
 ```
 Internet ──443──▶ nginx (TLS joker, HSTS, limites, X-Forwarded-For remplacé, X-Request-Id)
                      └──▶ 127.0.0.1:4200  node src/server.js (HOST=127.0.0.1, TRUST_PROXY=loopback, NODE_ENV=production)
-                                             └──▶ SQLite /var/lib/delaipay-staging/data/delaipay.db
+                                             └──▶ SQLite /srv/delaipay-staging/shared/data/delaipay.db
 ```
 - `TRUST_PROXY=loopback` : seul nginx local est cru pour `X-Forwarded-For` ; nginx **remplace** cet en-tête par l'IP réelle
   (`proxy_set_header X-Forwarded-For $remote_addr`) : un en-tête forgé par le client n'atteint jamais l'application (répété localement).
@@ -92,19 +97,15 @@ Internet ──443──▶ nginx (TLS joker, HSTS, limites, X-Forwarded-For rem
 - **Jamais** public : 4200 (staging), le port de la production, SQLite (fichier local).
 - Exemple (ufw) : `ufw allow 80/tcp && ufw allow 443/tcp` — vérifier `ufw status` avant/après ; ne pas toucher aux règles SSH existantes.
 
-## 7. Installation (une fois) — voir le pas à pas exact dans CODE_HANDOFF.md
-1. `adduser --system --group --home /srv/delaipay-staging --shell /usr/sbin/nologin delaipay-staging` ;
-   répertoires `/srv/delaipay-staging`, `/var/lib/delaipay-staging/{data,uploads}`, `/var/log/delaipay-staging`, `/var/backups/delaipay-staging`
-   (propriétaire `delaipay-staging`, 0750) et `/etc/delaipay-staging` (root:delaipay-staging 0750).
-2. Node.js ≥ 22.5 (24 LTS recommandé), `git`, `sqlite3`, `age` (ou `gnupg`), `certbot` + greffon DNS.
-3. `staging.env` depuis `deploy/staging.env.example` ; secrets générés sur le serveur ; destinataire age = **clé publique** du fondateur.
-4. Unités systemd (`deploy/systemd/*`) → `/etc/systemd/system/`, `systemctl daemon-reload`, `enable delaipay-staging delaipay-staging-backup.timer`.
-5. Règle sudo limitée : `delaipay-staging ALL=(root) NOPASSWD: /usr/bin/systemctl restart delaipay-staging` (fichier `/etc/sudoers.d/delaipay-staging`).
-6. nginx : snippets → `/etc/nginx/snippets/`, site → `sites-available` + lien `sites-enabled`, `nginx -t`, `systemctl reload nginx`.
-7. logrotate : `deploy/logrotate/delaipay-staging` → `/etc/logrotate.d/`.
-8. Premier déploiement : `REPO_URL=… /srv/delaipay-staging/deploy.sh <commit>` (voir §8).
-9. Données : `npm run staging:seed` (fictif, mots de passe affichés une fois) ; **premier administrateur plateforme** :
-   `npm run platform:admin:create -- --email … --nom "…"` sur le serveur ; enrôlement 2FA sur le téléphone du fondateur.
+## 7. Installation (une fois) — voir le pas à pas exact dans CODE_HANDOFF.md §6
+1. **Isolement** : `docs/VPS_ISOLATION.md` §1 (diagnostic) puis §2 A0–A7 — utilisateur, `/srv/delaipay-staging` 0700, Node.js propre
+   (`/opt/node-24`), SSH par clé, secrets root:root 0600, unités durcies, règle sudoers unique, `delaipay-staging-run`, premier
+   déploiement, données fictives, premier administrateur plateforme, auditd (A9).
+2. `certbot` + greffon DNS, nginx : §4–§5 (nginx ne lit aucun fichier de DelaiPay, il relaie vers `127.0.0.1:4200`).
+3. Pare-feu : §6.
+4. Première sauvegarde + surveillance : §9–§10.
+Les commandes qui ont besoin des secrets (`staging-seed`, admin plateforme, `verify-baseline`, purge) passent **toutes** par
+`sudo delaipay-staging-run node src/…` (root lance la commande sous `delaipay-staging`, avec l'environnement du service).
 
 ## 8. Déploiement et retour arrière (deploy/deploy.sh)
 Verrou → miroir git en lecture seule → version `releases/<date>-<sha>` (`git archive`, fichier `REVISION`) → `npm ci --omit=dev` →
@@ -142,5 +143,6 @@ Répété localement : commit sain → en service ; commit volontairement cassé
   par nginx), méthode et chemin — jamais le corps, les cookies, les jetons ni les mots de passe. L'utilisateur voit la même référence.
 
 ## 11. Remise à zéro du staging
-Arrêter le service, supprimer `/var/lib/delaipay-staging/data/*` (base de staging uniquement !), redémarrer, `npm run staging:seed`,
-recréer l'administrateur plateforme. Jamais sur la production.
+`sudo systemctl stop delaipay-staging`, supprimer `/srv/delaipay-staging/shared/data/delaipay.db*` (base de staging uniquement !),
+`sudo systemctl start delaipay-staging`, `sudo delaipay-staging-run node src/ops/staging-seed.js`, recréer l'administrateur plateforme
+(`sudo delaipay-staging-run env DP_PLATFORM_CLI_MODE=create node src/platform/cli.js --email … --nom "…"`). Jamais sur la production.

@@ -71,7 +71,7 @@ Comptes du seed : `admin@client2.demo` (administrateur) et `comptable@client2.de
       → « ÉCHEC du contrôle de santé — RETOUR ARRIÈRE » puis « Retour arrière réussi » ; `/healthz` renvoie le commit précédent ; aucune donnée perdue.
 
 ## 9. Sauvegarde puis exercice de restauration (30 min)
-- [ ] Serveur : `sudo systemctl start delaipay-staging-backup` → `/var/log/delaipay-staging/backup.log` : « Sauvegarde réussie : …tar.gz.age ».
+- [ ] Serveur : `sudo systemctl start delaipay-staging-backup` → `journalctl -u delaipay-staging-backup -n 5` : « Sauvegarde réussie : …tar.gz.age ».
 - [ ] Console → tableau de bord : « Dernière sauvegarde » à jour (heure, taille), pastille « À jour ».
 - [ ] Hors site : l'archive est présente sur la destination choisie (B2, NAS…).
 - [ ] Sur **votre ordinateur** (qui détient la clé privée age) : télécharger l'archive → `npm run restore -- --from <archive> --to ~/restauration-test

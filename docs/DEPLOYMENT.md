@@ -25,7 +25,7 @@ Ce document décrit l'installation, la configuration, la sauvegarde et la mise �
       `ops2@delaipay.demo`, `ops3@delaipay.demo`, leurs mots de passe et leurs **codes de secours** n'existent que dans les
       bases locales de démonstration et ne doivent **JAMAIS** se trouver dans la base de production (ne jamais y copier une
       base de démonstration). Vérification : `npm run platform:admin -- list` sur le serveur ne doit afficher que de vrais comptes.
-- [ ] **Premier administrateur plateforme réel** créé **sur le serveur** : `npm run platform:admin:create -- --email … --nom "…"`
+- [ ] **Premier administrateur plateforme réel** créé **sur le serveur** : `npm run platform:admin:create -- --email … --nom "…"` (sur un VPS isolé : via le lanceur d’administration, `docs/VPS_ISOLATION.md` A7)
       (mot de passe `PLATFORM_ADMIN_PASSWORD` ≥ 14 caractères, sinon généré et affiché une fois), puis enrôlement 2FA à la
       première connexion sur `https://admin.<domaine>/` et conservation hors ligne des 10 codes de secours.
 - [ ] **`PLATFORM_SECRET_KEY`** (64 caractères hexadécimaux) définie et sauvegardée à part : elle chiffre les secrets 2FA ;
