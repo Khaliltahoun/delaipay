@@ -10,7 +10,9 @@ User=delaipay-staging
 Group=delaipay-staging
 WorkingDirectory=/srv/delaipay-staging/current/app
 EnvironmentFile=/etc/delaipay-staging/staging.env
-ExecStart=/usr/bin/node src/ops/backup.js
+# Node.js PROPRE à DelaiPay (/opt/node-24, root:root, lecture seule) : le Node du système et des autres applications n'est pas touché.
+Environment=PATH=/opt/node-24/bin:/usr/bin:/bin
+ExecStart=/opt/node-24/bin/node src/ops/backup.js
 UMask=0077
 Nice=10
 IOSchedulingClass=idle

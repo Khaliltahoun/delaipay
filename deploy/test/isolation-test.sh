@@ -23,11 +23,11 @@ rm -rf "$WORK"; mkdir -p "$WORK/ctx"
 cat > "$WORK/ctx/Dockerfile" <<'EOF'
 FROM debian:trixie-slim
 RUN apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends \
-      systemd systemd-sysv sudo gnupg curl ca-certificates xz-utils procps acl iproute2 dbus >/dev/null && rm -rf /var/lib/apt/lists/*
+      systemd systemd-sysv sudo gnupg curl ca-certificates xz-utils procps acl iproute2 dbus openssh-server >/dev/null && rm -rf /var/lib/apt/lists/*
 RUN set -e; A="$(dpkg --print-architecture)"; [ "$A" = amd64 ] && A=x64; \
     F="$(curl -fsSL https://nodejs.org/dist/latest-v24.x/SHASUMS256.txt | awk -v a="linux-$A.tar.xz" '$2 ~ a {print $2}')"; \
-    curl -fsSL "https://nodejs.org/dist/latest-v24.x/$F" | tar -xJ -C /usr/local --strip-components=1; \
-    ln -sf /usr/local/bin/node /usr/bin/node; ln -sf /usr/local/bin/npm /usr/bin/npm; node --version
+    mkdir -p /opt/node-24; curl -fsSL "https://nodejs.org/dist/latest-v24.x/$F" | tar -xJ -C /opt/node-24 --strip-components=1 --no-same-owner; \
+    /opt/node-24/bin/node --version; ! command -v node
 STOPSIGNAL SIGRTMIN+3
 CMD ["/lib/systemd/systemd"]
 EOF
@@ -76,11 +76,21 @@ sed -e "s|^JWT_SECRET=.*|JWT_SECRET=$(head -c 48 /dev/urandom | od -An -tx1 | tr
 chown root:root /etc/delaipay-staging/staging.env; chmod 0600 /etc/delaipay-staging/staging.env
 ok "$(stat -c '%U:%G %a' /etc/delaipay-staging/staging.env) staging.env"
 
+step "A3b. SSH : clé seulement, aucun tunnel (drop-in sshd)"
+install -o root -g root -m 0644 /root/src/deploy/vps/sshd-50-delaipay-staging.conf /etc/ssh/sshd_config.d/50-delaipay-staging.conf
+sshd -t 2>&1 && ok "sshd -t" || ko "sshd -t"
+T="$(sshd -T -C user=delaipay-staging,host=test,addr=203.0.113.9 2>/dev/null)"
+for kv in "passwordauthentication no" "kbdinteractiveauthentication no" "authenticationmethods publickey" "allowtcpforwarding no" "allowagentforwarding no" "x11forwarding no" "permittunnel no"; do
+  grep -qx "$kv" <<<"$T" && ok "delaipay-staging : $kv" || ko "delaipay-staging : $kv — obtenu : $(grep "^${kv%% *} " <<<"$T")"; done
+[ "$(sshd -T -C user=khalil,host=test,addr=203.0.113.9 2>/dev/null | grep '^allowtcpforwarding ')" = "allowtcpforwarding yes" ] \
+  && ok "les autres comptes gardent leur configuration (ex. khalil : allowtcpforwarding yes, inchangé)" || ko "configuration des autres comptes modifiée"
+[ ! -e /usr/bin/node ] && ok "Node.js du système non installé / non modifié (DelaiPay : /opt/node-24, $(stat -c '%U %a' /opt/node-24/bin/node))" || ko "/usr/bin/node présent"
+
 step "A4. Version déployée (comme deploy.sh : releases/<id>, lien current, npm ci par delaipay-staging)"
 R=/srv/delaipay-staging/releases/test-0000000
 install -d -o delaipay-staging -g delaipay-staging -m 0700 "$R"
 cp -a /root/src/app "$R/app"; echo 0000000 > "$R/REVISION"; chown -R delaipay-staging:delaipay-staging "$R"
-sudo -u delaipay-staging -H bash -c "cd $R/app && npm ci --omit=dev --no-audit --no-fund >/dev/null 2>&1" && ok "npm ci (delaipay-staging)" || ko "npm ci"
+sudo -u delaipay-staging -H bash -c "export PATH=/opt/node-24/bin:\$PATH; cd $R/app && npm ci --omit=dev --no-audit --no-fund >/dev/null 2>&1" && ok "npm ci (delaipay-staging)" || ko "npm ci"
 sudo -u delaipay-staging ln -sfn "$R" /srv/delaipay-staging/current
 install -o delaipay-staging -g delaipay-staging -m 0600 /root/src/deploy/deploy.conf.example /srv/delaipay-staging/deploy.conf
 
@@ -90,8 +100,7 @@ install -m 0644 /root/src/deploy/systemd/delaipay-staging.service /root/src/depl
 systemctl daemon-reload
 V="$(systemd-analyze verify /etc/systemd/system/delaipay-staging.service /etc/systemd/system/delaipay-staging-backup.service 2>&1 || true)"
 [ -z "$V" ] && ok "systemd-analyze verify : aucune remarque" || ko "verify : $V"
-printf 'delaipay-staging ALL=(root) NOPASSWD: /usr/bin/systemctl restart delaipay-staging.service\n' > /etc/sudoers.d/delaipay-staging
-chmod 0440 /etc/sudoers.d/delaipay-staging
+install -o root -g root -m 0440 /root/src/deploy/vps/sudoers-delaipay-staging /etc/sudoers.d/delaipay-staging
 visudo -cf /etc/sudoers.d/delaipay-staging >/dev/null && ok "visudo -c" || ko "visudo"
 systemctl enable --now delaipay-staging.service >/dev/null 2>&1
 for _ in $(seq 1 30); do curl -fsS http://127.0.0.1:4200/healthz 2>/dev/null | grep -q '"ok":true' && break; sleep 1; done

@@ -14,7 +14,9 @@ Group=delaipay-staging
 WorkingDirectory=/srv/delaipay-staging/current/app
 # Secrets : root:root 0600, lu par systemd (PID 1) AVANT de passer à l'utilisateur — ni le déployeur ni aucun autre compte ne le lit.
 EnvironmentFile=/etc/delaipay-staging/staging.env
-ExecStart=/usr/bin/node src/server.js
+# Node.js PROPRE à DelaiPay (/opt/node-24, root:root, lecture seule) : le Node du système et des autres applications n'est pas touché.
+Environment=PATH=/opt/node-24/bin:/usr/bin:/bin
+ExecStart=/opt/node-24/bin/node src/server.js
 Restart=on-failure
 RestartSec=5
 TimeoutStopSec=20

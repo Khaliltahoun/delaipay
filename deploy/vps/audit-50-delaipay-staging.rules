@@ -1,0 +1,27 @@
+## /etc/audit/rules.d/50-delaipay-staging.rules — qui touche aux fichiers de DelaiPay staging ?
+## Lire : sudo ausearch -k delaipay_access -i --start today      (voir docs/VPS_ISOLATION.md §A9)
+
+## 1. Tout accès (lecture, écriture, attributs) par un AUTRE compte que delaipay-staging — root compris.
+-a always,exit -F arch=b64 -F dir=/srv/delaipay-staging -F perm=rwa -F uid!=delaipay-staging -k delaipay_access
+-a always,exit -F arch=b32 -F dir=/srv/delaipay-staging -F perm=rwa -F uid!=delaipay-staging -k delaipay_access
+
+## 2. Accès SOUS l'identité delaipay-staging mais depuis la session d'un autre compte (sudo -u / su / runuser) :
+##    l'identifiant de connexion (auid) trahit le compte d'origine. Le service (lancé par systemd) a auid=unset : non journalisé.
+-a always,exit -F arch=b64 -F dir=/srv/delaipay-staging -F perm=rwa -F uid=delaipay-staging -F auid!=delaipay-staging -F auid!=unset -k delaipay_impersonation
+-a always,exit -F arch=b32 -F dir=/srv/delaipay-staging -F perm=rwa -F uid=delaipay-staging -F auid!=delaipay-staging -F auid!=unset -k delaipay_impersonation
+
+## 3. Secrets : TOUT accès, quel que soit le compte (attendu : systemd à chaque démarrage du service, vos propres modifications).
+-a always,exit -F arch=b64 -F dir=/etc/delaipay-staging -F perm=rwa -k delaipay_secrets
+-a always,exit -F arch=b32 -F dir=/etc/delaipay-staging -F perm=rwa -k delaipay_secrets
+
+## 4. Fichiers qui, modifiés, ouvriraient l'accès : unités, sudoers, sshd, lanceur d'administration, Node.js de DelaiPay.
+-w /etc/systemd/system/delaipay-staging.service -p wa -k delaipay_config
+-w /etc/systemd/system/delaipay-staging-backup.service -p wa -k delaipay_config
+-w /etc/systemd/system/delaipay-staging-backup.timer -p wa -k delaipay_config
+-w /etc/sudoers.d/delaipay-staging -p wa -k delaipay_config
+-w /etc/ssh/sshd_config.d/50-delaipay-staging.conf -p wa -k delaipay_config
+-w /usr/local/sbin/delaipay-staging-run -p wa -k delaipay_config
+-w /opt/node-24/bin -p wa -k delaipay_config
+
+## (Facultatif, après une semaine sans surprise) rendre les règles immuables jusqu'au prochain redémarrage :
+## -e 2

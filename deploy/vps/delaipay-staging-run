@@ -8,10 +8,11 @@
 set -euo pipefail
 [ "$(id -u)" = 0 ] || { echo "À lancer avec sudo (root)." >&2; exit 1; }
 [ $# -gt 0 ] || { sed -n '2,7p' "$0"; exit 1; }
+export PATH="/opt/node-24/bin:$PATH"   # Node.js propre à DelaiPay (résolu ici, avant systemd-run)
 if [ -t 0 ] && [ -t 1 ]; then IO=--pty; else IO=--pipe; fi
 exec systemd-run --quiet --wait --collect "$IO" \
   --uid=delaipay-staging --gid=delaipay-staging \
-  -p EnvironmentFile=/etc/delaipay-staging/staging.env \
+  -p EnvironmentFile=/etc/delaipay-staging/staging.env -p Environment=PATH=/opt/node-24/bin:/usr/bin:/bin \
   -p WorkingDirectory=/srv/delaipay-staging/current/app \
   -p UMask=0077 -p NoNewPrivileges=yes -p CapabilityBoundingSet= \
   -p ProtectSystem=strict -p ProtectHome=yes -p PrivateTmp=yes -p PrivateDevices=yes \

@@ -9,13 +9,25 @@ A2. Arborescence /srv/delaipay-staging (0700)
 A3. Secrets : /etc/delaipay-staging/staging.env root:root 0600
   ✔ root:root 600 staging.env
 
+A3b. SSH : clé seulement, aucun tunnel (drop-in sshd)
+  ✔ sshd -t
+  ✔ delaipay-staging : passwordauthentication no
+  ✔ delaipay-staging : kbdinteractiveauthentication no
+  ✔ delaipay-staging : authenticationmethods publickey
+  ✔ delaipay-staging : allowtcpforwarding no
+  ✔ delaipay-staging : allowagentforwarding no
+  ✔ delaipay-staging : x11forwarding no
+  ✔ delaipay-staging : permittunnel no
+  ✔ les autres comptes gardent leur configuration (ex. khalil : allowtcpforwarding yes, inchangé)
+  ✔ Node.js du système non installé / non modifié (DelaiPay : /opt/node-24, root 755)
+
 A4. Version déployée (comme deploy.sh : releases/<id>, lien current, npm ci par delaipay-staging)
   ✔ npm ci (delaipay-staging)
 
 A5. Unités systemd durcies + règle sudoers unique
   ✔ systemd-analyze verify : aucune remarque
   ✔ visudo -c
-  ✔ service démarré sous le bac à sable, /healthz : {"ok":true,"version":"0f61bc3e73","commit":"0000000","uptimeSec":1,"db":"ok","ts":1790626110761}
+  ✔ service démarré sous le bac à sable, /healthz : {"ok":true,"version":"0f61bc3e73","commit":"0000000","uptimeSec":1,"db":"ok","ts":1790660580902}
   ✔ base créée dans shared/data (delaipay-staging 600)
   ✔ NoNewPrivs=1
   ✔ aucune capacité (effective et limite)
@@ -33,7 +45,7 @@ A6. Déploiement : redémarrage par la règle sudoers, et RIEN d'autre
 
 A7. Sauvegarde chiffrée sous le même bac à sable (clé PUBLIQUE seule dans /srv/delaipay-staging/.gnupg)
   ✔ clé publique importée par delaipay-staging
-  ✔ sauvegarde : delaipay-staging-20260928-200831Z.tar.gz.gpg (delaipay-staging 600)
+  ✔ sauvegarde : delaipay-staging-20260929-054302Z.tar.gz.gpg (delaipay-staging 600)
   ✔ déchiffrable par la clé privée hors ligne
 
 A7b. Commandes d'administration par root via delaipay-staging-run (secrets jamais exposés)

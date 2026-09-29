@@ -1,0 +1,4 @@
+# /etc/sudoers.d/delaipay-staging (root:root 0440) — UNE seule commande privilégiée pour le compte de déploiement :
+# redémarrer SON service. Ni stop, ni edit, ni autre unité, ni shell. Vérifier : visudo -cf /etc/sudoers.d/delaipay-staging
+Defaults:delaipay-staging !requiretty, env_reset, !setenv
+delaipay-staging ALL=(root) NOPASSWD: /usr/bin/systemctl restart delaipay-staging.service

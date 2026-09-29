@@ -21,6 +21,8 @@ DEPLOY_ROOT="${DEPLOY_ROOT:-/srv/delaipay-staging}"
 DEPLOY_CONF="${DEPLOY_CONF:-$DEPLOY_ROOT/deploy.conf}"
 # Paramètres non secrets : REPO_URL, DB_PATH, HEALTH_URL… (les variables déjà définies dans l'environnement priment)
 if [ -r "$DEPLOY_CONF" ]; then while IFS='=' read -r k v || [ -n "$k" ]; do case "$k" in ''|\#*) continue;; esac; [ -z "${!k:-}" ] && export "$k=$v"; done < "$DEPLOY_CONF"; fi
+# Node.js propre à DelaiPay (ex. /opt/node-24) : prioritaire sur celui du système
+if [ -n "${NODE_DIR:-}" ]; then export PATH="$NODE_DIR/bin:$PATH"; fi
 REPO_URL="${REPO_URL:?REPO_URL requis (dépôt git en lecture seule, ex. clé de déploiement) — dans $DEPLOY_CONF}"
 SERVICE="${SERVICE:-delaipay-staging.service}"
 RESTART_CMD="${RESTART_CMD:-sudo -n /usr/bin/systemctl restart ${SERVICE}}"

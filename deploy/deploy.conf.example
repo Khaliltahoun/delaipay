@@ -6,3 +6,5 @@ REPO_URL=git@github.com:OWNER/delaipay.git
 DB_PATH=/srv/delaipay-staging/shared/data/delaipay.db
 HEALTH_URL=http://127.0.0.1:4200/healthz
 KEEP_RELEASES=5
+# Node.js propre à DelaiPay (le Node du système et des autres applications reste intact)
+NODE_DIR=/opt/node-24
