@@ -47,12 +47,15 @@ git archive prod-1 deploy | ssh khalil@194.163.181.137 'rm -rf ~/dp-prod && mkdi
 **[LAPTOP]**
 ```bash
 dig +short delaipay.com; dig +short www.delaipay.com; dig +short admin.delaipay.com     # noter : les enregistrements existants restent prioritaires
+```
+Collez cette ligne **seule**, puis le jeton, puis Entrée :
+```bash
 read -rs CF_TOKEN
 ```
 ```bash
-Z=<CLOUDFLARE_ZONE_ID>
+echo "jeton : ${#CF_TOKEN} caractères"; Z=<CLOUDFLARE_ZONE_ID>                                  # ≈ 53 (0 = recommencer le read)
 cf() { curl -s -X POST "https://api.cloudflare.com/client/v4/zones/$Z/dns_records" -H "Authorization: Bearer $CF_TOKEN" -H "Content-Type: application/json" \
-  -d "{\"type\":\"$1\",\"name\":\"$2\",\"content\":\"$3\",\"ttl\":300,\"proxied\":false}" | grep -o '"success":[a-z]*'; }
+  -d "{\"type\":\"$1\",\"name\":\"$2\",\"content\":\"$3\",\"ttl\":300,\"proxied\":false}" | grep -oE '"success":[a-z]+|"message":"[^"]*"' | head -2 | tr '\n' ' '; echo; }
 cf A    '*.delaipay.com' 194.163.181.137
 cf AAAA '*.delaipay.com' 2a02:c207:2316:8999::1          # 2 × "success":true
 unset CF_TOKEN
