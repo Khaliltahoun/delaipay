@@ -3,7 +3,7 @@
 // au serveur dans une URL, puis retiré de la barre d'adresse.
 const $ = s => document.querySelector(s);
 const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
-(function theme() { let t = null; try { t = localStorage.getItem('dp-theme'); } catch (_) {} if (!t && matchMedia('(prefers-color-scheme: dark)').matches) t = 'dark'; document.documentElement.setAttribute('data-theme', t || 'light'); })();
+(function theme() { let t = null; try { t = localStorage.getItem('dp-theme'); } catch (_) {} /* thème CLAIR par défaut : le sombre uniquement sur choix explicite (menu) */ document.documentElement.setAttribute('data-theme', t || 'light'); })();
 const token = (new URLSearchParams(location.hash.slice(1))).get('t') || '';
 try { history.replaceState(null, '', location.pathname); } catch (_) {}
 // P3-13 : un second lien ouvert dans le même onglet ne change que le fragment — on relit le nouveau jeton.

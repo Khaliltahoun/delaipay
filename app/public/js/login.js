@@ -7,8 +7,7 @@ const ERR_ICO = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stro
 
 // Thème : préférence mémorisée, sinon celle du système.
 (function theme() {
-  let t = null; try { t = localStorage.getItem('dp-theme'); } catch (_) {}
-  if (!t && window.matchMedia && matchMedia('(prefers-color-scheme: dark)').matches) t = 'dark';
+  let t = null; try { t = localStorage.getItem('dp-theme'); } catch (_) {} /* thème CLAIR par défaut : le sombre uniquement sur choix explicite (menu) */
   document.documentElement.setAttribute('data-theme', t || 'light');
 })();
 

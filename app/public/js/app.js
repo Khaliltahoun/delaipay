@@ -366,8 +366,7 @@ const PERM_OBSERVER = new MutationObserver(muts => { for (const m of muts) for (
 
 /* ============================== espace de travail, thème, menus ============================== */
 function getTheme() {
-  let t = null; try { t = localStorage.getItem('dp-theme'); } catch (_) {}
-  if (!t && window.matchMedia && matchMedia('(prefers-color-scheme: dark)').matches) t = 'dark';
+  let t = null; try { t = localStorage.getItem('dp-theme'); } catch (_) {} /* thème CLAIR par défaut : le sombre uniquement sur choix explicite (menu) */
   return t || 'light';
 }
 function applyTheme(t) {
@@ -520,11 +519,13 @@ async function loadPeriods(opts = {}) {
   try { data = await api(`/clients/${state.clientId}/periods`, opts.fresh ? { fresh: true } : {}); }
   catch (e) { if (e.code === 'client_introuvable') { forgetClient(); state.periods = []; state.periodMeta = null; return; } throw e; }
   state.periods = data.disponibles || data.periods || [];
-  state.periodMeta = { travail: data.travail, plusFournie: data.plusFournie };
-  // priorité : période mémorisée (si dispo) → sinon période de travail → sinon plus fournie → sinon latest
+  state.periodMeta = { travail: data.travail, plusFournie: data.plusFournie, courante: data.courante, creation: data.creation };
+  // Client SANS facture : trimestre en cours à la date de sa création (un nouveau client s'ouvre sur le trimestre actuel).
+  // Sinon : période mémorisée (si dispo) → période de travail → plus fournie → latest.
   const saved = (() => { try { return JSON.parse(localStorage.getItem('dp-period') || 'null'); } catch { return null; } })();
   const has = p => p && state.periods.some(x => x.annee === p.annee && x.trimestre === p.trimestre);
-  state.period = has(saved) ? { annee: saved.annee, trimestre: saved.trimestre }
+  state.period = !state.periods.length && (data.creation || data.courante) ? { ...(data.creation || data.courante) }
+    : has(saved) ? { annee: saved.annee, trimestre: saved.trimestre }
     : (data.travail || data.plusFournie || data.latest || { annee: new Date().getFullYear(), trimestre: Math.floor(new Date().getMonth() / 3) + 1 });
   updatePeriodLabel(); updateCtxBanner();
 }
@@ -914,8 +915,9 @@ async function renderOnboarding(stepKey) {
   else if (st.key === 'periode') {
     const per = state.periods || [];
     const w = (state.periodMeta && state.periodMeta.travail) || state.period || { annee: new Date().getFullYear(), trimestre: 1 };
-    // Trimestre de travail (calendrier déclaratif) et les 3 précédents — calculés, jamais figés en dur.
-    const cands = []; let q = { annee: w.annee, trimestre: w.trimestre };
+    const cq = (state.periodMeta && state.periodMeta.courante) || w;
+    // Trimestre ACTUEL et les 3 précédents (dont le trimestre en cours de déclaration) — calculés, jamais figés en dur.
+    const cands = []; let q = { annee: cq.annee, trimestre: cq.trimestre };
     for (let i = 0; i < 4; i++) { cands.push(q); q = q.trimestre === 1 ? { annee: q.annee - 1, trimestre: 4 } : { annee: q.annee, trimestre: q.trimestre - 1 }; }
     for (const p of per) if (!cands.some(c => c.annee === p.annee && c.trimestre === p.trimestre)) cands.push({ annee: p.annee, trimestre: p.trimestre });
     const chosen = ob.periode || null;
@@ -923,7 +925,7 @@ async function renderOnboarding(stepKey) {
     <h2 class="ob-title">Choisissez le trimestre à traiter</h2>
     <p class="ob-lead">Toute l'application travaille sur <b>une période (trimestre) active</b>, toujours affichée en haut de l'écran. Les factures que vous importerez ensuite y seront rattachées.</p>
     ${f.clients ? `<div class="ob-periods">${cands.map(c => { const p = per.find(x => x.annee === c.annee && x.trimestre === c.trimestre); const on = chosen && chosen.annee === c.annee && chosen.trimestre === c.trimestre;
-        return `<button class="pp-item ${on ? 'active' : ''}" data-ob-per="${c.annee}-${c.trimestre}"><span><b>${TRI_LABEL(c.trimestre)} ${c.annee}</b> <small>${p ? `${p.nbFactures} facture(s)` : 'aucune facture'}${w.annee === c.annee && w.trimestre === c.trimestre ? ' · trimestre en cours de traitement' : ''}</small></span>${p ? `<span class="period-badge ${(PERIOD_STATUT[p.statut] || ['', ''])[1]}">${esc((PERIOD_STATUT[p.statut] || [p.statut])[0])}</span>` : ''}</button>`; }).join('')}</div>
+        return `<button class="pp-item ${on ? 'active' : ''}" data-ob-per="${c.annee}-${c.trimestre}"><span><b>${TRI_LABEL(c.trimestre)} ${c.annee}</b> <small>${p ? `${p.nbFactures} facture(s)` : 'aucune facture'}${cq.annee === c.annee && cq.trimestre === c.trimestre ? ' · trimestre actuel' : ''}${w.annee === c.annee && w.trimestre === c.trimestre ? ' · en cours de déclaration' : ''}</small></span>${p ? `<span class="period-badge ${(PERIOD_STATUT[p.statut] || ['', ''])[1]}">${esc((PERIOD_STATUT[p.statut] || [p.statut])[0])}</span>` : ''}</button>`; }).join('')}</div>
       ${chosen ? doneNote(`Trimestre retenu : <b>${TRI_LABEL(chosen.trimestre)} ${chosen.annee}</b>.`) + `<div class="actions">${go(nextKey)}</div>` : ''}`
       : `<div class="note note-warn">${svgI('warn')}<div>Créez d'abord un dossier client.</div></div>`}`;
   } else if (st.key === 'pret') {

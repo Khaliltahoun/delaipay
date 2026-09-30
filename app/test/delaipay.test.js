@@ -3130,3 +3130,21 @@ test('INC2.3/P3-4 + P3-7 : Alertes sans « sans convention » sur une ligne couv
   const sum = (await reqJson('GET', `/api/clients/${W.ent}/summary?annee=2026&trimestre=1`, { cookie: ck })).body;
   assert.equal(sum.kpis.convHorsValidite, 1, 'ALPHA : convention appliquée hors validité signalée dans la synthèse');
 });
+
+test('période par défaut : un nouveau client s’ouvre sur le trimestre ACTUEL à sa création (fuseau de l’espace) ; thème clair par défaut', async () => {
+  const t = newTenant('Cab-trimestre'); const ck = cookieOf(t.u);
+  db.prepare("UPDATE entreprise SET created_at='2026-09-30 10:00:00' WHERE id=?").run(t.ent);
+  const r = await reqJson('GET', `/api/clients/${t.ent}/periods`, { cookie: ck });
+  assert.equal(r.status, 200);
+  assert.deepEqual(r.body.creation, { annee: 2026, trimestre: 3 }, 'créé le 30/09/2026 → T3 2026');
+  assert.equal(r.body.disponibles.length, 0, 'aucune facture');
+  const now = new Date(); assert.ok(r.body.courante && r.body.courante.trimestre >= 1 && r.body.courante.trimestre <= 4 && r.body.courante.annee >= now.getUTCFullYear() - 1);
+  // Création juste avant minuit UTC le 31/12 : c'est déjà le 1er janvier à Paris → T1 de l'année suivante.
+  db.prepare("UPDATE cabinet SET fuseau_horaire='Europe/Paris' WHERE id=?").run(t.cab);
+  db.prepare("UPDATE entreprise SET created_at='2026-12-31 23:30:00' WHERE id=?").run(t.ent);
+  assert.deepEqual((await reqJson('GET', `/api/clients/${t.ent}/periods`, { cookie: ck })).body.creation, { annee: 2027, trimestre: 1 }, 'fuseau de l’espace');
+  const app = fs.readFileSync(path.join(__dirname, '..', 'public', 'js', 'app.js'), 'utf8');
+  assert.match(app, /!state\.periods\.length && \(data\.creation \|\| data\.courante\)/, 'client sans facture : trimestre de création par défaut');
+  for (const f of ['app.js', 'login.js', 'console.js', 'invite.js', 'reset.js'])
+    assert.ok(!/prefers-color-scheme/.test(fs.readFileSync(path.join(__dirname, '..', 'public', 'js', f), 'utf8')), `${f} : thème clair par défaut (le sombre seulement sur choix explicite)`);
+});

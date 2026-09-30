@@ -5,7 +5,7 @@
 const $ = (s, r = document) => r.querySelector(s);
 const $$ = (s, r = document) => [...r.querySelectorAll(s)];
 const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
-(function theme() { let t = null; try { t = localStorage.getItem('dp-theme'); } catch (_) {} if (!t && matchMedia('(prefers-color-scheme: dark)').matches) t = 'dark'; document.documentElement.setAttribute('data-theme', t || 'light'); })();
+(function theme() { let t = null; try { t = localStorage.getItem('dp-theme'); } catch (_) {} /* thème CLAIR par défaut : le sombre uniquement sur choix explicite (menu) */ document.documentElement.setAttribute('data-theme', t || 'light'); })();
 
 const IC = {
   warn: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 9v4m0 4h.01M10.3 3.9L2 18a2 2 0 001.7 3h16.6a2 2 0 001.7-3L13.7 3.9a2 2 0 00-3.4 0z"/></svg>',

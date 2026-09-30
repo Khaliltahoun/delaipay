@@ -182,7 +182,18 @@ function buildPeriodsList(cabinetId, entrepriseId) {
   });
   const travail = periode.workingPeriod();
   const plusFournie = rows.length ? (() => { let best = rows[0]; for (const r of rows) if (r.n > best.n) best = r; return { annee: best.annee, trimestre: best.trimestre }; })() : null;
-  return { disponibles, travail, plusFournie, actuelle: travail };
+  // Trimestre CIVIL (fuseau de l'espace) : actuel, et celui de la création du client — période affichée par défaut
+  // tant que le client n'a aucune facture (un nouveau client s'ouvre sur le trimestre en cours à sa création).
+  const tz = (db.prepare('SELECT fuseau_horaire FROM cabinet WHERE id=?').get(cabinetId) || {}).fuseau_horaire || 'Africa/Casablanca';
+  const ent = db.prepare('SELECT created_at FROM entreprise WHERE id=?').get(entrepriseId) || {};
+  const courante = quarterAt(new Date().toISOString(), tz);
+  const creation = ent.created_at ? quarterAt(ent.created_at, tz) : courante;
+  return { disponibles, travail, plusFournie, actuelle: travail, courante, creation };
+}
+/** Trimestre civil d'un instant (horodatage UTC) dans le fuseau donné : { annee, trimestre }. */
+function quarterAt(instant, tz) {
+  const [, m, y] = require('./time-format').formatDate(String(instant), tz).split('/').map(Number);
+  return { annee: y, trimestre: Math.floor((m - 1) / 3) + 1 };
 }
 function latestPeriod(entrepriseId) {
   // Période par défaut = celle qui contient le PLUS de factures (représentative),
@@ -758,7 +769,8 @@ router.get('/clients/:id/periods', (req, res) => {
   // `latest` conservé pour compat ; défaut = période de travail si elle contient des données, sinon la plus fournie.
   const hasWork = info.disponibles.some(d => d.annee === info.travail.annee && d.trimestre === info.travail.trimestre);
   const latest = hasWork ? info.travail : (info.plusFournie || latestPeriod(e.id));
-  res.json({ periods: info.disponibles, latest, travail: info.travail, plusFournie: info.plusFournie, disponibles: info.disponibles });
+  res.json({ periods: info.disponibles, latest, travail: info.travail, plusFournie: info.plusFournie, disponibles: info.disponibles,
+    courante: info.courante, creation: info.creation });
 });
 
 // Détail + calendrier + statut d'une période précise (crée la ligne si absente).
