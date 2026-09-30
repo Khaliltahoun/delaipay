@@ -15,8 +15,6 @@ tout `apt-get` via `sudo env NEEDRESTART_SUSPEND=1`.
 | `<CLOUDFLARE_API_TOKEN>` | votre gestionnaire de mots de passe (tapé à l'invite, jamais dans une commande) |
 | `<LETSENCRYPT_EMAIL>` | votre e-mail |
 | `<AGE_PROD_PUBLIC_KEY>` | `age1…` affiché à l'étape 1 (clé PROPRE à la production) |
-| `<B2_BUCKET>` | nom du compartiment B2 créé à l'étape 2 |
-| `<B2_KEY_ID>` / `<B2_APP_KEY>` | clé d'application B2 de l'étape 2 (tapées à l'invite) |
 | `<ADMIN_EMAIL>` / `<ADMIN_NAME>` | votre compte d'administrateur plateforme de PRODUCTION |
 
 ---
@@ -34,13 +32,9 @@ age-keygen -o ~/delaipay-prod-backup.key             # « Public key: age1… »
 git archive prod-1 deploy | ssh khalil@194.163.181.137 'rm -rf ~/dp-prod && mkdir -p ~/dp-prod && tar -x --strip-components=1 -C ~/dp-prod'
 ```
 
-## 2. Backblaze B2 (navigateur)
-1. https://secure.backblaze.com/b2_buckets.htm › **Create a Bucket** : nom `delaipay-prod-backups-<suffixe>` (= `<B2_BUCKET>`), **Private**,
-   **Default Encryption : Enable**, **Object Lock : Enable** › Create. Puis sur le compartiment : **Object Lock** › Default retention
-   **Governance**, **30 days**.
-2. https://secure.backblaze.com/app_keys.htm › **Add a New Application Key** : nom `delaipay-prod-backup`, **Allow access to Bucket(s) :
-   `<B2_BUCKET>`**, **Type of Access : Write Only**, reste vide › Create. Copier **keyID** et **applicationKey** (affichée une seule fois)
-   dans le gestionnaire de mots de passe.
+## 2. Copie hors site : MANUELLE (Backblaze B2 non retenu — décision du fondateur)
+Les sauvegardes chiffrées restent sur le VPS ; **vous en rapatriez une copie sur votre poste** (§ 18) chaque soir au début, puis au moins
+chaque semaine. Sans copie hors du VPS, la perte du VPS = perte des données des cabinets.
 
 ## 3. DNS (Cloudflare, sans proxy)
 
@@ -86,7 +80,7 @@ sudo install -o delaipay -g delaipay -m 0600 ~/dp-prod/production/deploy.conf.ex
 id delaipay; sudo grep -v '^#' /srv/delaipay/deploy.conf; ls /srv/delaipay        # un seul groupe ; SERVICE=delaipay.service ; Permission denied
 ```
 
-## 6. Secrets (générés sur le serveur) et identifiants B2
+## 6. Secrets (générés sur le serveur)
 
 **[VPS as khalil with sudo]**
 ```bash
@@ -94,19 +88,11 @@ cd /tmp
 sudo install -d -o root -g root -m 0700 /etc/delaipay
 sudo install -o root -g root -m 0600 ~/dp-prod/production/production.env.example /etc/delaipay/production.env
 sudo bash -c 'sed -i "s|^JWT_SECRET=.*|JWT_SECRET=$(openssl rand -hex 48)|; s|^PLATFORM_SECRET_KEY=.*|PLATFORM_SECRET_KEY=$(openssl rand -hex 32)|" /etc/delaipay/production.env'
-sudo sed -i 's|^BACKUP_AGE_RECIPIENT=.*|BACKUP_AGE_RECIPIENT=<AGE_PROD_PUBLIC_KEY>|; s|b2offsite:BUCKET/|b2offsite:<B2_BUCKET>/|g' /etc/delaipay/production.env
+sudo sed -i 's|^BACKUP_AGE_RECIPIENT=.*|BACKUP_AGE_RECIPIENT=<AGE_PROD_PUBLIC_KEY>|; s|^BACKUP_OFFSITE_CMD=.*|BACKUP_OFFSITE_CMD=|' /etc/delaipay/production.env
 sudo grep -E '^(DELAIPAY_ENV|PORT|HOST|TENANT_BASE_DOMAINS|TRUST_PROXY|COOKIE_SECURE|DB_PATH|BACKUP_AGE_RECIPIENT|BACKUP_OFFSITE_CMD)=' /etc/delaipay/production.env
 sudo grep -cE '^(JWT_SECRET=.{96}|PLATFORM_SECRET_KEY=.{64})$' /etc/delaipay/production.env        # → 2
-read -rs B2_ID
-```
-```bash
-read -rs B2_KEY
-```
-```bash
-echo "longueurs : ${#B2_ID} / ${#B2_KEY}"                                                       # ~25 / ~31 (0 = recommencer le read)
-sudo install -o root -g root -m 0600 /dev/null /etc/delaipay/backup.env
-printf 'RCLONE_CONFIG_B2OFFSITE_TYPE=b2\nRCLONE_CONFIG_B2OFFSITE_ACCOUNT=%s\nRCLONE_CONFIG_B2OFFSITE_KEY=%s\nRCLONE_CONFIG=/dev/null\nRCLONE_CACHE_DIR=/tmp/rclone-cache\n' "$B2_ID" "$B2_KEY" | sudo tee /etc/delaipay/backup.env >/dev/null; unset B2_ID B2_KEY
-sudo grep -cE '^RCLONE_CONFIG_B2OFFSITE_(ACCOUNT|KEY)=.' /etc/delaipay/backup.env; sudo sh -c 'stat -c "%U:%G %a %n" /etc/delaipay/*.env'   # 2 ; root:root 600 × 2
+sudo install -o root -g root -m 0600 /dev/null /etc/delaipay/backup.env                         # vide : aucun identifiant hors site
+sudo sh -c 'stat -c "%U:%G %a %n" /etc/delaipay /etc/delaipay/*.env'                           # root:root 700 · 600 × 2
 sudo -u delaipay cat /etc/delaipay/production.env                                               # Permission denied
 ```
 **À NE PAS me coller** — copier les secrets de production dans le gestionnaire de mots de passe, puis `clear` :
@@ -114,12 +100,11 @@ sudo -u delaipay cat /etc/delaipay/production.env                               
 sudo grep -E '^(JWT_SECRET|PLATFORM_SECRET_KEY)=' /etc/delaipay/production.env
 ```
 
-## 7. Service durci, sudoers, lanceur, rclone
+## 7. Service durci, sudoers, lanceur
 
 **[VPS as khalil with sudo]**
 ```bash
 cd /tmp
-sudo env NEEDRESTART_SUSPEND=1 apt-get install -y rclone
 sudo install -o root -g root -m 0644 ~/dp-prod/production/delaipay.service ~/dp-prod/production/delaipay-backup.service ~/dp-prod/production/delaipay-backup.timer /etc/systemd/system/
 sudo install -o root -g root -m 0644 ~/dp-prod/production/logrotate-delaipay /etc/logrotate.d/delaipay
 sudo visudo -cf ~/dp-prod/production/sudoers-delaipay && sudo install -o root -g root -m 0440 ~/dp-prod/production/sudoers-delaipay /etc/sudoers.d/delaipay
@@ -182,7 +167,7 @@ cd /tmp && sudo -u delaipay -H /srv/delaipay/deploy.sh prod-1          # « Test
 curl -s http://127.0.0.1:4300/healthz; echo
 ```
 
-## 12. Administrateur plateforme, sauvegarde, copie hors site
+## 12. Administrateur plateforme, sauvegarde
 
 **[VPS as khalil with sudo]** — **à NE PAS me coller** (mot de passe affiché une fois → gestionnaire, puis `clear`) :
 ```bash
@@ -193,12 +178,9 @@ cd /tmp && sudo delaipay-run env DP_PLATFORM_CLI_MODE=create node src/platform/c
 cd /tmp
 sudo delaipay-run node src/platform/cli.js list                                                 # UNIQUEMENT votre compte (aucun compte de démonstration)
 sudo delaipay-run node src/ops/staging-seed.js 2>&1 | tail -1                                   # « Refusé : DELAIPAY_ENV=staging requis » (voulu)
-sudo systemctl start delaipay-backup.service; journalctl -u delaipay-backup -n 3 --no-pager -o cat   # « Sauvegarde réussie … hors site : ok. »
+sudo systemctl start delaipay-backup.service; journalctl -u delaipay-backup -n 3 --no-pager -o cat   # « Sauvegarde réussie … hors site : non configuré. »
 sudo systemctl start delaipay-backup.timer && systemctl list-timers delaipay-backup.timer --no-pager | head -2
 ```
-Si la copie hors site échoue (`ÉCHEC … rclone`) : recréer la clé B2 avec **Type of Access : Read and Write** et refaire les
-trois blocs `read -rs B2_ID` / `read -rs B2_KEY` / `printf …` de l'étape 6, puis relancer la sauvegarde.
-
 ## 13. auditd
 
 **[VPS as khalil with sudo]**
@@ -230,11 +212,11 @@ open https://admin.delaipay.com/                     # connexion + enrôlement 2
 ```
 
 ## 15. Test de restauration (obligatoire avant les données réelles)
-1. https://secure.backblaze.com/b2_browse_files2.htm › `<B2_BUCKET>` › télécharger `delaipay-….tar.gz.age` **et** son `.sha256` dans `~/Downloads`.
+Faire d'abord la copie manuelle du § 18 (elle rapatrie la dernière sauvegarde sur votre poste), puis :
 
 **[LAPTOP]**
 ```bash
-cd ~/repos/delaipay/app && F=$(ls -t ~/Downloads/delaipay-*.tar.gz.age | head -1); echo "$F"
+cd ~/repos/delaipay/app && F=$(ls -t ~/DelaiPay-sauvegardes/delaipay-*.tar.gz.age | head -1); echo "$F"
 node src/ops/restore.js --from "$F" --to ~/delaipay-restore-test-$(date +%Y%m%d%H%M) --identity ~/delaipay-prod-backup.key     # « Restauration réussie »
 ```
 
@@ -262,3 +244,21 @@ sudo systemctl daemon-reload && sudo visudo -c >/dev/null && sudo augenrules --l
 sudo rm -r /etc/delaipay /srv/delaipay && sudo userdel delaipay
 ```
 **[LAPTOP]** — DNS : supprimer les 2 enregistrements `*.delaipay.com` dans Cloudflare ; GitHub : supprimer la clé `delaipay-prod (read-only)`.
+
+## 18. Copie hors site MANUELLE (chaque soir au début, puis au moins chaque semaine)
+
+**[VPS as khalil with sudo]** — met la dernière sauvegarde chiffrée à disposition, pour vous seul :
+```bash
+cd /tmp
+sudo sh -c 'F=$(ls -t /srv/delaipay/backups/delaipay-*.tar.gz.age | head -1); install -o khalil -g khalil -m 0600 "$F" "$F.sha256" /home/khalil/; basename "$F"'
+```
+**[LAPTOP]** — rapatrie, vérifie l'empreinte, puis efface la copie temporaire du VPS :
+```bash
+mkdir -p ~/DelaiPay-sauvegardes && cd ~/DelaiPay-sauvegardes
+scp 'khalil@194.163.181.137:~/delaipay-*.tar.gz.age*' .
+F=$(ls -t delaipay-*.tar.gz.age | head -1); [ "$(shasum -a 256 "$F" | cut -d' ' -f1)" = "$(cut -d' ' -f1 "$F.sha256")" ] && echo "OK : $F" || echo "EMPREINTE DIFFÉRENTE : $F"
+ssh khalil@194.163.181.137 'rm -f ~/delaipay-*.tar.gz.age ~/delaipay-*.tar.gz.age.sha256'
+```
+Le fichier est chiffré (illisible sans `~/delaipay-prod-backup.key`, qui ne doit **pas** être rangé dans le même dossier). Gardez aussi une
+copie de `~/DelaiPay-sauvegardes/` sur un second support (disque externe, iCloud/Drive — le fichier reste chiffré).
+
